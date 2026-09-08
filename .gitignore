@@ -1,0 +1,15 @@
+node_modules/
+.next/
+out/
+*.db
+*.db-journal
+.env
+.env.local
+data/*.db
+data/uploads/
+prisma/dev.db*
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# Bản sao lưu database — không đưa lên git
+backups/

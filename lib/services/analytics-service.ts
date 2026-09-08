@@ -1,0 +1,716 @@
+import { prisma } from "../db";
+import { BusinessError } from "../rbac";
+import { ERR } from "../constants";
+import { writeAudit } from "../audit";
+import { notify } from "../notify";
+import { sendCeoAlert } from "../telegram";
+import {
+  computeCapacity,
+  computeHealth,
+  computeVelocity,
+  detectAnomaly,
+  predictTask,
+  suggestRebalance,
+  type CapacityReport,
+  type PredictionResult,
+  type VelocityResult,
+} from "../analytics/engine";
+import {
+  ANOMALY_SEVERITY_LABEL,
+  PREDICTION_HORIZON_DAYS,
+} from "../analytics/constants";
+import type { SessionUser } from "../auth";
+
+/**
+ * TẦNG DỊCH VỤ CHO PHẦN PHÂN TÍCH & DỰ BÁO.
+ *
+ * Lõi tính toán nằm ở lib/analytics/engine.ts và không chạm database. File này
+ * lo phần gom dữ liệu, lưu kết quả, và — quan trọng nhất — **chấm lại xem dự báo
+ * cũ có đúng không**.
+ */
+
+type Meta = { ip?: string | null; userAgent?: string | null };
+const DAY = 86400_000;
+const OPEN_STATUSES = ["BACKLOG", "TO_DO", "IN_PROGRESS", "BLOCKED", "REVIEW"];
+
+/* ==================================================================== */
+/* NHỊP LÀM VIỆC                                                        */
+/* ==================================================================== */
+
+/** Nhịp làm việc của một người, tính từ toàn bộ việc họ đã đóng. */
+export async function velocityFor(userId: string): Promise<VelocityResult> {
+  const closed = await prisma.task.findMany({
+    where: {
+      assigneeId: userId,
+      status: "DONE",
+      completedAt: { not: null },
+    },
+    select: { dueDate: true, completedAt: true, startDate: true, createdAt: true },
+    orderBy: { completedAt: "desc" },
+    take: 60,
+  });
+
+  return computeVelocity(
+    closed.map((t) => ({
+      dueDate: t.dueDate,
+      completedAt: t.completedAt!,
+      startDate: t.startDate ?? t.createdAt,
+    }))
+  );
+}
+
+/* ==================================================================== */
+/* DỰ BÁO NGUY CƠ VỠ KẾ HOẠCH                                           */
+/* ==================================================================== */
+
+export type PredictiveScanResult = {
+  predictions: (PredictionResult & {
+    departmentName: string;
+    assigneeName: string | null;
+    dueDate: string;
+  })[];
+  scanned: number;
+  highRisk: number;
+  moderateRisk: number;
+  /** Bao nhiêu dự báo dựa trên nền dữ liệu còn mỏng */
+  weakBasis: number;
+};
+
+export async function runPredictiveScan(opts: {
+  departmentId?: string | null;
+  persist?: boolean;
+  now?: Date;
+}): Promise<PredictiveScanResult> {
+  const now = opts.now ?? new Date();
+  const horizon = new Date(now.getTime() + PREDICTION_HORIZON_DAYS * DAY);
+
+  const tasks = await prisma.task.findMany({
+    where: {
+      status: { in: OPEN_STATUSES },
+      dueDate: { lte: horizon },
+      ...(opts.departmentId ? { departmentId: opts.departmentId } : {}),
+    },
+    include: {
+      assignee: true,
+      department: true,
+      dependencies: { include: { dependsOn: true } },
+    },
+    orderBy: { dueDate: "asc" },
+    take: 200,
+  });
+
+  // Đếm việc đang làm dở theo từng người, một lần cho cả lượt
+  const loadRows = await prisma.task.groupBy({
+    by: ["assigneeId"],
+    where: { status: "IN_PROGRESS", assigneeId: { not: null } },
+    _count: { _all: true },
+  });
+  const loadMap = new Map<string, number>();
+  for (const r of loadRows) if (r.assigneeId) loadMap.set(r.assigneeId, r._count._all);
+
+  // Nhịp làm việc: tính một lần cho mỗi người, dùng lại cho mọi việc của họ
+  const velocityCache = new Map<string, VelocityResult>();
+
+  const out: PredictiveScanResult["predictions"] = [];
+
+  for (const t of tasks) {
+    let vel: VelocityResult;
+    if (t.assigneeId) {
+      if (!velocityCache.has(t.assigneeId)) {
+        velocityCache.set(t.assigneeId, await velocityFor(t.assigneeId));
+      }
+      vel = velocityCache.get(t.assigneeId)!;
+    } else {
+      vel = {
+        velocity: 1,
+        sampleSize: 0,
+        confidence: "NONE",
+        onTimeRate: null,
+        medianDelayDays: null,
+        note: "Việc chưa giao cho ai nên không có nhịp làm việc để dựa vào.",
+      };
+    }
+
+    const lateBlockers = t.dependencies.filter(
+      (d) =>
+        OPEN_STATUSES.includes(d.dependsOn.status) &&
+        d.dependsOn.dueDate.getTime() < now.getTime()
+    ).length;
+
+    const p = predictTask(
+      {
+        id: t.id,
+        title: t.title,
+        status: t.status,
+        priority: t.priority,
+        progress: t.progress,
+        riskScore: t.riskScore,
+        startDate: t.startDate,
+        createdAt: t.createdAt,
+        dueDate: t.dueDate,
+        assigneeId: t.assigneeId,
+        assigneeActiveTasks: t.assigneeId ? (loadMap.get(t.assigneeId) ?? 0) : 0,
+        lateBlockerCount: lateBlockers,
+      },
+      vel,
+      now
+    );
+
+    out.push({
+      ...p,
+      departmentName: t.department.name,
+      assigneeName: t.assignee?.fullName ?? null,
+      dueDate: t.dueDate.toISOString(),
+    });
+
+    /* Lưu lại để sau này chấm xem dự báo có đúng không.
+       Mỗi việc chỉ lưu một bản mỗi ngày, tránh phình bảng khi cron chạy 12 lượt. */
+    if (opts.persist) {
+      const startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      const existing = await prisma.predictionLog.findFirst({
+        where: { taskId: t.id, predictedAt: { gte: startOfDay } },
+      });
+      if (!existing) {
+        await prisma.predictionLog.create({
+          data: {
+            taskId: t.id,
+            completionProbability: p.completionProbabilityPercent,
+            projectedDelayDays: p.projectedDelayDays,
+            riskCategory: p.riskCategory,
+            factorsJson: JSON.stringify(p.predictiveFactors),
+            sampleSize: p.sampleSize,
+            confidence: p.confidence,
+          },
+        });
+      }
+    }
+  }
+
+  out.sort(
+    (a, b) => a.completionProbabilityPercent - b.completionProbabilityPercent
+  );
+
+  return {
+    predictions: out,
+    scanned: out.length,
+    highRisk: out.filter((p) => p.riskCategory === "HIGH_FAILURE_RISK").length,
+    moderateRisk: out.filter((p) => p.riskCategory === "MODERATE_RISK").length,
+    weakBasis: out.filter((p) => p.confidence === "NONE").length,
+  };
+}
+
+/**
+ * CHẤM LẠI DỰ BÁO CŨ.
+ *
+ * Đây là thứ quyết định bộ dự báo có đáng tin hay không. Không có nó thì hệ
+ * thống cứ đưa ra số mãi mà chẳng ai biết nó đúng bao nhiêu phần. Có nó thì sau
+ * vài tháng, hệ thống tự nói được: "những lần tôi báo nguy cơ cao, 7/10 lần là
+ * trễ thật".
+ */
+export async function scorePastPredictions(now = new Date()) {
+  const pending = await prisma.predictionLog.findMany({
+    where: { outcomeKnown: false },
+    include: { task: true },
+    take: 500,
+  });
+
+  let scored = 0;
+
+  for (const log of pending) {
+    const t = log.task;
+    // Chỉ chấm khi việc đã đóng hẳn
+    if (t.status !== "DONE" && t.status !== "CANCELLED") continue;
+    if (t.status === "CANCELLED") {
+      // Việc bị huỷ thì không có đúng sai để chấm — đánh dấu đã biết kết quả
+      await prisma.predictionLog.update({
+        where: { id: log.id },
+        data: { outcomeKnown: true, outcomeAt: now },
+      });
+      continue;
+    }
+    if (!t.completedAt) continue;
+
+    const delayDays =
+      (t.completedAt.getTime() - t.dueDate.getTime()) / DAY;
+    const actuallyLate = delayDays > 0;
+    // Dự báo coi là "báo trễ" khi khả năng xong đúng hạn dưới 50%
+    const predictedLate = log.completionProbability < 50;
+
+    await prisma.predictionLog.update({
+      where: { id: log.id },
+      data: {
+        outcomeKnown: true,
+        actuallyLate,
+        actualDelayDays: Math.round(delayDays * 10) / 10,
+        wasCorrect: predictedLate === actuallyLate,
+        outcomeAt: now,
+      },
+    });
+    scored++;
+  }
+
+  return { scored };
+}
+
+export type AccuracyReport = {
+  total: number;
+  correct: number;
+  accuracyPercent: number | null;
+  /** Báo trễ và trễ thật */
+  truePositive: number;
+  /** Báo trễ nhưng vẫn kịp */
+  falsePositive: number;
+  /** Báo ổn nhưng lại trễ — loại sai nguy hiểm nhất */
+  falseNegative: number;
+  trueNegative: number;
+  confidence: string;
+  note: string;
+};
+
+export async function getPredictionAccuracy(): Promise<AccuracyReport> {
+  const rows = await prisma.predictionLog.findMany({
+    where: { outcomeKnown: true, actuallyLate: { not: null } },
+    select: { completionProbability: true, actuallyLate: true, wasCorrect: true },
+  });
+
+  const total = rows.length;
+  if (total === 0) {
+    return {
+      total: 0,
+      correct: 0,
+      accuracyPercent: null,
+      truePositive: 0,
+      falsePositive: 0,
+      falseNegative: 0,
+      trueNegative: 0,
+      confidence: "NONE",
+      note: "Chưa có việc nào đóng lại sau khi được dự báo, nên chưa đo được bộ dự báo đúng bao nhiêu phần. Con số này sẽ có sau vài tuần chạy thật.",
+    };
+  }
+
+  let tp = 0, fp = 0, fn = 0, tn = 0;
+  for (const r of rows) {
+    const predictedLate = r.completionProbability < 50;
+    if (predictedLate && r.actuallyLate) tp++;
+    else if (predictedLate && !r.actuallyLate) fp++;
+    else if (!predictedLate && r.actuallyLate) fn++;
+    else tn++;
+  }
+
+  const correct = tp + tn;
+  const accuracy = Math.round((correct / total) * 1000) / 10;
+
+  const confidence =
+    total >= 50 ? "HIGH" : total >= 20 ? "MEDIUM" : "LOW";
+
+  return {
+    total,
+    correct,
+    accuracyPercent: accuracy,
+    truePositive: tp,
+    falsePositive: fp,
+    falseNegative: fn,
+    trueNegative: tn,
+    confidence,
+    note:
+      total < 20
+        ? `Mới đo được trên ${total} việc — con số này còn dao động mạnh, đừng vội tin.`
+        : `Đo trên ${total} việc đã đóng. Đáng lo nhất là ${fn} lần hệ thống báo ổn nhưng việc vẫn trễ.`,
+  };
+}
+
+/* ==================================================================== */
+/* CÂN BẰNG TẢI NHÂN SỰ                                                 */
+/* ==================================================================== */
+
+export async function getCapacityReports(departmentId?: string | null) {
+  const users = await prisma.user.findMany({
+    where: {
+      isActive: true,
+      role: { not: "ADMIN" },
+      ...(departmentId ? { departmentId } : { departmentId: { not: null } }),
+    },
+    include: {
+      department: true,
+      assignedTasks: {
+        where: { status: { in: ["TO_DO", "IN_PROGRESS", "BLOCKED"] } },
+        select: { priority: true, estimatedHours: true, dueDate: true },
+      },
+    },
+    orderBy: { fullName: "asc" },
+  });
+
+  const reports: CapacityReport[] = users.map((u) =>
+    computeCapacity(
+      {
+        id: u.id,
+        fullName: u.fullName,
+        departmentName: u.department?.name ?? null,
+      },
+      u.assignedTasks
+    )
+  );
+
+  // Gợi ý san việc chỉ trong cùng phòng ban — luật cấm giao vượt cấp vẫn giữ
+  const byDept = new Map<string, CapacityReport[]>();
+  for (const r of reports) {
+    const k = r.departmentName ?? "—";
+    byDept.set(k, [...(byDept.get(k) ?? []), r]);
+  }
+  const suggestions = [...byDept.entries()].flatMap(([dept, list]) =>
+    suggestRebalance(list).map((s) => ({ ...s, departmentName: dept }))
+  );
+
+  return {
+    reports: reports.sort((a, b) => b.utilizationPercent - a.utilizationPercent),
+    suggestions,
+    overloaded: reports.filter((r) => r.workloadStatus === "OVERLOADED").length,
+    underutilized: reports.filter((r) => r.workloadStatus === "UNDERUTILIZED")
+      .length,
+  };
+}
+
+/* ==================================================================== */
+/* PHÁT HIỆN BẤT THƯỜNG KPI                                             */
+/* ==================================================================== */
+
+/**
+ * Quét toàn bộ số nhân viên tự khai trong một kỳ, so với lịch sử của chính họ.
+ * So người với chính mình chứ không so người này với người kia — mỗi người một
+ * đầu việc, so chéo là bất công.
+ */
+export async function runAnomalyScan(periodId?: string, now = new Date()) {
+  const period = periodId
+    ? await prisma.kpiPeriod.findUnique({ where: { id: periodId } })
+    : await prisma.kpiPeriod.findFirst({
+        orderBy: [{ year: "desc" }, { month: "desc" }],
+      });
+
+  if (!period) {
+    return { checked: 0, flagged: 0, skippedThinHistory: 0, periodName: null };
+  }
+
+  const rows = await prisma.kpiResult.findMany({
+    where: {
+      periodId: period.id,
+      actualSelf: { not: null },
+    },
+    include: {
+      employee: true,
+      kpiDefinition: true,
+    },
+  });
+
+  let checked = 0;
+  let flagged = 0;
+  let thin = 0;
+
+  for (const r of rows) {
+    // Lịch sử của CHÍNH người này với CHÍNH chỉ tiêu này, các kỳ trước
+    const history = await prisma.kpiResult.findMany({
+      where: {
+        employeeId: r.employeeId,
+        kpiDefinitionId: r.kpiDefinitionId,
+        periodId: { not: period.id },
+        actualFinal: { not: null },
+      },
+      include: { period: true },
+      orderBy: [{ period: { year: "desc" } }, { period: { month: "desc" } }],
+      take: 12,
+    });
+
+    const values = history
+      .map((h) => h.actualFinal!)
+      .filter((v) => Number.isFinite(v));
+
+    if (!r.kpiDefinitionId || !r.kpiDefinition) continue;
+
+    const res = detectAnomaly(r.actualSelf!, values);
+    checked++;
+
+    if (res.confidence === "NONE") {
+      thin++;
+      // Dọn cảnh báo cũ nếu trước đó từng gắn mà giờ không đủ nền nữa
+      await prisma.kpiAnomaly.deleteMany({
+        where: { kpiResultId: r.id, status: "OPEN" },
+      });
+      continue;
+    }
+
+    if (!res.isAnomaly) {
+      await prisma.kpiAnomaly.deleteMany({
+        where: { kpiResultId: r.id, status: "OPEN" },
+      });
+      continue;
+    }
+
+    const existing = await prisma.kpiAnomaly.findUnique({
+      where: { kpiResultId: r.id },
+    });
+
+    // Đã có người giải trình hoặc BGĐ đã xử lý thì không ghi đè
+    if (existing && existing.status !== "OPEN") continue;
+
+    await prisma.kpiAnomaly.upsert({
+      where: { kpiResultId: r.id },
+      update: {
+        reportedValue: res.reportedValue,
+        historicalMean: res.historicalMean,
+        historicalMedian: res.historicalMedian,
+        stdDev: res.stdDev,
+        madValue: res.madValue,
+        zScore: res.zScore,
+        robustScore: res.robustScore,
+        sampleSize: res.sampleSize,
+        confidence: res.confidence,
+        severity: res.severity!,
+        reason: res.reason,
+      },
+      create: {
+        kpiResultId: r.id,
+        employeeId: r.employeeId,
+        kpiDefinitionId: r.kpiDefinitionId,
+        periodId: period.id,
+        reportedValue: res.reportedValue,
+        historicalMean: res.historicalMean,
+        historicalMedian: res.historicalMedian,
+        stdDev: res.stdDev,
+        madValue: res.madValue,
+        zScore: res.zScore,
+        robustScore: res.robustScore,
+        sampleSize: res.sampleSize,
+        confidence: res.confidence,
+        severity: res.severity!,
+        reason: res.reason,
+      },
+    });
+
+    if (!existing) {
+      flagged++;
+      if (res.severity === "CRITICAL") {
+        await sendCeoAlert({
+          title: `Khai báo KPI bất thường: ${r.employee.fullName}`,
+          details: `${r.kpiDefinition.name} — ${res.reason}`,
+          actionPath: "/analytics",
+        });
+      }
+    }
+  }
+
+  return {
+    checked,
+    flagged,
+    skippedThinHistory: thin,
+    periodName: period.name,
+  };
+}
+
+export async function explainAnomaly(
+  actor: SessionUser,
+  anomalyId: string,
+  text: string,
+  meta: Meta = {}
+) {
+  const a = await prisma.kpiAnomaly.findUnique({ where: { id: anomalyId } });
+  if (!a) {
+    throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy cảnh báo.", 404);
+  }
+  if (a.employeeId !== actor.id && actor.role === "EMPLOYEE") {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Bạn chỉ giải trình được cảnh báo về số liệu của chính mình.",
+      403
+    );
+  }
+  if (a.status !== "OPEN") {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      "Cảnh báo này đã qua bước giải trình.",
+      409
+    );
+  }
+  if (text.trim().length < 20) {
+    throw new BusinessError(
+      ERR.REASON_REQUIRED,
+      "Giải trình phải nói rõ nguyên nhân, tối thiểu 20 ký tự.",
+      400
+    );
+  }
+
+  const updated = await prisma.kpiAnomaly.update({
+    where: { id: anomalyId },
+    data: {
+      explanationText: text,
+      explainedById: actor.id,
+      explainedAt: new Date(),
+      status: "EXPLAINED",
+    },
+  });
+
+  await writeAudit({
+    actor,
+    action: "KPI_ANOMALY_EXPLAIN",
+    entityName: "kpi_anomalies",
+    entityId: anomalyId,
+    reason: text,
+    ...meta,
+  });
+
+  return updated;
+}
+
+export async function reviewAnomaly(
+  actor: SessionUser,
+  anomalyId: string,
+  input: { accepted: boolean; reviewNote: string },
+  meta: Meta = {}
+) {
+  if (actor.role !== "CEO" && actor.role !== "MANAGER") {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Chỉ trưởng phòng và Ban Giám đốc mới xử lý được cảnh báo bất thường.",
+      403
+    );
+  }
+  if (input.reviewNote.trim().length < 10) {
+    throw new BusinessError(
+      ERR.REASON_REQUIRED,
+      "Ghi rõ kết luận của bạn, tối thiểu 10 ký tự.",
+      400
+    );
+  }
+
+  const a = await prisma.kpiAnomaly.findUnique({
+    where: { id: anomalyId },
+    include: { employee: true, kpiDefinition: true },
+  });
+  if (!a) {
+    throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy cảnh báo.", 404);
+  }
+  if (actor.role === "MANAGER" && a.employee.departmentId !== actor.departmentId) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Cảnh báo này không thuộc phòng ban của bạn.",
+      403
+    );
+  }
+
+  const updated = await prisma.kpiAnomaly.update({
+    where: { id: anomalyId },
+    data: {
+      status: input.accepted ? "ACCEPTED" : "DISMISSED",
+      reviewNote: input.reviewNote,
+      reviewedById: actor.id,
+      reviewedAt: new Date(),
+    },
+  });
+
+  await writeAudit({
+    actor,
+    action: input.accepted
+      ? "KPI_ANOMALY_ACCEPT"
+      : "KPI_ANOMALY_DISMISS",
+    entityName: "kpi_anomalies",
+    entityId: anomalyId,
+    before: { severity: a.severity, sampleSize: a.sampleSize },
+    after: { status: updated.status },
+    reason: input.reviewNote,
+    ...meta,
+  });
+
+  await notify({
+    userId: a.employeeId,
+    title: `Đã xử lý cảnh báo số liệu: ${a.kpiDefinition.name}`,
+    body: `${actor.fullName} ${input.accepted ? "chấp nhận giải thích" : "bỏ qua cảnh báo"}. Ý kiến: ${input.reviewNote}`,
+    level: "INFO",
+    linkUrl: "/kpi",
+  });
+
+  return updated;
+}
+
+/* ==================================================================== */
+/* SỨC KHOẺ VẬN HÀNH                                                    */
+/* ==================================================================== */
+
+export async function buildHealthSnapshot(now = new Date()) {
+  const period = await prisma.kpiPeriod.findFirst({
+    orderBy: [{ year: "desc" }, { month: "desc" }],
+  });
+
+  const [
+    openTasks,
+    overdueTasks,
+    criticalRiskTasks,
+    mismatchCells,
+    totalKpiCells,
+    openAnomalies,
+  ] = await Promise.all([
+    prisma.task.count({ where: { status: { in: OPEN_STATUSES } } }),
+    prisma.task.count({
+      where: { status: { in: OPEN_STATUSES }, dueDate: { lt: now } },
+    }),
+    prisma.task.count({
+      where: { status: { in: OPEN_STATUSES }, riskScore: { gte: 80 } },
+    }),
+    prisma.reconciliation.count({ where: { status: "MISMATCH" } }),
+    period ? prisma.kpiResult.count({ where: { periodId: period.id } }) : 0,
+    prisma.kpiAnomaly.count({
+      where: { status: { in: ["OPEN", "EXPLAINED"] } },
+    }),
+  ]);
+
+  const capacity = await getCapacityReports();
+
+  const health = computeHealth({
+    openTasks,
+    overdueTasks,
+    criticalRiskTasks,
+    overloadedPeople: capacity.overloaded,
+    totalPeople: capacity.reports.length,
+    mismatchCells,
+    totalKpiCells,
+    openAnomalies,
+  });
+
+  return {
+    health,
+    facts: {
+      openTasks,
+      overdueTasks,
+      criticalRiskTasks,
+      overloadedPeople: capacity.overloaded,
+      underutilizedPeople: capacity.underutilized,
+      totalPeople: capacity.reports.length,
+      mismatchCells,
+      totalKpiCells,
+      openAnomalies,
+      periodName: period?.name ?? null,
+    },
+    capacity,
+  };
+}
+
+/* ==================================================================== */
+/* LƯỢT CHẠY NỀN                                                        */
+/* ==================================================================== */
+
+/** Gọi từ bộ máy chạy nền: chấm dự báo cũ, dự báo mới, quét bất thường. */
+export async function runAnalyticsCycle(now = new Date()) {
+  const outcome = await scorePastPredictions(now);
+  const scan = await runPredictiveScan({ persist: true, now });
+  const anomaly = await runAnomalyScan(undefined, now);
+
+  return {
+    predictionsScored: outcome.scored,
+    tasksPredicted: scan.scanned,
+    highRisk: scan.highRisk,
+    weakBasis: scan.weakBasis,
+    anomalyChecked: anomaly.checked,
+    anomalyFlagged: anomaly.flagged,
+    anomalySkippedThinHistory: anomaly.skippedThinHistory,
+  };
+}
+
+export { ANOMALY_SEVERITY_LABEL };

@@ -1,0 +1,1042 @@
+// =====================================================================
+// GANI FOODY - WORK & KPI MANAGEMENT SYSTEM
+// Phase 1 MVP Core schema
+//
+// Provider hien tai: SQLite (chay duoc ngay tren may, khong can cai gi).
+// Khi len production doi sang PostgreSQL: sua provider = "postgresql",
+// doi DATABASE_URL trong .env, chay `npx prisma migrate dev`.
+// Cac truong enum de dang String (SQLite khong ho tro enum) - gia tri hop le
+// duoc rang buoc o tang ung dung trong lib/constants.ts + zod validation.
+// Cac truong JSON de dang String chua JSON.stringify (SQLite khong co JSONB).
+// =====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------- TO CHUC -------------------------
+
+model Department {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  users             User[]
+  projects          Project[]
+  tasks             Task[]
+  kpiDefinitions    KpiDefinition[]
+  crossDeptRequests CrossDeptRequest[] @relation("TargetDept")
+
+  @@map("departments")
+}
+
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  passwordHash   String
+  fullName       String
+  jobTitle       String?
+  role           String    @default("EMPLOYEE") // EMPLOYEE | MANAGER | CEO | ADMIN
+  departmentId   String?
+  telegramChatId String?
+  phone          String?
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime?
+  passwordChangedAt DateTime?
+  // Tai khoan moi tao va tai khoan vua bi quan tri dat lai mat khau deu bat co
+  // nay. Nguoi do vao he thong la bi chan lai o trang doi mat khau, khong xem
+  // duoc gi khac cho toi khi tu dat mat khau rieng.
+  mustChangePassword Boolean @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  department Department? @relation(fields: [departmentId], references: [id])
+
+  assignedTasks    Task[]             @relation("AssigneeTasks")
+  createdTasks     Task[]             @relation("CreatorTasks")
+  comments         TaskComment[]
+  kpiResults       KpiResult[]        @relation("KpiOwner")
+  kpiReviews       KpiReview[]        @relation("Reviewer")
+  auditLogs        AuditLog[]
+  notifications    Notification[]
+  imports          DataImport[]
+  requestsSent     CrossDeptRequest[] @relation("RequesterUser")
+  requestsReceived CrossDeptRequest[] @relation("ApproverUser")
+  aiRequested      AiSuggestion[]     @relation("AiRequester")
+  aiDecided        AiSuggestion[]     @relation("AiDecider")
+  reconciliations  Reconciliation[]   @relation("ReconEmployee")
+  reconResolved    Reconciliation[]   @relation("ReconResolver")
+  telegramLinks    TelegramLink[]
+  periodSummaries  PeriodKpiSummary[] @relation("PeriodSummary")
+
+  // --- Phan xuong san xuat (Phase 3b) ---
+  // Vai tro trong xuong TACH RIENG khoi vai tro to chuc o tren.
+  // Quan doc vua la MANAGER toan cong ty vua la SUPERVISOR trong xuong;
+  // nhan vien QC co the chi la EMPLOYEE nhung nam quyen xac nhan pham chat.
+  // Gop hai thu nay vao mot truong la hong ca hai.
+  productionRole String? // WORKER | TEAM_LEADER | SUPERVISOR | QC_OFFICER | PRODUCTION_DIRECTOR
+
+  shiftsCreated      ProductionShiftLog[]        @relation("ShiftCreator")
+  shiftsQcApproved   ProductionShiftLog[]        @relation("ShiftQcOfficer")
+  shiftsLocked       ProductionShiftLog[]        @relation("ShiftLocker")
+  shiftParticipation ProductionShiftParticipant[]
+  dailyKpiResults    DailyKpiResult[]
+  auditsExplained    AntiGamingAudit[]           @relation("AuditExplainer")
+  auditsReviewed     AntiGamingAudit[]           @relation("AuditReviewer")
+  anomalies          KpiAnomaly[]                @relation("AnomalyEmployee")
+  anomaliesExplained KpiAnomaly[]                @relation("AnomalyExplainer")
+  anomaliesReviewed  KpiAnomaly[]                @relation("AnomalyReviewer")
+
+  // KPI Period & Shift Targets
+  periodTargetsCreated  KpiPeriodTarget[] @relation("PeriodTargetCreator")
+  periodTargetsEdited   KpiPeriodTarget[] @relation("PeriodTargetEditor")
+  shiftTargetsCreated   KpiShiftTarget[]  @relation("ShiftTargetCreator")
+  shiftTargetsEdited    KpiShiftTarget[]  @relation("ShiftTargetEditor")
+
+  // KPI Score Calculation
+  calculatedScores      ShiftKpiScore[] @relation("ScoreCalculator")
+  approvedScores        ShiftKpiScore[] @relation("ScoreApprover")
+
+  @@index([departmentId])
+  @@index([role])
+  @@map("users")
+}
+
+// ------------------------- CONG VIEC -------------------------
+
+model Project {
+  id           String    @id @default(uuid())
+  code         String    @unique
+  name         String
+  description  String?
+  departmentId String
+  status       String    @default("ACTIVE") // ACTIVE | ON_HOLD | DONE | CANCELLED
+  startDate    DateTime?
+  endDate      DateTime?
+  createdAt    DateTime  @default(now())
+
+  department Department @relation(fields: [departmentId], references: [id])
+  tasks      Task[]
+
+  @@index([departmentId])
+  @@map("projects")
+}
+
+model Task {
+  id              String    @id @default(uuid())
+  code            String    @unique
+  title           String
+  description     String?
+  projectId       String?
+  departmentId    String
+  assigneeId      String?
+  creatorId       String
+  kpiDefinitionId String?
+  startDate       DateTime?
+  dueDate         DateTime
+  completedAt     DateTime?
+  priority        String    @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  status          String    @default("TO_DO") // BACKLOG | TO_DO | IN_PROGRESS | BLOCKED | REVIEW | DONE | CANCELLED
+  progress        Int       @default(0)
+  riskScore       Int       @default(0)
+  riskReason      String?
+  riskScannedAt   DateTime?
+  blockedSince    DateTime?
+  isAiGenerated   Boolean   @default(false)
+  aiConfidence    Float?
+  // Gio cong uoc tinh - dung cho bo can bang tai nhan su (Phase 4).
+  // De trong thi he thong dung mac dinh theo muc uu tien chu khong ap cung 12h
+  // nhu ban thiet ke goc.
+  estimatedHours  Float?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  project       Project?       @relation(fields: [projectId], references: [id])
+  department    Department     @relation(fields: [departmentId], references: [id])
+  assignee      User?          @relation("AssigneeTasks", fields: [assigneeId], references: [id])
+  creator       User           @relation("CreatorTasks", fields: [creatorId], references: [id])
+  kpiDefinition KpiDefinition? @relation(fields: [kpiDefinitionId], references: [id])
+  comments      TaskComment[]
+
+  dependencies TaskDependency[] @relation("DependentTask")
+  dependents   TaskDependency[] @relation("BlockingTask")
+  predictions  PredictionLog[]
+  crossDeptRequests CrossDeptRequest[]
+
+  @@index([assigneeId, status])
+  @@index([departmentId])
+  @@index([dueDate])
+  @@index([status])
+  @@map("tasks")
+}
+
+model TaskComment {
+  id        String   @id @default(uuid())
+  taskId    String
+  userId    String
+  body      String
+  kind      String   @default("COMMENT") // COMMENT | STATUS_CHANGE | EVIDENCE
+  fileUrl   String?
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@map("task_comments")
+}
+
+// Quan he phu thuoc giua cac cong viec.
+// task "phu thuoc vao" dependsOn: dependsOn phai xong truoc thi task moi chay duoc.
+// Dung cho: bieu do Gantt, tinh duong gang (critical path), va cong diem rui ro
+// khi mot viec dang cho mot viec khac da tre han.
+model TaskDependency {
+  id          String   @id @default(uuid())
+  taskId      String
+  dependsOnId String
+  createdAt   DateTime @default(now())
+
+  task      Task @relation("DependentTask", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOn Task @relation("BlockingTask", fields: [dependsOnId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnId])
+  @@index([dependsOnId])
+  @@map("task_dependencies")
+}
+
+// Yeu cau giao viec lien phong ban - thay cho viec giao vuot cap (CEO da cam)
+model CrossDeptRequest {
+  id            String    @id @default(uuid())
+  title         String
+  description   String?
+  requesterId   String
+  targetDeptId  String
+  approverId    String?
+  dueDate       DateTime
+  priority      String    @default("MEDIUM")
+  status        String    @default("PENDING") // PENDING | ACCEPTED | REJECTED
+  rejectReason  String?
+  createdTaskId String?
+  createdAt     DateTime  @default(now())
+  resolvedAt    DateTime?
+
+  requester  User        @relation("RequesterUser", fields: [requesterId], references: [id])
+  targetDept Department  @relation("TargetDept", fields: [targetDeptId], references: [id])
+  approver   User?       @relation("ApproverUser", fields: [approverId], references: [id])
+  createdTask Task?      @relation(fields: [createdTaskId], references: [id])
+
+  @@index([status])
+  @@map("cross_dept_requests")
+}
+
+// ========================= KPI ========================
+
+model KpiPeriod {
+  id              String    @id @default(uuid())
+  month           Int
+  year            Int
+  name            String
+  selfReviewDeadline    DateTime
+  managerReviewDeadline DateTime
+  ceoApprovalDeadline   DateTime
+  status          String    @default("OPEN") // OPEN | SELF_LOCKED | MANAGER_LOCKED | FINALIZED
+  isLocked        Boolean   @default(false)
+  openedAt        DateTime  @default(now())
+  finalizedAt     DateTime?
+
+  results         KpiResult[]
+  summaries       PeriodKpiSummary[]
+  anomalies       KpiAnomaly[]
+  periodTargets   KpiPeriodTarget[]
+  reconciliations Reconciliation[]
+
+  @@unique([month, year])
+  @@map("kpi_periods")
+}
+
+model KpiDefinition {
+  id            String   @id @default(uuid())
+  code          String   @unique
+  name          String
+  description   String?
+  departmentId  String?
+  unit          String   // %, VND, kg, diem, etc.
+  isHigherBetter Boolean @default(true) // True: cao tot, False: thap tot
+  dataSource    String   @default("MANUAL") // MANUAL | EXCEL | IPOS_API
+  defaultWeight Float?   // truong so mac dinh
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  department      Department? @relation(fields: [departmentId], references: [id])
+  results         KpiResult[]
+  tasks           Task[]
+  anomalies       KpiAnomaly[]
+  reconciliations Reconciliation[]
+  actualFeeds     KpiActualFeed[]
+
+  @@index([departmentId])
+  @@map("kpi_definitions")
+}
+
+model KpiResult {
+  id              String    @id @default(uuid())
+  periodId        String
+  employeeId      String
+  kpiDefinitionId String?
+  kpiConfigId     String?
+  weightPercent   Float?
+  targetValue     Float?
+  actualValue     Float?
+
+  // Ba nguồn số cho một ô KPI — không đè lên nhau, đối soát quyết định số nào
+  // được đồng bộ vào actualSystem. Xem lib/services/reconciliation-service.ts.
+  actualSystem    Float?
+  actualSelf      Float?
+  actualFinal     Float?
+  hasMismatch     Boolean  @default(false)
+  mismatchPercent Float?
+  evidenceUrl     String?
+
+  achievementPercent Float   @default(0)
+  weightedScore      Float   @default(0)
+  isCapped           Boolean @default(false)
+  isOverridden       Boolean @default(false)
+  overrideReason     String?
+  status             String  @default("DRAFT") // DRAFT | SELF_REVIEWED | MANAGER_REVIEWED | FINALIZED
+
+  selfNote       String?
+  managerNote    String?
+  ceoNote        String?
+  selfSubmittedAt DateTime?
+  managerReviewedAt DateTime?
+  ceoReviewedAt  DateTime?
+  finalizedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  period        KpiPeriod       @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  employee      User            @relation("KpiOwner", fields: [employeeId], references: [id])
+  kpiDefinition KpiDefinition?  @relation(fields: [kpiDefinitionId], references: [id])
+  kpiConfig     KpiConfig?      @relation(fields: [kpiConfigId], references: [id])
+  reviews       KpiReview[]
+  anomaly       KpiAnomaly?
+
+  @@unique([periodId, employeeId, kpiDefinitionId])
+  @@index([periodId, employeeId])
+  @@index([status])
+  @@map("kpi_results")
+}
+
+model KpiReview {
+  id          String   @id @default(uuid())
+  kpiResultId String
+  reviewerId  String
+  stage       String  // SELF | MANAGER | CEO | REOPEN
+  action      String  // SUBMIT | APPROVE | ADJUST | EDIT_AFTER_LOCK | REQUEST_EVIDENCE
+  valueBefore Float?
+  valueAfter  Float?
+  scoreBefore Float?
+  scoreAfter  Float?
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  kpiResult KpiResult @relation(fields: [kpiResultId], references: [id], onDelete: Cascade)
+  reviewer  User      @relation("Reviewer", fields: [reviewerId], references: [id])
+
+  @@index([kpiResultId])
+  @@map("kpi_reviews")
+}
+
+// ============ KPI CONFIGURATION (PHÒNG SX) ============
+
+model KpiConfig {
+  id              String      @id @default(uuid())
+  code            String      @unique
+  name            String
+  department      String      // "PRODUCTION"
+  unit            String      // "kg/ca", "%", "điểm"
+  isHigherBetter  Boolean     @default(true)  // true = Cao tốt, false = Thấp tốt
+  weightPercent   Float       // 0-100
+  dataSource      String      // "MANUAL" | "IPOS" | "QA_CHECK" | "SYSTEM_CALC"
+  baselineValue   Float?      // Giá trị baseline (nếu có)
+  targetValue     Float?      // Target mặc định
+  isActive        Boolean     @default(true)
+  description     String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  kpiResults KpiResult[]
+  
+  @@index([department])
+  @@map("kpi_configs")
+}
+
+model BonusConfig {
+  id              String      @id @default(cuid())
+  department      String      // "PRODUCTION"
+  achievementMin  Float       // Minimum %
+  achievementMax  Float       // Maximum %
+  bonusMultiplier Float       // 1.5x, 1.0x, 0.75x
+  baseSalary      Float       // 233.000 đ
+  description     String?
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@unique([department, achievementMin])
+  @@index([department])
+  @@map("bonus_configs")
+}
+
+model ProductWasteStandard {
+  id              String      @id @default(cuid())
+  sku             String      @unique  // "Xúc xích xông khói", "Burger bò 48g", etc.
+  wastePercent    Float       // 6-8% tạm
+  dataSource      String      @default("ESTIMATED")  // "ESTIMATED" | "ACTUAL"
+  description     String?
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@map("product_waste_standards")
+}
+
+model PeriodKpiSummary {
+  id                String      @id @default(uuid())
+  periodId          String      @unique
+  period            KpiPeriod   @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  
+  employeeId        String
+  employee          User        @relation("PeriodSummary", fields: [employeeId], references: [id])
+  
+  department        String      // "PRODUCTION"
+  totalScore        Float       @default(0)  // Tổng điểm có trọng số
+  achievementPercent Float      @default(0)  // Trung bình achievement
+  bonusMultiplier   Float       @default(0)  // 1.5x / 1.0x / 0.75x / 0
+  bonusAmount       Float       @default(0)  // Tiền thưởng tính ra
+  
+  status            String      @default("DRAFT")  // DRAFT | FINALIZED
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  
+  @@unique([periodId, employeeId])
+  @@index([periodId, employeeId, department])
+  @@map("period_kpi_summaries")
+}
+
+// ========================= AUDIT & LOG ========================
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  userId        String?
+  userEmail     String?
+  action        String
+  entityName    String
+  entityId      String
+  beforePayload String?
+  afterPayload  String?
+  reason        String?
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([entityName, entityId])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  title     String
+  body      String
+  level     String    @default("INFO") // INFO | WARNING | CRITICAL
+  linkUrl   String?
+  channel   String    @default("IN_APP") // vd "IN_APP+TELEGRAM"
+  sentOk    Boolean   @default(true)
+  sendError String?
+  isRead    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+// ========================= DATA IMPORT ========================
+
+model DataImport {
+  id           String   @id @default(uuid())
+  fileName     String
+  source       String   // EXCEL | API | CSV
+  uploadedById String
+  rowsTotal    Int      @default(0)
+  rowsOk       Int      @default(0)
+  rowsError    Int      @default(0)
+  errorLog     String?
+  createdAt    DateTime @default(now())
+
+  user  User            @relation(fields: [uploadedById], references: [id])
+  feeds KpiActualFeed[]
+
+  @@index([source])
+  @@map("data_imports")
+}
+
+// ========================= AI SUGGESTION ========================
+
+model AiSuggestion {
+  id                String    @id @default(uuid())
+  kind              String // TASK_PARSE | KPI_ADVISORY | EXEC_BRIEFING
+  engine            String // gemini | rule_based
+  modelName         String
+  entityName        String // tasks | kpi_results | system
+  entityId          String?
+  inputText         String
+  payload           String // JSON kết quả máy sinh ra
+  confidencePercent Float
+  rationale         String?
+  missingInfo       String?
+  status            String    @default("PENDING") // PENDING | ACCEPTED | REJECTED
+  latencyMs         Int?
+  resultEntityId    String? // id bản ghi thật được tạo sau khi duyệt (vd taskId)
+  requestedById     String
+  decidedById       String?
+  createdAt         DateTime  @default(now())
+  decidedAt         DateTime?
+
+  requestedBy User? @relation("AiRequester", fields: [requestedById], references: [id])
+  decidedBy   User? @relation("AiDecider", fields: [decidedById], references: [id])
+
+  @@index([requestedById, createdAt])
+  @@index([kind, status])
+  @@map("ai_suggestions")
+}
+
+// ========================= RECONCILIATION (Phase 3) ========================
+// Đối soát dữ liệu đa nguồn theo từng ô KPI (kỳ + nhân viên + chỉ tiêu).
+// Nguồn khớp nhau (lệch ≤ ngưỡng) -> tự đồng bộ, im lặng. Lệch quá ngưỡng ->
+// TREO LẠI, không ghi số nào, chờ người có thẩm quyền chốt và ghi lý do.
+// Xem lib/services/reconciliation-service.ts.
+
+model Reconciliation {
+  id              String    @id @default(uuid())
+  periodId        String
+  employeeId      String
+  kpiDefinitionId String
+  sourcesJson     String // JSON của SourceValue[] — nhật ký các nguồn tại thời điểm đối soát
+  minValue        Float
+  maxValue        Float
+  variancePercent Float
+  status          String    @default("MATCHED") // MATCHED | MISMATCH | RESOLVED
+  resolvedValue   Float?
+  resolvedSource  String?
+  resolveReason   String?
+  resolvedById    String?
+  resolvedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  period        KpiPeriod     @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  employee      User          @relation("ReconEmployee", fields: [employeeId], references: [id])
+  kpiDefinition KpiDefinition @relation(fields: [kpiDefinitionId], references: [id])
+  resolvedBy    User?         @relation("ReconResolver", fields: [resolvedById], references: [id])
+
+  @@unique([periodId, employeeId, kpiDefinitionId])
+  @@index([status])
+  @@map("reconciliations")
+}
+
+// Nhật ký thô mọi số thực tế nạp vào từ bên ngoài (iPOS/CRM/ERP/Excel/xưởng
+// sản xuất) — LUÔN được lưu, kể cả khi kỳ chưa mở hoặc dòng KPI đã chốt, để
+// sau này tra lại "hôm đó nguồn X báo bao nhiêu" vẫn còn.
+model KpiActualFeed {
+  id              String   @id @default(uuid())
+  kpiDefinitionId String
+  employeeEmail   String
+  periodMonth     Int
+  periodYear      Int
+  value           Float
+  source          String // IPOS_API | CRM_API | ERP_API | SHEETS | EXCEL | MANUAL | PRODUCTION | EXTERNAL_API
+  sourceCode      String?
+  rawPayload      String?
+  importId        String? // liên kết bản nạp Excel hàng loạt, nếu nguồn là EXCEL
+  createdAt       DateTime @default(now())
+
+  kpiDefinition KpiDefinition @relation(fields: [kpiDefinitionId], references: [id])
+  import        DataImport?   @relation(fields: [importId], references: [id])
+
+  @@index([employeeEmail, kpiDefinitionId, periodMonth, periodYear])
+  @@map("kpi_actual_feeds")
+}
+
+// Nguồn tích hợp bên ngoài đã đăng ký (iPOS/CRM/ERP/Sheets), mỗi nguồn một
+// khoá bí mật riêng để ký HMAC — lộ khoá một nguồn không kéo theo nguồn khác.
+model IntegrationSource {
+  id         String    @id @default(uuid())
+  code       String    @unique
+  name       String
+  kind       String // IPOS | CRM | ERP | SHEETS | OTHER
+  priority   Int       @default(10)
+  isActive   Boolean   @default(true)
+  secret     String
+  lastSeenAt DateTime?
+  lastStatus String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  webhookLogs WebhookLog[]
+
+  @@map("integration_sources")
+}
+
+// Mọi lần gọi vào cổng webhook tích hợp, kể cả lần bị chặn (sai chữ ký, phát
+// lại gói cũ, nguồn chưa đăng ký...).
+model WebhookLog {
+  id            String   @id @default(uuid())
+  sourceCode    String
+  sourceId      String?
+  endpoint      String
+  signatureOk   Boolean
+  httpStatus    Int
+  itemsReceived Int      @default(0)
+  itemsApplied  Int      @default(0)
+  itemsRejected Int      @default(0)
+  error         String?
+  payloadSample String?
+  ipAddress     String?
+  createdAt     DateTime @default(now())
+
+  source IntegrationSource? @relation(fields: [sourceId], references: [id])
+
+  @@index([sourceCode, createdAt])
+  @@map("webhook_logs")
+}
+
+// ========================= TELEGRAM LINK ========================
+
+model TelegramLink {
+  id        String    @id @default(uuid())
+  code      String    @unique // mã 6 số, sống 10 phút
+  userId    String
+  chatId    String? // chat Telegram đã dùng mã này để nối
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("telegram_links")
+}
+
+// ========================= PRODUCTION (Phase 3) ========================
+
+model ProductSku {
+  id                  String   @id @default(uuid())
+  skuCode             String   @unique
+  skuName             String
+  targetOutputKg      Float    @default(500) // kg/ca - trần 500kg HCM01
+  stdMaterialLossRate Float    @default(8) // % hao hụt định mức — số tạm, chưa có định mức thật
+  stdKgPerLaborHour   Float    @default(0)
+  unitPriceVnd        Float    @default(0)
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+
+  shiftLogs ProductionShiftLog[]
+
+  @@map("product_skus")
+}
+
+model ProductionShiftLog {
+  id              String    @id @default(uuid())
+  skuId           String
+  shiftDate       DateTime
+  shiftType       String    // MORNING | AFTERNOON | NIGHT
+  status          String    @default("DRAFT")  // DRAFT | QC_APPROVED | LOCKED
+  createdById     String
+  createdAt       DateTime  @default(now())
+
+  // --- 1. NHÂN VIÊN KHAI (buoc DRAFT) ---
+  rawOutputKg     Float // san luong tho khai bao (kg)
+  totalLaborHours Float // tong gio cong thuc te cua ca
+  downtimeHours   Float @default(0)
+  // NVL cap vao la SU THAT TU KHO, biet ngay dau ca — khong phai quyet dinh cua
+  // BGD. De o day de nguoi khai khong biet truoc ket qua cham diem.
+  rawMaterialInputKg Float @default(0)
+  draftNote          String?
+
+  // --- 2. QC/KCS XAC NHAN (buoc QC_APPROVED) ---
+  qcPassedKg          Float     @default(0)
+  reworkKg            Float     @default(0)
+  scrapKg             Float     @default(0)
+  haccpViolationCount Int       @default(0)
+  qcNote              String?
+  qcOfficerId         String?
+  qcApprovedAt        DateTime?
+
+  // --- 3. BAN GIAM DOC KHOA SO (buoc LOCKED) ---
+  targetOutputKg    Float     @default(0)
+  stdMaterialNormKg Float     @default(0) // he thong tu tinh, khong ai go tay
+  qualityLossVnd    Float     @default(0) // CHI CEO va GIAM DOC SX duoc xem
+  targetOverrideReason String? // bat buoc khi BGD dat target khac chuan SKU
+  materialOverrideReason String? // bat buoc khi BGD sua NVL khac so kho khai
+  ceoNote           String?
+  lockedById        String?
+  lockedAt          DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  sku          ProductSku                   @relation(fields: [skuId], references: [id])
+  createdBy    User                         @relation("ShiftCreator", fields: [createdById], references: [id])
+  qcOfficer    User?                        @relation("ShiftQcOfficer", fields: [qcOfficerId], references: [id])
+  lockedBy     User?                        @relation("ShiftLocker", fields: [lockedById], references: [id])
+  participants ProductionShiftParticipant[]
+  kpiResults   DailyKpiResult[]
+  audits       AntiGamingAudit[]
+  kpiScore     ShiftKpiScore?
+
+  @@unique([shiftDate, shiftType, skuId])
+  @@index([status])
+  @@index([shiftDate])
+  @@map("production_shift_logs")
+}
+
+// Ai lam ca do. Ban thiet ke goc thieu bang nay, nen DailyKpiResult.userId
+// khong biet lay tu dau — engine khong the cham diem cho ai ca.
+model ProductionShiftParticipant {
+  id         String @id @default(uuid())
+  shiftLogId String
+  userId     String
+
+  stage           String // cong doan: SO_CHE | PHOI_TRON | TAO_HINH | LAM_CHIN | DONG_GOI | CAP_DONG
+  hoursWorked     Float // gio cong thuc te cua nguoi nay
+  scheduledHours  Float  @default(0) // gio cong dang ky — de tinh chuyen can
+  // Loi thuoc ve cong doan cua nguoi nay, do QC ghi nhan.
+  // Day la thu DUY NHAT phan biet duoc nguoi lam tot va lam au trong cung mot ca.
+  personalDefectKg Float @default(0)
+  violationCount   Int   @default(0) // vi pham noi quy / HACCP ca nhan
+  note             String?
+
+  shiftLog ProductionShiftLog @relation(fields: [shiftLogId], references: [id], onDelete: Cascade)
+  user     User               @relation(fields: [userId], references: [id])
+
+  @@unique([shiftLogId, userId])
+  @@index([userId])
+  @@map("production_shift_participants")
+}
+
+// Canh bao hanh vi chay chi tieu. Phat hien thi KHOA THUONG tam thoi,
+// khong tru diem — vi may co the doc sai, nguoi phai duoc quyen giai trinh.
+model AntiGamingAudit {
+  id           String @id @default(uuid())
+  shiftLogId   String
+  behaviorType String // PRODUCTIVITY_VS_MATERIAL_LOSS | REWORK_HIDING_SCRAP | MASS_BALANCE_MISMATCH
+  severity     String // WARNING | CRITICAL
+  auditNote    String
+  status       String @default("PENDING_EXPLANATION") // PENDING_EXPLANATION | EXPLAINED | CEO_APPROVED | REJECTED
+
+  explanationText String?
+  explainedById   String?
+  explainedAt     DateTime?
+
+  ceoReviewNote String?
+  reviewedById  String?
+  reviewedAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  shiftLog    ProductionShiftLog @relation(fields: [shiftLogId], references: [id], onDelete: Cascade)
+  explainedBy User?              @relation("AuditExplainer", fields: [explainedById], references: [id])
+  reviewedBy  User?              @relation("AuditReviewer", fields: [reviewedById], references: [id])
+
+  @@index([status])
+  @@map("anti_gaming_audits")
+}
+
+model DailyKpiResult {
+  id         String @id @default(uuid())
+  userId     String
+  shiftLogId String
+
+  tier1Score Float // ca nhan / cong doan (trong so 60%)
+  tier2Score Float // toan xuong (trong so 40%)
+  finalWeightedScore Float
+
+  // Chi tiet tung thanh phan diem, dang JSON — de nhan vien mo ra xem vi sao
+  // minh duoc tung ay diem, khong phai tin mot con so tu tren troi roi xuong.
+  breakdownJson String?
+
+  bonusMultiplier Float   @default(1.0)
+  isBonusLocked   Boolean @default(false)
+  finalBonusVnd   Float   @default(0)
+
+  createdAt DateTime @default(now())
+
+  user     User               @relation(fields: [userId], references: [id])
+  shiftLog ProductionShiftLog @relation(fields: [shiftLogId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftLogId, userId])
+  @@index([userId])
+  @@map("daily_kpi_results")
+}
+
+// ================== PHAN TICH & DU BAO (Phase 4) ==================
+//
+// Nguyen tac xuyen suot ca phase nay: MOI ket qua deu phai khai no dua tren bao
+// nhieu du lieu. Khong du nen thi noi thang la chua du can cu, khong dua ra con
+// so. Phan mem sai khong nguy hiem bang phan mem sai mot cach trong rat thuyet
+// phuc - vi nguoi ta nhin bieu do dep roi ra quyet dinh that.
+
+// Luu lai tung du bao de sau nay DO XEM DU BAO CO DUNG KHONG.
+// Day la cach duy nhat de mot bo du bao kiem duoc long tin: no tu bao cao ty le
+// trung cua chinh no, thay vi bat nguoi dung tin suong.
+model PredictionLog {
+  id         String   @id @default(uuid())
+  taskId     String
+  predictedAt DateTime @default(now())
+
+  completionProbability Float // % kha nang xong dung han
+  projectedDelayDays    Float
+  riskCategory          String // ON_TRACK | MODERATE_RISK | HIGH_FAILURE_RISK
+  factorsJson           String
+
+  // Nen du lieu cua du bao nay
+  sampleSize Int    @default(0) // so viec da dong cua nguoi phu trach
+  confidence String @default("NONE") // HIGH | MEDIUM | LOW | NONE
+
+  // Ket qua that, dien sau khi cong viec dong lai
+  outcomeKnown    Boolean   @default(false)
+  actuallyLate    Boolean?
+  actualDelayDays Float?
+  wasCorrect      Boolean?
+  outcomeAt       DateTime?
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, predictedAt])
+  @@index([outcomeKnown])
+  @@map("prediction_logs")
+}
+
+// Bat thuong trong so lieu KPI tu khai, phat hien bang thong ke chuoi thoi gian.
+model KpiAnomaly {
+  id              String @id @default(uuid())
+  kpiResultId     String @unique
+  employeeId      String
+  kpiDefinitionId String
+  periodId        String
+
+  reportedValue    Float
+  historicalMean   Float
+  historicalMedian Float
+  stdDev           Float
+  madValue         Float // do lech tuyet doi trung vi - khong bi mot ngoai le keo lech
+  zScore           Float
+  robustScore      Float
+  sampleSize       Int
+  confidence       String // HIGH | MEDIUM | LOW
+  severity         String // WATCH | WARNING | CRITICAL
+  reason           String
+
+  status          String    @default("OPEN") // OPEN | EXPLAINED | ACCEPTED | DISMISSED
+  explanationText String?
+  explainedById   String?
+  explainedAt     DateTime?
+  reviewNote      String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+
+  createdAt DateTime @default(now())
+
+  kpiResult     KpiResult     @relation(fields: [kpiResultId], references: [id], onDelete: Cascade)
+  employee      User          @relation("AnomalyEmployee", fields: [employeeId], references: [id])
+  kpiDefinition KpiDefinition @relation(fields: [kpiDefinitionId], references: [id])
+  period        KpiPeriod     @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  explainedBy   User?         @relation("AnomalyExplainer", fields: [explainedById], references: [id])
+  reviewedBy    User?         @relation("AnomalyReviewer", fields: [reviewedById], references: [id])
+
+  @@index([status])
+  @@index([periodId])
+  @@map("kpi_anomalies")
+}
+
+// ============ KPI PERIOD TARGET (MỤC TIÊU CHUNG CẢ PHÒNG) ============
+// Một record duy nhất cho mỗi kỳ KPI & phòng ban
+// CEO/BGD nhập tất cả 6 targets ở đây
+
+model KpiPeriodTarget {
+  id              String    @id @default(uuid())
+  periodId        String    @unique  // 1 kỳ = 1 target chung
+  period          KpiPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  department      String    // "PRODUCTION"
+
+  // 6 KPI Targets cho Phòng SX
+  output_target           Float?  // Sản Lượng (kg/ca)
+  waste_target            Float?  // Tỷ Lệ Hao Hụt (%)
+  quality_target          Float?  // Tỷ Lệ Chất Lượng (%)
+  spec_target             Float?  // Tỷ Lệ Đúng Spec (%)
+  safety_target           Float?  // An Toàn Lao Động (điểm)
+  deadline_target         Float?  // Đúng Deadline (%)
+
+  // Metadata
+  createdById     String
+  createdBy       User      @relation("PeriodTargetCreator", fields: [createdById], references: [id])
+
+  lastEditedById  String?
+  lastEditedBy    User?     @relation("PeriodTargetEditor", fields: [lastEditedById], references: [id])
+
+  status          String    @default("DRAFT")  // DRAFT | APPROVED | LOCKED
+  approvalNote    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  shiftTargets    KpiShiftTarget[]
+  shiftScores     ShiftKpiScore[]
+
+  @@unique([periodId, department])
+  @@index([department])
+  @@map("kpi_period_targets")
+}
+
+// ============ KPI SHIFT TARGET (MỤC TIÊU TỪNG CA) ============
+// Cho phép set targets khác nhau cho từng ca (morning/afternoon/night)
+// Optional: nếu không nhập, dùng mục tiêu chung (period target)
+
+model KpiShiftTarget {
+  id                  String    @id @default(uuid())
+  periodTargetId      String
+  periodTarget        KpiPeriodTarget @relation(fields: [periodTargetId], references: [id], onDelete: Cascade)
+
+  shiftDate           DateTime
+  shiftType           String    // MORNING | AFTERNOON | NIGHT
+
+  // 6 KPI Targets cho ca này (nếu khác với mục tiêu chung)
+  output_target       Float?    // Thường để null = dùng period target
+  waste_target        Float?
+  quality_target      Float?
+  spec_target         Float?
+  safety_target       Float?
+  deadline_target     Float?
+
+  // Metadata
+  createdById         String
+  createdBy           User      @relation("ShiftTargetCreator", fields: [createdById], references: [id])
+
+  lastEditedById      String?
+  lastEditedBy        User?     @relation("ShiftTargetEditor", fields: [lastEditedById], references: [id])
+
+  status              String    @default("DRAFT")  // DRAFT | APPROVED
+  note                String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([periodTargetId, shiftDate, shiftType])
+  @@index([shiftDate])
+  @@map("kpi_shift_targets")
+}
+
+// ============ SHIFT KPI SCORE ============
+// Lưu kết quả tính toán achievement, weighted score, bonus cho từng ca
+
+model ShiftKpiScore {
+  id                String    @id @default(uuid())
+
+  // Relations
+  shiftLogId        String    @unique
+  shiftLog          ProductionShiftLog @relation(fields: [shiftLogId], references: [id], onDelete: Cascade)
+
+  periodTargetId    String
+  periodTarget      KpiPeriodTarget @relation(fields: [periodTargetId], references: [id], onDelete: Cascade)
+
+  // ============ 6 KPI SCORES ============
+  // Mỗi KPI có: Achievement% + Weighted Score
+
+  // 1. Sản Lượng Thực Tế (weight: 25%)
+  output_actual           Float?  // Giá trị thực tế (kg/ca)
+  output_target           Float?  // Giá trị target (kg/ca)
+  output_achievement      Float   @default(0)    // %
+  output_weighted_score   Float   @default(0)
+
+  // 2. Tỷ Lệ Hao Hụt (weight: 25%) - Thấp tốt, nên tính ngược
+  waste_actual            Float?  // Giá trị thực tế (%)
+  waste_target            Float?  // Giá trị target (%)
+  waste_achievement       Float   @default(0)    // % (100 nếu actual < target)
+  waste_weighted_score    Float   @default(0)
+
+  // 3. Tỷ Lệ Chất Lượng (weight: 20%)
+  quality_actual          Float?  // %
+  quality_target          Float?  // %
+  quality_achievement     Float   @default(0)    // %
+  quality_weighted_score  Float   @default(0)
+
+  // 4. Tỷ Lệ Đúng Spec (weight: 15%)
+  spec_actual             Float?  // %
+  spec_target             Float?  // %
+  spec_achievement        Float   @default(0)    // %
+  spec_weighted_score     Float   @default(0)
+
+  // 5. An Toàn Lao Động (weight: 10%)
+  safety_actual           Float?  // điểm (0-100)
+  safety_target           Float?  // điểm (0-100)
+  safety_achievement      Float   @default(0)    // %
+  safety_weighted_score   Float   @default(0)
+
+  // 6. Đúng Deadline Batch (weight: 5%)
+  deadline_actual         Float?  // %
+  deadline_target         Float?  // %
+  deadline_achievement    Float   @default(0)    // %
+  deadline_weighted_score Float   @default(0)
+
+  // ============ TOTAL & BONUS ============
+  totalScore              Float   @default(0)      // Tổng weighted scores (0-100)
+  bonusMultiplier         Float   @default(0)      // 1.5x / 1.0x / 0.75x / 0
+  baseSalary              Float   @default(233000) // Lương nền
+  bonusAmount             Float   @default(0)      // VND
+
+  // ============ BREAKDOWN (JSON) ============
+  // JSON để hiển thị chi tiết: kpi name, achievement%, score, etc.
+  breakdownJson           String? // {"kpis": [{code, name, achievement, score}, ...]}
+
+  // ============ METADATA ============
+  status                  String  @default("DRAFT")  // DRAFT | CALCULATED | APPROVED | LOCKED
+
+  calculatedById          String?
+  calculatedBy            User?   @relation("ScoreCalculator", fields: [calculatedById], references: [id])
+  calculatedAt            DateTime?
+
+  approvedById            String?
+  approvedBy              User?   @relation("ScoreApprover", fields: [approvedById], references: [id])
+  approvedAt              DateTime?
+
+  note                    String?
+
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@index([shiftLogId])
+  @@index([periodTargetId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("shift_kpi_scores")
+}
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  label     String?
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}

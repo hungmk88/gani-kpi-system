@@ -1,0 +1,133 @@
+/**
+ * Hằng số nghiệp vụ toàn hệ thống.
+ * Mọi quy tắc CEO đã chốt ở Phase 0 đều nằm ở đây - sửa 1 chỗ, áp dụng toàn hệ thống.
+ */
+
+// ----------------------- QUYẾT ĐỊNH CỦA CEO (PHASE 0) -----------------------
+
+/** Câu 1: thang điểm 100, cho phép vượt chỉ tiêu nhưng CAP ở 150%. */
+export const KPI_SCORE_CAP = 150;
+
+/** Câu 3: lịch chốt KPI 2-4-5 hàng tháng. */
+export const KPI_DEADLINE_DAYS = {
+  SELF_REVIEW: 2, // 23:59:59 ngày 2 - khoá quyền sửa của nhân viên
+  MANAGER_REVIEW: 4, // 23:59:59 ngày 4 - khoá quyền sửa của trưởng phòng
+  CEO_APPROVAL: 5, // ngày 5 - CEO duyệt & khoá vĩnh viễn
+} as const;
+
+/** Câu 4: KHÔNG cho phép giao task vượt cấp sang phòng ban khác. */
+export const ALLOW_CROSS_DEPT_ASSIGN = false;
+
+/** Ngưỡng lệch giữa số hệ thống và số nhân viên tự khai -> cảnh báo Data Mismatch. */
+export const DATA_MISMATCH_THRESHOLD_PERCENT = 5;
+
+/** Task bị BLOCKED quá số giờ này thì bị đẩy vào Exception Panel của CEO. */
+export const BLOCKED_ALERT_HOURS = 24;
+
+// ----------------------- ENUM (SQLite lưu dạng String) -----------------------
+
+export const ROLES = ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"] as const;
+export type Role = (typeof ROLES)[number];
+
+export const TASK_STATUSES = [
+  "BACKLOG",
+  "TO_DO",
+  "IN_PROGRESS",
+  "BLOCKED",
+  "REVIEW",
+  "DONE",
+  "CANCELLED",
+] as const;
+export type TaskStatus = (typeof TASK_STATUSES)[number];
+
+export const TASK_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+export type TaskPriority = (typeof TASK_PRIORITIES)[number];
+
+export const KPI_STATUSES = [
+  "DRAFT",
+  "SELF_REVIEWED",
+  "MANAGER_REVIEWED",
+  "FINALIZED",
+] as const;
+export type KpiStatus = (typeof KPI_STATUSES)[number];
+
+export const PERIOD_STATUSES = [
+  "OPEN",
+  "SELF_LOCKED",
+  "MANAGER_LOCKED",
+  "FINALIZED",
+] as const;
+export type PeriodStatus = (typeof PERIOD_STATUSES)[number];
+
+export const DATA_SOURCES = ["MANUAL", "EXCEL", "IPOS_API"] as const;
+
+// ----------------------- NHÃN TIẾNG VIỆT -----------------------
+
+export const ROLE_LABEL: Record<string, string> = {
+  EMPLOYEE: "Nhân viên",
+  MANAGER: "Trưởng phòng",
+  CEO: "Ban Giám đốc",
+  ADMIN: "Quản trị hệ thống",
+};
+
+export const TASK_STATUS_LABEL: Record<string, string> = {
+  BACKLOG: "Chờ xếp",
+  TO_DO: "Cần làm",
+  IN_PROGRESS: "Đang làm",
+  BLOCKED: "Bị chặn",
+  REVIEW: "Chờ duyệt",
+  DONE: "Hoàn thành",
+  CANCELLED: "Đã huỷ",
+};
+
+/** Các cột hiển thị trên bảng Kanban, theo đúng thứ tự. */
+export const KANBAN_COLUMNS: TaskStatus[] = [
+  "TO_DO",
+  "IN_PROGRESS",
+  "BLOCKED",
+  "REVIEW",
+  "DONE",
+];
+
+export const TASK_PRIORITY_LABEL: Record<string, string> = {
+  LOW: "Thấp",
+  MEDIUM: "Trung bình",
+  HIGH: "Cao",
+  CRITICAL: "Khẩn cấp",
+};
+
+export const KPI_STATUS_LABEL: Record<string, string> = {
+  DRAFT: "Chờ nhân viên khai",
+  SELF_REVIEWED: "NV đã khai - chờ TP",
+  MANAGER_REVIEWED: "TP đã duyệt - chờ BGĐ",
+  FINALIZED: "Đã chốt (khoá)",
+};
+
+export const PERIOD_STATUS_LABEL: Record<string, string> = {
+  OPEN: "Đang mở - nhân viên tự khai",
+  SELF_LOCKED: "Đã khoá NV - trưởng phòng duyệt",
+  MANAGER_LOCKED: "Đã khoá TP - chờ BGĐ duyệt",
+  FINALIZED: "Đã chốt toàn kỳ",
+};
+
+/** Thứ tự tiến trình của 1 dòng KPI - dùng để chặn nhảy cóc trạng thái. */
+export const KPI_STATUS_ORDER: Record<string, number> = {
+  DRAFT: 0,
+  SELF_REVIEWED: 1,
+  MANAGER_REVIEWED: 2,
+  FINALIZED: 3,
+};
+
+// ----------------------- MÃ LỖI NGHIỆP VỤ -----------------------
+
+export const ERR = {
+  UNAUTHENTICATED: "UNAUTHENTICATED",
+  FORBIDDEN: "FORBIDDEN",
+  CROSS_DEPT_ASSIGNMENT_FORBIDDEN: "CROSS_DEPT_ASSIGNMENT_FORBIDDEN",
+  SLA_LOCKED: "SLA_LOCKED",
+  KPI_FINALIZED: "KPI_FINALIZED",
+  REASON_REQUIRED: "REASON_REQUIRED",
+  NOT_FOUND: "NOT_FOUND",
+  VALIDATION_FAILED: "VALIDATION_FAILED",
+  WEIGHT_SUM_INVALID: "WEIGHT_SUM_INVALID",
+} as const;
