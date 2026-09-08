@@ -143,7 +143,8 @@ export async function seedHistory(ctx) {
             kpiDefinitionId: kpiMap[k.code].id,
             weightPercent: k.weight,
             targetValue: target,
-            actualValue: actual,
+            actualSelf: actual,
+            actualFinal: actual,
             achievementPercent: calc.achievement,
             weightedScore: calc.score,
             isCapped: calc.capped,
@@ -151,6 +152,7 @@ export async function seedHistory(ctx) {
             selfSubmittedAt: at(2),
             managerReviewedAt: at(4),
             ceoReviewedAt: at(5),
+            finalizedAt: at(5),
           },
         });
         rowCount++;

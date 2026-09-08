@@ -413,7 +413,7 @@ async function main() {
           kpiDefinitionId: kpiMap[k.code].id,
           weightPercent: k.weight,
           targetValue: round2(t.target * factor),
-          actualValue: t.actualSystem === null ? null : round2(t.actualSystem * factor),
+          actualSystem: t.actualSystem === null ? null : round2(t.actualSystem * factor),
           status: "DRAFT",
         },
       });
