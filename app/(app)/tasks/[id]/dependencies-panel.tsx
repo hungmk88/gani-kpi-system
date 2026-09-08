@@ -14,9 +14,9 @@ type Rel = {
 };
 
 /**
- * Quan h? ph? thu?c gi?a c�c c�ng vi?c.
- * ��y l� th? nu�i bi?u d? Gantt v� du?ng gang, d?ng th?i c?ng di?m r?i ro khi
- * m?t vi?c dang d?ng ch? m?t vi?c kh�c d� tr?.
+ * Quan hệ phụ thuộc giữa các công việc.
+ * Đây là thứ nuôi biểu đồ Gantt và đường găng, đồng thời cộng điểm rủi ro khi
+ * một việc đang đứng chờ một việc khác đã trễ.
  */
 export default function DependenciesPanel({
   taskId,
@@ -48,7 +48,7 @@ export default function DependenciesPanel({
       });
       const d = await r.json();
       if (!r.ok) {
-        setError(d.message || "Kh�ng n?i du?c.");
+        setError(d.message || "Không nối được.");
         return;
       }
       setPick("");
@@ -77,20 +77,20 @@ export default function DependenciesPanel({
   return (
     <div className="card p-5">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="section-title">Ph? thu?c c�ng vi?c</h3>
+        <h3 className="section-title">Phụ thuộc công việc</h3>
         <Link
           href="/tasks/gantt"
           className="text-xs text-brand-600 hover:underline"
         >
-          Xem tr�n Gantt ?
+          Xem trên Gantt →
         </Link>
       </div>
 
       {lateBlockers.length > 0 && (
         <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-          Vi?c n�y dang ch? {lateBlockers.length} vi?c <b>d� tr? h?n</b>. H?
-          th?ng d� c?ng di?m r?i ro tuong ?ng � g? m?t x�ch kia tru?c th� vi?c
-          n�y m?i ch?y du?c.
+          Việc này đang chờ {lateBlockers.length} việc <b>đã trễ hạn</b>. Hệ
+          thống đã cộng điểm rủi ro tương ứng — gỡ mắt xích kia trước thì việc
+          này mới chạy được.
         </div>
       )}
 
@@ -102,11 +102,11 @@ export default function DependenciesPanel({
 
       <div className="mb-4">
         <div className="mb-1.5 text-xs font-semibold text-ink-500">
-          Ph?i ch? xong ({blockedBy.length})
+          Phải chờ xong ({blockedBy.length})
         </div>
         {blockedBy.length === 0 ? (
           <p className="text-xs text-ink-400">
-            Kh�ng ch? vi?c n�o � l�m du?c ngay.
+            Không chờ việc nào — làm được ngay.
           </p>
         ) : (
           <ul className="space-y-1.5">
@@ -125,9 +125,9 @@ export default function DependenciesPanel({
                   <span
                     className={`block ${b.isLate ? "font-medium text-red-600" : "text-ink-400"}`}
                   >
-                    {b.code} � h?n{" "}
+                    {b.code} · hạn{" "}
                     {new Date(b.dueDate).toLocaleDateString("vi-VN")}
-                    {b.isLate && " � �� TR?"}
+                    {b.isLate && " · ĐÃ TRỄ"}
                   </span>
                 </Link>
                 {canEdit && (
@@ -136,7 +136,7 @@ export default function DependenciesPanel({
                     disabled={busy}
                     onClick={() => remove(b.id)}
                   >
-                    G?
+                    Gỡ
                   </button>
                 )}
               </li>
@@ -148,7 +148,7 @@ export default function DependenciesPanel({
       {blocking.length > 0 && (
         <div className="mb-4">
           <div className="mb-1.5 text-xs font-semibold text-ink-500">
-            �ang ch?n ({blocking.length})
+            Đang chặn ({blocking.length})
           </div>
           <ul className="space-y-1.5">
             {blocking.map((b) => (
@@ -161,7 +161,7 @@ export default function DependenciesPanel({
                     {b.title}
                   </span>
                   <span className="block text-amber-700">
-                    {b.code} � dang d?i vi?c n�y xong
+                    {b.code} · đang đợi việc này xong
                   </span>
                 </Link>
               </li>
@@ -172,17 +172,17 @@ export default function DependenciesPanel({
 
       {canEdit && candidates.length > 0 && (
         <div className="border-t border-ink-100 pt-3">
-          <label className="label">Th�m vi?c ph?i ch?</label>
+          <label className="label">Thêm việc phải chờ</label>
           <div className="flex gap-2">
             <select
               className="input"
               value={pick}
               onChange={(e) => setPick(e.target.value)}
             >
-              <option value="">� Ch?n c�ng vi?c �</option>
+              <option value="">— Chọn công việc —</option>
               {candidates.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.code} � {c.title}
+                  {c.code} · {c.title}
                 </option>
               ))}
             </select>
@@ -191,11 +191,11 @@ export default function DependenciesPanel({
               disabled={busy || !pick}
               onClick={add}
             >
-              N?i
+              Nối
             </button>
           </div>
           <p className="mt-1.5 text-xs text-ink-500">
-            H? th?ng t? ch?n n?u n?i v�o s? t?o v�ng l?p.
+            Hệ thống tự chặn nếu nối vào sẽ tạo vòng lặp.
           </p>
         </div>
       )}
