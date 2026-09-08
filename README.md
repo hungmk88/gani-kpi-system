@@ -6,6 +6,17 @@ Bản triển khai **Phase 1 (MVP Core)**, **Phase 2 (AI Engine & Advanced Views
 
 ## 1. Chạy hệ thống trong 3 lệnh
 
+> **Muốn dùng ngay, không cần chạy gì cả:** hệ thống đã sống tại
+> **[gani-kpi-system.vercel.app](https://gani-kpi-system.vercel.app)**. Mục
+> này chỉ cần khi anh muốn sửa code hoặc chạy thử trên máy.
+
+> **Lưu ý quan trọng:** `prisma/schema.prisma` giờ cố định `provider =
+> "postgresql"` — **không còn chạy SQLite cục bộ mặc định nữa.** `DATABASE_URL`
+> trong `.env` phải trỏ vào một database Postgres thật (Supabase) trước khi làm
+> gì khác. Xem mục 8c để tạo project Postgres **riêng cho máy dev**, tách khỏi
+> project production — đừng trỏ máy local vào thẳng database đang phục vụ
+> `gani-kpi-system.vercel.app`.
+
 Mở PowerShell tại thư mục `E:\GANI BRAINSTORM\kpi-system`:
 
 ```bash
@@ -29,7 +40,7 @@ Mở trình duyệt vào **http://localhost:3000**.
 | Nhân viên Kinh doanh | `nv.sales1@ganifoody.vn` | `Gani@2026` |
 | Quản trị hệ thống | `admin@ganifoody.vn` | `Gani@2026` |
 
-Có sẵn 18 tài khoản của 8 phòng ban, tất cả dùng chung mật khẩu mẫu ở trên.
+Có sẵn 19 tài khoản của 8 phòng ban, tất cả dùng chung mật khẩu mẫu ở trên.
 
 **Trước khi phát tài khoản cho nhân viên:** vào Quản trị → Tài khoản → *Đặt lại
 MK* cho từng người. Đặt lại xong, người đó bị chặn ở trang đổi mật khẩu ngay lần
@@ -111,6 +122,11 @@ Lịch: khoá KPI 23:59 ngày 2 và ngày 4, nhắc Ban Giám đốc 08:00 ngày
 Nếu không muốn mở cửa sổ thứ hai, Ban Giám đốc có thể bấm **Quét lại rủi ro ngay**
 trên Bảng điều hành bất cứ lúc nào — hai đường cùng chạy một logic. Lời nhắc có
 chặn trùng nên bấm nhiều lần cũng không spam ai.
+
+> **Trên production (Vercel):** `npm run scheduler` chỉ chạy được khi có một tiến
+> trình sống liên tục — không hợp với serverless. Bản deploy thật dùng
+> **cron-job.org** gọi `POST /api/cron/run` mỗi 2 tiếng, chạy đúng 7 việc y hệt
+> danh sách trên. Xem mục 8.
 
 ---
 
@@ -313,11 +329,11 @@ GET /api/kpi/dashboard/distribution
 GET /api/kpi/dashboard/trends?days=7|30|90
 ```
 
-### Báo cáo KPI (sẵn sàng implement)
+### Báo cáo KPI — chưa làm
 
-- **Báo cáo thưởng ca** — chi tiết thưởng từng ca, tầng điểm, hệ số
-- **Báo cáo phê duyệt** — danh sách ca chờ duyệt, lý do, người chịu trách nhiệm
-- **Xuất PDF/Excel** — tích hợp sẽ thêm vào Phase 3B
+Báo cáo thưởng ca chi tiết, báo cáo phê duyệt riêng, và xuất PDF/Excel cho
+Dashboard này **chưa có** — mới dừng ở 3 API endpoint và giao diện tổng hợp ở
+trên. Chưa có lịch cụ thể; làm khi nào có nhu cầu thật thì báo.
 
 ---
 
@@ -494,6 +510,21 @@ Server đang chạy, mở cửa sổ khác:
 ```bash
 npm run test:all
 ```
+
+> **`test:all` dừng ngay khi một bộ có lỗi** (nối bằng `&&`) — bộ sau sẽ không
+> chạy. Nếu Phase 1 báo lỗi thì Phase 2-3-4... chưa chắc đã chạy, đừng tưởng
+> nhầm là "chỉ có 2 lỗi". Muốn biết toàn cảnh thì chạy riêng từng bộ theo lệnh
+> ở cuối mục này.
+
+> **Kết quả xác nhận gần nhất (09/09/2026, trên database Postgres/Supabase,
+> sau khi tách project dev riêng theo mục 8c):**
+> Phase 1 **16/18** (2 lỗi là lỗi của chính bài test — chọn ngẫu nhiên một dòng
+> KPI không xác định chiều cao/thấp tốt, đã xác minh logic tính điểm thật đúng
+> qua gọi API trực tiếp), Phase 2 **35/35**, Phase 3 **38/38**, KPI Sản xuất
+> **43/43**. Phase 4 phát hiện **lỗi seed data thật** (đã sửa, xem mục 10) và
+> còn **một lỗi chưa xử lý xong** ở phần phát hiện bất thường KPI — xem mục 10.
+> Vận hành và Bảng điều hành **chưa được chạy lại** trên Postgres kể từ khi
+> khôi phục schema — chạy trước khi tin tưởng hoàn toàn.
 
 **304 phép thử** bám đúng bảng test case trong tài liệu thiết kế:
 
@@ -717,16 +748,88 @@ một dòng vào menu, không đụng gì ở tầng dịch vụ.
 
 ## 8. Đưa lên mạng cho nhân viên dùng
 
-Hiện hệ thống chạy SQLite trên máy này — đủ cho vài chục người trong mạng nội bộ, nhưng chưa phải chỗ để cả công ty dùng qua Internet. Khi cần chuyển:
+**Đã làm xong.** Hệ thống đang chạy thật tại:
 
-1. Tạo database PostgreSQL (Supabase bản miễn phí là đủ cho quy mô 20–150 người).
-2. Sửa `prisma/schema.prisma`: `provider = "sqlite"` → `provider = "postgresql"`.
-3. Sửa `DATABASE_URL` trong `.env` thành chuỗi kết nối Postgres.
-4. Chạy `npx prisma migrate dev --name init` rồi `npm run db:seed`.
-5. Đổi `JWT_SECRET`, `CRON_SECRET`, `IPOS_WEBHOOK_SECRET` sang chuỗi mới, và đặt `APP_URL` thành địa chỉ thật.
-6. Deploy lên Vercel (hoặc VPS chạy `npm run build && npm start` sau nginx). Lịch cron thì trỏ **cron-job.org** vào `POST /api/cron/run` kèm header `x-cron-secret`.
+- **App**: `gani-kpi-system.vercel.app` (Vercel, vùng Singapore `sin1`)
+- **Database**: PostgreSQL trên Supabase (region `ap-southeast-1`, Singapore)
+- **Cron nền**: cron-job.org gọi `POST /api/cron/run` mỗi 2 tiếng
 
-Cấu trúc bảng, kiểu dữ liệu và chỉ mục đã viết sẵn theo chuẩn PostgreSQL nên bước đổi này chỉ mất vài phút, không phải viết lại gì.
+Các bước đã thực hiện, ghi lại để làm lại được cho môi trường khác (VD: xưởng thứ hai, công ty con) hoặc khi cần build lại từ đầu:
+
+1. Tạo project PostgreSQL trên Supabase (bản miễn phí đủ cho 20–150 người). **Chọn region gần Việt Nam** (Singapore) — xem cái bẫy vùng miền bên dưới.
+2. Sửa `prisma/schema.prisma`: `provider = "sqlite"` → `provider = "postgresql"`, thêm `directUrl = env("DIRECT_URL")`.
+3. Điền `.env`: `DATABASE_URL` lấy từ Supabase mục **Connect → Transaction pooler** (cổng `6543`), `DIRECT_URL` lấy từ **Direct connection** (cổng `5432`).
+4. Xoá lịch sử migration SQLite cũ (`rm -rf prisma/migrations`), chạy `npx prisma migrate dev --name init` để tạo lịch sử mới cho Postgres, rồi `npm run db:seed`.
+5. Đổi `JWT_SECRET`, `CRON_SECRET`, `IPOS_WEBHOOK_SECRET` sang chuỗi mới, đặt `APP_URL` thành domain thật.
+6. Push code lên GitHub, import repo vào Vercel, dán toàn bộ `.env` vào Environment Variables.
+7. Trỏ **cron-job.org** vào `POST /api/cron/run` kèm header `x-cron-secret: <CRON_SECRET>`, lịch mỗi 2 tiếng.
+
+### Hai cái bẫy đã gặp khi làm thật — nhớ để tránh lại
+
+**Bẫy 1 — `prepared statement "s0" already exists`.** Supabase Transaction Pooler (cổng `6543`) không tương thích cách Prisma dùng prepared statement mặc định. Sửa: thêm `?pgbouncer=true` vào cuối `DATABASE_URL` (chỉ biến này, không phải `DIRECT_URL`).
+
+**Bẫy 2 — 504 timeout ở `/api/cron/run`.** Mặc định Vercel chạy hàm ở Mỹ (`iad1`), trong khi database ở Singapore — mỗi lượt gọi Postgres phải vòng qua Thái Bình Dương, cộng dồn 7 bước tuần tự thì vượt quá thời gian cho phép. Sửa hai chỗ:
+- `vercel.json` ở gốc dự án: `{ "regions": ["sin1"] }` — ép mọi hàm chạy gần database.
+- `export const maxDuration = 60;` trong `app/api/cron/run/route.ts` — gói Hobby cho tối đa 60 giây, mặc định chỉ 10 giây.
+
+---
+
+## 8b. Muốn sửa hoặc nâng cấp app thì làm ở đâu
+
+### Sửa nội dung nghiệp vụ (không đụng code)
+
+| Muốn đổi gì | Vào đâu |
+| --- | --- |
+| Thêm/sửa chỉ tiêu KPI phòng ban | `/admin` → tab **Danh mục KPI** (chỉ ADMIN) |
+| Thêm/sửa chuẩn SKU sản xuất (sản lượng, hao hụt, đơn giá) | `/production/skus` (CEO / ADMIN / Giám đốc Sản xuất) |
+| Đổi mật khẩu, bật/tắt Telegram, Zalo, đổi secret | Vercel Dashboard → **Environment Variables**, sau đó Redeploy |
+
+> **Lỗ hổng còn treo:** bộ "6 chỉ tiêu" tính thưởng ca sản xuất (`KpiConfig` — Sản Lượng/Hao Hụt/Chất Lượng/Đúng Spec/An Toàn/Deadline) **chưa có giao diện quản trị**, chỉ nạp qua `prisma/seed.ts` (file này chưa gắn vào `npm run setup`). Muốn đổi trọng số/chỉ tiêu của bộ này phải sửa thẳng database hoặc nhờ dựng thêm màn hình quản trị.
+
+### Sửa tính năng, giao diện, luồng hoạt động (đụng code)
+
+Vòng lặp làm việc:
+
+```
+Sửa code local  →  npm run dev kiểm tra tại chỗ  →  git commit + push  →  Vercel tự deploy
+```
+
+1. Thư mục nguồn duy nhất: `E:\GANI BRAINSTORM\kpi-system`. Sửa ở đây — tự làm hoặc mở lại Claude Code trỏ vào đúng thư mục này.
+2. `npm run dev`, mở `localhost:3000` kiểm tra trước khi đưa lên thật.
+3. `git add` → `git commit` → `git push` — Vercel thấy nhánh `master` có commit mới là tự build và deploy lại, không cần bấm gì thêm trên Vercel (trừ khi đổi biến môi trường).
+
+**Nếu thay đổi đụng tới cấu trúc database** (thêm bảng, thêm cột): chạy `npx prisma migrate dev` để sinh file migration mới *trước khi* push — bước này nên nhờ xử lý cùng, vì sai sót ở đây từng gây ra cả một đợt phải khôi phục lại 13 bảng lệch schema (xem mục 10).
+
+Repo: **[github.com/hungmk88/gani-kpi-system](https://github.com/hungmk88/gani-kpi-system)** (private).
+Push cần Personal Access Token (Settings → Developer settings → Personal access
+tokens trên GitHub) — tạo mới mỗi lần cần, xoá ngay sau khi dùng xong.
+
+---
+
+## 8c. Tách database dev/test khỏi database production
+
+**Không bao giờ chạy `npm run test:all` (hay bất kỳ bộ `test:*` nào) khi `.env`
+đang trỏ vào database production.** Các bộ test tự ghi và tự xoá dữ liệu — chạy
+nhầm vào database thật sẽ đụng đến tài khoản, KPI, nhật ký đang phục vụ người
+dùng thật.
+
+Cách an toàn: dựng một project Supabase **thứ hai**, chỉ dùng cho máy dev/test,
+tách hẳn khỏi project phục vụ `gani-kpi-system.vercel.app`:
+
+1. Supabase → **New project** → đặt tên có hậu tố `-dev` để khỏi nhầm (vd
+   `gani-kpi-system-dev`), cùng region Singapore.
+2. Lấy 2 chuỗi kết nối y hệt mục 8 bước 3 (Transaction pooler + Direct
+   connection), điền vào `.env` **trên máy dev** — không đụng gì đến biến môi
+   trường trên Vercel, hai nơi cấu hình hoàn toàn tách biệt.
+3. `npx prisma migrate deploy` rồi `npm run db:seed` để dựng dữ liệu mẫu trên
+   project dev.
+4. Giờ `npm run dev` và mọi lệnh `npm run test:*` đều an toàn — chạy trên
+   project dev, không chạm gì đến production.
+
+> Nếu mật khẩu database có ký tự đặc biệt (`@`, `#`, `%`...), phải percent-encode
+> khi nhét vào chuỗi kết nối — riêng `@` gõ thành `%40`, nếu không hệ thống đọc
+> sai vị trí ngăn cách user/host. Supabase có nhắc điều này ngay dưới ô chuỗi
+> kết nối.
 
 ---
 
@@ -837,6 +940,12 @@ Nói thẳng để không nhầm lẫn khi nghiệm thu. Cả bốn Phase của 
 - Giờ ước tính của mỗi việc hiện phần lớn **suy ra từ mức ưu tiên** chứ chưa phải
   số người thật điền. Bộ cân bằng tải có ghi rõ điều này ở cột độ tin cậy — muốn
   chuẩn hơn thì khi giao việc phải điền giờ.
+- 🔴 **Bộ phát hiện bất thường KPI đang có lỗi chưa xử lý xong (09/09/2026).**
+  `npm run test:phase4` TEST 4 báo "huy" khai đột biến 3,2 lần chỉ tiêu nhưng
+  hệ thống không gắn cờ, dù đã sửa xong 2 lỗi seed data liên quan (xem dưới) và
+  backfill lại dữ liệu lịch sử. Nguyên nhân còn lại chưa tìm ra — việc debug bị
+  dừng giữa chừng để quay lại rà soát README, **chưa quay lại xử lý**. Đừng tin
+  cột "Bất thường" trên Bảng điều hành / Phân tích cho tới khi mục này được gỡ.
 
 **Phần Phase 3 — Dashboard & Báo cáo**
 - ✅ **Dashboard KPI sẵn sàng** — trang `/admin/kpi-dashboard` với 3 API endpoint (summary, distribution, trends). Phục vụ CEO/ADMIN xem tổng hợp điểm theo thời gian thực.
@@ -848,10 +957,47 @@ Nói thẳng để không nhầm lẫn khi nghiệm thu. Cả bốn Phase của 
   thuật của họ ký HMAC theo mục 6.2.
 - Zalo ZNS đã viết xong nhưng **chưa đăng ký mẫu tin với Zalo**, nên chưa gửi
   được. Cần có Zalo OA trước.
-- Bot Telegram cần **địa chỉ công khai có HTTPS** mới nhận được nút bấm. Chạy
-  trên máy thì phải mở ngrok.
+- Bot Telegram giờ **đã có địa chỉ công khai HTTPS thật** (`gani-kpi-system.vercel.app`,
+  không cần ngrok nữa) — chỉ còn thiếu bật `TELEGRAM_ENABLED="true"` và làm nốt
+  mục 6b (setWebhook) khi anh muốn dùng.
+
+**Bộ tính thưởng ca sản xuất "6 chỉ tiêu" chưa có giao diện quản trị**
+- `KpiConfig` (Sản Lượng/Hao Hụt/Chất Lượng/Đúng Spec/An Toàn/Deadline — đứng sau
+  hệ số nhân thưởng của Phase 2) chỉ được nạp qua `prisma/seed.ts`, file này
+  **chưa gắn vào `npm run setup`**. Muốn đổi trọng số hay chỉ tiêu của bộ này
+  phải sửa thẳng database. Xem mục 8b.
 
 Một điểm cần nói rõ về *chấm điểm rủi ro*: nó chạy bằng luật cứng trong
 `lib/risk.ts` chứ không gọi AI. Đây là lựa chọn có chủ đích — điểm rủi ro dùng để
 xếp thứ tự việc trên bảng điều hành của Ban Giám đốc, nên phải ổn định và giải
 thích được, không thể mỗi lần quét lại ra một con số khác.
+
+**Ghi chú lịch sử — vụ lệch schema lớn (08/09/2026):** trước khi lên production,
+phát hiện 13 model trong `schema.prisma` bị lệch hoàn toàn so với code service
+thật (viết cho một thiết kế dự kiến nhưng chưa từng migrate) — bao gồm cả
+`Reconciliation`, `KpiResult`, `AuditLog`, `AiSuggestion`, `TelegramLink`,
+`ProductSku`. Đã khôi phục đúng theo code qua 9 migration; kiểm chứng bằng
+build sạch + Phase 2/3/KPI Sản xuất chạy 100% (116 phép thử). Nếu sau này gặp
+lỗi kiểu "Property X does not exist on type" ở đâu đó chưa từng đụng tới,
+nhiều khả năng là cùng một dạng lệch này — đối chiếu code service thật với
+`schema.prisma` trước khi sửa vá tạm.
+
+**Ghi chú lịch sử — field chết `actualValue` trong 2 script seed (09/09/2026):**
+`seed.mjs` và `seed-history.mjs` đều được viết từ trước vụ khôi phục schema ở
+trên, nên vẫn ghi dữ liệu vào `actualValue` — trường cũ đã bị thay bằng ba
+trường `actualSystem`/`actualSelf`/`actualFinal`. Hậu quả: toàn bộ 60 dòng KPI
+tháng hiện tại và 360 dòng lịch sử được seed ra **không có số liệu thật** ở
+đúng chỗ ứng dụng đọc — kể cả trên **cả hai** database (dev lẫn production, vì
+production được seed cùng lúc với cùng lỗi). Đã sửa 2 script và backfill lại dữ
+liệu cũ (copy từ `actualValue` sang đúng cột) trên database dev; **chưa backfill
+trên production** — xem có cần làm không trước khi tin số liệu demo trên
+`gani-kpi-system.vercel.app`.
+
+**Ghi chú lịch sử — mất dữ liệu tiếng Việt ở 1 file (09/09/2026):**
+`app/(app)/tasks/[id]/dependencies-panel.tsx` từng có ký tự tiếng Việt bị thay
+bằng `?` và ký tự thay thế U+FFFD **trước cả phiên làm việc này** — không phải
+kiểu lỗi double-encoding có thể giải mã ngược (xem phần sửa `@ts-nocheck` ở
+trên), mà là dữ liệu gốc đã mất thật, phải đọc ngữ cảnh viết lại bằng tay. Nếu
+thấy trang nào hiện `?` xen giữa chữ hoặc ô vuông lạ, tìm bằng:
+`grep -rlP "\xef\xbf\xbd" app/ components/ lib/` (chỉ khớp dữ liệu mất thật, an
+toàn hơn tìm dấu `?` vì `?` xuất hiện khắp nơi trong code hợp lệ).
