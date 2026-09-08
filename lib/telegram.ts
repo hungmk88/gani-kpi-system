@@ -48,6 +48,76 @@ export async function sendCeoAlert(opts: {
   return { sent: true };
 }
 
+/**
+ * BÁO CÁO GIAO BAN — bản tóm tắt gửi Telegram Ban Giám đốc đúng ngày chốt kỳ.
+ * Khác `sendCeoAlert`: đây không phải cảnh báo đỏ, chỉ là bản tin định kỳ.
+ */
+export async function sendExecutiveBriefingTelegram(
+  briefing: {
+    healthScore: number;
+    healthLabel: string;
+    executiveSummary: string;
+    keyRisks: { area: string; riskLevel: "HIGH" | "CRITICAL"; impact: string }[];
+    recommendations: string[];
+    engine: "GEMINI" | "RULE_BASED";
+  },
+  periodName: string
+) {
+  const chatId = process.env.CEO_TELEGRAM_CHAT_ID;
+  const url = appUrl("/analytics");
+
+  const riskLines = briefing.keyRisks.length
+    ? briefing.keyRisks
+        .map(
+          (r) =>
+            `• <b>${escapeHtml(r.area)}</b> (${
+              r.riskLevel === "CRITICAL" ? "nghiêm trọng" : "cao"
+            }): ${escapeHtml(r.impact)}`
+        )
+        .join("\n")
+    : "Không có rủi ro nổi bật.";
+
+  const recLines = briefing.recommendations.length
+    ? briefing.recommendations
+        .map((r, i) => `${i + 1}. ${escapeHtml(r)}`)
+        .join("\n")
+    : "Không có khuyến nghị nào cần làm gấp.";
+
+  let message = [
+    `📋 <b>BÁO CÁO GIAO BAN — Kỳ ${escapeHtml(periodName)}</b>`,
+    "──────────────────────────",
+    `💯 <b>Điểm sức khoẻ:</b> ${briefing.healthScore}/100 (${escapeHtml(briefing.healthLabel)})`,
+    "",
+    escapeHtml(briefing.executiveSummary),
+    "",
+    "<b>Rủi ro cần để mắt:</b>",
+    riskLines,
+    "",
+    "<b>Khuyến nghị:</b>",
+    recLines,
+    "",
+    `🤖 <i>Sinh bởi ${briefing.engine === "GEMINI" ? "Gemini" : "bộ đọc luật cứng"} lúc ${new Date().toLocaleString("vi-VN")}</i>`,
+    `👉 <a href="${url}">Xem chi tiết trong hệ thống</a>`,
+  ].join("\n");
+
+  // Telegram giới hạn 4096 ký tự một tin — cắt an toàn, không để gửi lỗi.
+  if (message.length > 4000) {
+    message = message.slice(0, 3970) + "\n\n… (xem đủ trong hệ thống)";
+  }
+
+  if (!telegramEnabled() || !chatId) {
+    console.log("[TELEGRAM tắt] Bỏ qua báo cáo giao ban.");
+    return { sent: false, reason: "TELEGRAM_DISABLED" };
+  }
+
+  const res = await sendMessage(chatId, message);
+  if (!res.ok) {
+    console.error("[TELEGRAM] Gửi báo cáo giao ban thất bại:", res.error);
+    return { sent: false, reason: res.error };
+  }
+  return { sent: true };
+}
+
 /** Kiểm tra cấu hình Telegram — dùng ở trang Quản trị. */
 export async function testTelegram(chatId: string) {
   if (!process.env.TELEGRAM_BOT_TOKEN) {

@@ -28,7 +28,8 @@ export const maxDuration = 60;
  *   3. Đối soát dữ liệu đa nguồn (khớp thì đồng bộ, lệch thì treo lại)
  *   4. Tính lại điểm các dòng chưa chốt
  *   5. Quét rủi ro toàn bộ công việc
- *   6. Chấm lại dự báo cũ, dự báo mới, quét bất thường KPI
+ *   6. Chấm lại dự báo cũ, dự báo mới, quét bất thường KPI, và đúng ngày chốt
+ *      kỳ (ngày 5) thì tự soạn báo cáo giao ban gửi Telegram Ban Giám đốc
  *   7. Nhắc hạn cho người còn việc chưa làm
  *
  * Hai cách gọi:

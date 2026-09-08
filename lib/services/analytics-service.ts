@@ -3,7 +3,7 @@ import { BusinessError } from "../rbac";
 import { ERR } from "../constants";
 import { writeAudit } from "../audit";
 import { notify } from "../notify";
-import { sendCeoAlert } from "../telegram";
+import { sendCeoAlert, sendExecutiveBriefingTelegram } from "../telegram";
 import {
   computeCapacity,
   computeHealth,
@@ -12,6 +12,7 @@ import {
   predictTask,
   suggestRebalance,
   type CapacityReport,
+  type HealthResult,
   type PredictionResult,
   type VelocityResult,
 } from "../analytics/engine";
@@ -19,6 +20,8 @@ import {
   ANOMALY_SEVERITY_LABEL,
   PREDICTION_HORIZON_DAYS,
 } from "../analytics/constants";
+import { buildExecutiveBriefing, type BriefingFacts } from "../ai/executive-advisor";
+import { round2, summarizeResults } from "../kpi";
 import type { SessionUser } from "../auth";
 
 /**
@@ -693,14 +696,167 @@ export async function buildHealthSnapshot(now = new Date()) {
 }
 
 /* ==================================================================== */
+/* BÁO CÁO GIAO BAN CHO BAN GIÁM ĐỐC                                    */
+/* ==================================================================== */
+
+/**
+ * Gom đủ số liệu cho một lượt báo cáo điều hành — dùng chung cho cả đường bấm
+ * tay (`POST /api/ai/executive-briefing`) lẫn đường tự động (bộ máy chạy nền
+ * ngày 5). Tách riêng để hai đường luôn đọc đúng một bộ dữ liệu, không tính
+ * lại theo hai cách khác nhau.
+ */
+export async function gatherExecutiveBriefingFacts(now = new Date()) {
+  const [snapshot, scan, accuracy] = await Promise.all([
+    buildHealthSnapshot(now),
+    runPredictiveScan({ persist: false, now }),
+    getPredictionAccuracy(),
+  ]);
+
+  const period = await prisma.kpiPeriod.findFirst({
+    orderBy: [{ year: "desc" }, { month: "desc" }],
+  });
+
+  /* --- Phòng ban yếu nhất theo điểm KPI --- */
+  const weakest: { name: string; avgScore: number }[] = [];
+  if (period) {
+    const depts = await prisma.department.findMany();
+    for (const d of depts) {
+      const rows = await prisma.kpiResult.findMany({
+        where: { periodId: period.id, employee: { departmentId: d.id } },
+        select: {
+          employeeId: true,
+          weightPercent: true,
+          weightedScore: true,
+          achievementPercent: true,
+        },
+      });
+      if (rows.length === 0) continue;
+      const byEmp = new Map<string, typeof rows>();
+      for (const r of rows) {
+        byEmp.set(r.employeeId, [...(byEmp.get(r.employeeId) ?? []), r]);
+      }
+      const scores = [...byEmp.values()].map(
+        (list) => summarizeResults(list).totalScore
+      );
+      if (scores.length === 0) continue;
+      weakest.push({
+        name: d.name,
+        avgScore: round2(scores.reduce((a, b) => a + b, 0) / scores.length),
+      });
+    }
+    weakest.sort((a, b) => a.avgScore - b.avgScore);
+  }
+
+  const mostLoaded = snapshot.capacity.reports
+    .filter((r) => r.workloadStatus === "OVERLOADED")
+    .slice(0, 3)
+    .map((r) => ({ name: r.fullName, utilizationPercent: r.utilizationPercent }));
+
+  const facts: BriefingFacts = {
+    periodName: snapshot.facts.periodName,
+    openTasks: snapshot.facts.openTasks,
+    overdueTasks: snapshot.facts.overdueTasks,
+    criticalRiskTasks: snapshot.facts.criticalRiskTasks,
+    overloadedPeople: snapshot.facts.overloadedPeople,
+    underutilizedPeople: snapshot.facts.underutilizedPeople,
+    totalPeople: snapshot.facts.totalPeople,
+    mismatchCells: snapshot.facts.mismatchCells,
+    totalKpiCells: snapshot.facts.totalKpiCells,
+    openAnomalies: snapshot.facts.openAnomalies,
+    predictedHighRisk: scan.highRisk,
+    predictedModerate: scan.moderateRisk,
+    predictionAccuracy: accuracy.accuracyPercent,
+    predictionSampleSize: accuracy.total,
+    weakestDepartments: weakest.slice(0, 3),
+    mostLoaded,
+  };
+
+  return { health: snapshot.health as HealthResult, facts, period, accuracy };
+}
+
+function isSameCalendarDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/**
+ * Tự soạn và gửi báo cáo giao ban vào Telegram Ban Giám đốc — CHỈ vào đúng
+ * ngày Ban Giám đốc chốt kỳ (`ceoApprovalDeadline`, tức ngày 5), và chỉ một
+ * lần mỗi ngày dù bộ máy chạy nền chạy nhiều lượt trong ngày đó.
+ *
+ * Không bắt buộc có Gemini: `buildExecutiveBriefing` tự chuyển sang bản viết
+ * bằng luật cứng khi chưa cấu hình khoá, báo cáo vẫn đủ số liệu thật, chỉ kém
+ * trôi chảy hơn.
+ */
+export async function runMonthlyExecutiveBriefingIfDue(now = new Date()) {
+  const period = await prisma.kpiPeriod.findFirst({
+    orderBy: [{ year: "desc" }, { month: "desc" }],
+  });
+  if (!period) return { sent: false, reason: "NO_PERIOD" };
+
+  if (!isSameCalendarDay(now, period.ceoApprovalDeadline)) {
+    return { sent: false, reason: "NOT_DUE_TODAY" };
+  }
+
+  const since = new Date(now);
+  since.setHours(0, 0, 0, 0);
+  const already = await prisma.aiSuggestion.findFirst({
+    where: { kind: "EXEC_BRIEFING", createdAt: { gte: since } },
+    select: { id: true },
+  });
+  if (already) return { sent: false, reason: "ALREADY_SENT_TODAY" };
+
+  const ceo = await prisma.user.findFirst({
+    where: { role: "CEO", isActive: true },
+    orderBy: { createdAt: "asc" },
+  });
+  if (!ceo) return { sent: false, reason: "NO_CEO" };
+
+  const { health, facts } = await gatherExecutiveBriefingFacts(now);
+  const briefing = await buildExecutiveBriefing(health, facts);
+
+  const saved = await prisma.aiSuggestion.create({
+    data: {
+      kind: "EXEC_BRIEFING",
+      engine: briefing.engine,
+      modelName: briefing.modelName ?? "unknown",
+      entityName: "system",
+      entityId: "executive-briefing",
+      inputText: `[Tự động ngày 5] Sức khoẻ ${briefing.healthScore}/100 · ${facts.openTasks} việc mở · ${facts.periodName ?? "chưa có kỳ KPI"}`,
+      payload: JSON.stringify(briefing),
+      confidencePercent: facts.predictionAccuracy ?? 0,
+      rationale: briefing.executiveSummary,
+      missingInfo: facts.predictionSampleSize === 0 ? briefing.dataBasis : null,
+      status: "PENDING",
+      latencyMs: briefing.latencyMs,
+      requestedById: ceo.id,
+    },
+  });
+
+  const telegram = await sendExecutiveBriefingTelegram(
+    briefing,
+    period.name
+  );
+
+  return { sent: true, briefingId: saved.id, telegram };
+}
+
+/* ==================================================================== */
 /* LƯỢT CHẠY NỀN                                                        */
 /* ==================================================================== */
 
-/** Gọi từ bộ máy chạy nền: chấm dự báo cũ, dự báo mới, quét bất thường. */
+/**
+ * Gọi từ bộ máy chạy nền: chấm dự báo cũ, dự báo mới, quét bất thường, và —
+ * đúng ngày Ban Giám đốc chốt kỳ — tự soạn báo cáo giao ban gửi Telegram.
+ */
 export async function runAnalyticsCycle(now = new Date()) {
   const outcome = await scorePastPredictions(now);
   const scan = await runPredictiveScan({ persist: true, now });
   const anomaly = await runAnomalyScan(undefined, now);
+  const briefing = await runMonthlyExecutiveBriefingIfDue(now);
 
   return {
     predictionsScored: outcome.scored,
@@ -710,6 +866,7 @@ export async function runAnalyticsCycle(now = new Date()) {
     anomalyChecked: anomaly.checked,
     anomalyFlagged: anomaly.flagged,
     anomalySkippedThinHistory: anomaly.skippedThinHistory,
+    executiveBriefingSent: briefing.sent,
   };
 }
 
