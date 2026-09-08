@@ -15,6 +15,9 @@ import {
 import { writeAudit } from "@/lib/audit";
 
 export const runtime = "nodejs";
+// Bảy bước chạy tuần tự, mỗi bước gọi Postgres qua pooler — vượt quá 10s mặc
+// định của Vercel. 60s là trần cho phép của gói Hobby.
+export const maxDuration = 60;
 
 /**
  * Bộ máy chạy nền. Năm việc, chạy theo đúng thứ tự này vì việc sau cần kết quả
