@@ -20,9 +20,18 @@ const KPI_CODES = [
 type KpiCode = (typeof KPI_CODES)[number];
 
 /**
- * Thiếu một trong 6 mã (vd ai đó lỡ tắt isActive) thì CHẶN HẲN việc tính điểm
- * thay vì âm thầm tính sai — báo rõ để vào Quản trị bật/sửa lại.
+ * Số gốc — dùng khi KpiConfig chưa seed hoặc một mã bị tắt isActive, để việc
+ * tính điểm ca không bao giờ vỡ hẳn giữa chừng vì thiếu dữ liệu cấu hình.
  */
+const DEFAULT_WEIGHTS: Record<KpiCode, number> = {
+  PROD_OUTPUT: 25,
+  PROD_WASTE: 25,
+  PROD_QUALITY: 20,
+  PROD_SPEC: 15,
+  PROD_SAFETY: 10,
+  PROD_DEADLINE: 5,
+};
+
 async function getKpiWeights(): Promise<Record<KpiCode, number>> {
   const configs = await prisma.kpiConfig.findMany({
     where: {
@@ -37,11 +46,13 @@ async function getKpiWeights(): Promise<Record<KpiCode, number>> {
   for (const code of KPI_CODES) {
     const w = map.get(code);
     if (w === undefined) {
-      throw new Error(
-        `Thiếu cấu hình trọng số cho chỉ tiêu ${code} trong KpiConfig — vào Quản trị → 6 chỉ tiêu để kiểm tra.`
+      console.warn(
+        `[KPI_CALCULATOR] Thiếu cấu hình cho ${code} trong KpiConfig — dùng tạm số gốc ${DEFAULT_WEIGHTS[code]}%. Vào Quản trị → 6 chỉ tiêu để thiết lập.`
       );
+      weights[code] = DEFAULT_WEIGHTS[code];
+    } else {
+      weights[code] = w;
     }
-    weights[code] = w;
   }
   return weights;
 }
