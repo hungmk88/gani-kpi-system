@@ -13,3 +13,6 @@ next-env.d.ts
 
 # Bản sao lưu database — không đưa lên git
 backups/
+
+# Lịch sử migration SQLite cũ, giữ lại cục bộ để tham khảo (đã chuyển sang PostgreSQL)
+prisma/migrations_sqlite_backup/

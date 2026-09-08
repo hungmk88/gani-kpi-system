@@ -2,12 +2,10 @@
 // GANI FOODY - WORK & KPI MANAGEMENT SYSTEM
 // Phase 1 MVP Core schema
 //
-// Provider hien tai: SQLite (chay duoc ngay tren may, khong can cai gi).
-// Khi len production doi sang PostgreSQL: sua provider = "postgresql",
-// doi DATABASE_URL trong .env, chay `npx prisma migrate dev`.
-// Cac truong enum de dang String (SQLite khong ho tro enum) - gia tri hop le
-// duoc rang buoc o tang ung dung trong lib/constants.ts + zod validation.
-// Cac truong JSON de dang String chua JSON.stringify (SQLite khong co JSONB).
+// Provider: PostgreSQL (Supabase production).
+// Cac truong enum de dang String (giu tuong thich voi lich su SQLite) - gia
+// tri hop le duoc rang buoc o tang ung dung trong lib/constants.ts + zod.
+// Cac truong JSON de dang String chua JSON.stringify.
 // =====================================================================
 
 generator client {
@@ -15,8 +13,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ------------------------- TO CHUC -------------------------
