@@ -988,10 +988,9 @@ trên, nên vẫn ghi dữ liệu vào `actualValue` — trường cũ đã bị
 trường `actualSystem`/`actualSelf`/`actualFinal`. Hậu quả: toàn bộ 60 dòng KPI
 tháng hiện tại và 360 dòng lịch sử được seed ra **không có số liệu thật** ở
 đúng chỗ ứng dụng đọc — kể cả trên **cả hai** database (dev lẫn production, vì
-production được seed cùng lúc với cùng lỗi). Đã sửa 2 script và backfill lại dữ
-liệu cũ (copy từ `actualValue` sang đúng cột) trên database dev; **chưa backfill
-trên production** — xem có cần làm không trước khi tin số liệu demo trên
-`gani-kpi-system.vercel.app`.
+production được seed cùng lúc với cùng lỗi). Đã sửa 2 script và **backfill lại
+trên cả dev lẫn production** (copy từ `actualValue` sang đúng cột: 360 dòng
+lịch sử + 37-47 dòng kỳ hiện tại mỗi bên).
 
 **Ghi chú lịch sử — mất dữ liệu tiếng Việt ở 1 file (09/09/2026):**
 `app/(app)/tasks/[id]/dependencies-panel.tsx` từng có ký tự tiếng Việt bị thay
