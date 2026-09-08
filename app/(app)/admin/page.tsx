@@ -18,6 +18,7 @@ export default async function AdminPage() {
     importLogs,
     integrationSources,
     webhookLogs,
+    kpiConfigs,
   ] = await Promise.all([
       prisma.user.findMany({
         include: { department: true },
@@ -41,6 +42,10 @@ export default async function AdminPage() {
       prisma.webhookLog.findMany({
         orderBy: { createdAt: "desc" },
         take: 30,
+      }),
+      prisma.kpiConfig.findMany({
+        where: { department: "PRODUCTION" },
+        orderBy: { code: "asc" },
       }),
     ]);
 
@@ -119,6 +124,19 @@ export default async function AdminPage() {
           error: w.error,
           ipAddress: w.ipAddress,
           createdAt: w.createdAt.toISOString(),
+        }))}
+        kpiConfigs={kpiConfigs.map((c) => ({
+          id: c.id,
+          code: c.code,
+          name: c.name,
+          unit: c.unit,
+          isHigherBetter: c.isHigherBetter,
+          weightPercent: c.weightPercent,
+          dataSource: c.dataSource,
+          baselineValue: c.baselineValue,
+          targetValue: c.targetValue,
+          description: c.description,
+          isActive: c.isActive,
         }))}
         appUrl={process.env.APP_URL || "http://localhost:3000"}
         telegramReady={{

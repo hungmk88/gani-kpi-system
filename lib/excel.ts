@@ -1,4 +1,9 @@
 import ExcelJS from "exceljs";
+import type {
+  DashboardSummaryResult,
+  DashboardDistributionResult,
+  DashboardTrendsResult,
+} from "./services/kpi-dashboard";
 
 const BRAND = "FF1B6EF5";
 const HEADER_TEXT = "FFFFFFFF";
@@ -251,6 +256,155 @@ export async function buildKpiReport(
 
   det.autoFilter = { from: "A1", to: "P1" };
   det.views = [{ state: "frozen", ySplit: 1 }];
+
+  return wb.xlsx.writeBuffer();
+}
+
+/* ------------------------------------------------------------ BÁO CÁO DASHBOARD */
+
+const PERIOD_LABEL_VI: Record<string, string> = {
+  today: "Hôm nay",
+  week: "Tuần này",
+  month: "Tháng này",
+};
+
+const SHIFT_LABEL_VI: Record<string, string> = {
+  MORNING: "Sáng",
+  AFTERNOON: "Chiều",
+  NIGHT: "Tối",
+};
+
+/**
+ * Xuất Excel cho Dashboard KPI sản xuất (/admin/kpi-dashboard). Ba khối dữ liệu
+ * (summary/distribution/trends) đến từ `lib/services/kpi-dashboard.ts` — cùng
+ * công thức với 3 API vẽ biểu đồ trên màn hình, để số trong file không lệch số
+ * trên web.
+ */
+export async function buildDashboardReport(input: {
+  period: string;
+  summary: DashboardSummaryResult;
+  distribution: DashboardDistributionResult;
+  trends: DashboardTrendsResult;
+}) {
+  const { period, summary, distribution, trends } = input;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "GANI FOODY KPI System";
+  wb.created = new Date();
+
+  /* --- Sheet 1: tổng hợp --- */
+  const sum = wb.addWorksheet("TONG_HOP");
+  sum.columns = [{ width: 26 }, { width: 18 }, { width: 26 }, { width: 18 }];
+  sum.mergeCells("A1:D1");
+  sum.getCell("A1").value = `DASHBOARD KPI SẢN XUẤT — ${
+    PERIOD_LABEL_VI[period] ?? period
+  }`;
+  sum.getCell("A1").font = { bold: true, size: 14 };
+  sum.getCell("A1").alignment = { horizontal: "center" };
+  sum.getCell("A2").value = `Xuất lúc: ${new Date().toLocaleString("vi-VN")}`;
+  sum.getCell("A2").font = { italic: true, size: 10, color: { argb: "FF666666" } };
+  sum.addRow([]);
+
+  styleHeader(sum.addRow(["Chỉ số", "Giá trị", "Chỉ số", "Giá trị"]));
+  sum.addRow([
+    "Tổng ca tính",
+    summary.summary.totalShifts,
+    "Trung bình/ca (₫)",
+    summary.summary.avgBonus,
+  ]);
+  sum.addRow([
+    "Điểm trung bình",
+    Number(summary.summary.avgScore.toFixed(2)),
+    "% đã duyệt",
+    summary.summary.percentApproved,
+  ]);
+  sum.addRow(["Tổng thưởng (₫)", summary.summary.totalBonus, "", ""]);
+  sum.addRow([]);
+
+  styleHeader(sum.addRow(["Theo trạng thái", "Số ca", "Theo ca", "Số ca"]));
+  sum.addRow([
+    "Đã tính (CALCULATED)",
+    summary.statusCounts.CALCULATED,
+    "Sáng",
+    summary.shiftTypes.MORNING,
+  ]);
+  sum.addRow([
+    "Đã duyệt (APPROVED)",
+    summary.statusCounts.APPROVED,
+    "Chiều",
+    summary.shiftTypes.AFTERNOON,
+  ]);
+  sum.addRow([
+    "Nháp (DRAFT)",
+    summary.statusCounts.DRAFT,
+    "Tối",
+    summary.shiftTypes.NIGHT,
+  ]);
+
+  if (summary.topScores.length > 0) {
+    sum.addRow([]);
+    sum.addRow(["TOP 5 CA ĐIỂM CAO NHẤT"]).font = { bold: true };
+    styleHeader(sum.addRow(["Ngày", "Ca", "Điểm", "Thưởng (₫)"]));
+    summary.topScores.forEach((s) => {
+      sum.addRow([
+        new Date(s.shiftDate).toLocaleDateString("vi-VN"),
+        SHIFT_LABEL_VI[s.shiftType] ?? s.shiftType,
+        Number(s.totalScore.toFixed(2)),
+        Math.round(s.bonusAmount),
+      ]);
+    });
+  }
+
+  /* --- Sheet 2: phân bố điểm --- */
+  const dist = wb.addWorksheet("PHAN_BO_DIEM");
+  dist.columns = [{ width: 16 }, { width: 12 }, { width: 12 }];
+  dist.mergeCells("A1:C1");
+  dist.getCell("A1").value = "PHÂN BỐ ĐIỂM — 30 NGÀY GẦN NHẤT";
+  dist.getCell("A1").font = { bold: true, size: 14 };
+  dist.getCell("A1").alignment = { horizontal: "center" };
+  dist.addRow([]);
+  dist.addRow(["Trung bình", Number(distribution.statistics.average.toFixed(2))]);
+  dist.addRow(["Trung vị", Number(distribution.statistics.median.toFixed(2))]);
+  dist.addRow(["Độ lệch chuẩn", Number(distribution.statistics.stdDev.toFixed(2))]);
+  dist.addRow(["Nhỏ nhất", distribution.statistics.min]);
+  dist.addRow(["Lớn nhất", distribution.statistics.max]);
+  dist.addRow([]);
+  styleHeader(dist.addRow(["Khoảng điểm", "Số ca", "Tỷ lệ (%)"]));
+  distribution.chartData.forEach((b) =>
+    dist.addRow([b.range, b.count, b.percentage])
+  );
+
+  /* --- Sheet 3: xu hướng --- */
+  const trend = wb.addWorksheet("XU_HUONG");
+  trend.columns = [
+    { header: "Ngày", key: "date", width: 14 },
+    { header: "Số ca", key: "shiftCount", width: 10 },
+    { header: "Điểm TB", key: "avgScore", width: 12 },
+    { header: "Sản lượng TB", key: "avgOutput", width: 14 },
+    { header: "Hao hụt TB", key: "avgWaste", width: 12 },
+    { header: "MA 3 ngày", key: "movingAvg", width: 12 },
+    { header: "Thưởng (₫)", key: "totalBonus", width: 14 },
+  ];
+  styleHeader(trend.getRow(1));
+  trends.trendData.forEach((d) => {
+    trend.addRow({
+      date: d.displayDate,
+      shiftCount: d.shiftCount,
+      avgScore: d.avgScore ?? "",
+      avgOutput: d.avgOutput ?? "",
+      avgWaste: d.avgWaste ?? "",
+      movingAvg: d.movingAvg,
+      totalBonus: Math.round(d.totalBonus),
+    });
+  });
+  trend.addRow([]);
+  trend.addRow(["Thống kê kỳ"]).font = { bold: true };
+  trend.addRow(["Số ngày có dữ liệu", trends.statistics.daysWithData]);
+  trend.addRow(["Tổng ca", trends.statistics.totalShifts]);
+  trend.addRow([
+    "Điểm TB/ngày",
+    Number(trends.statistics.avgDailyScore.toFixed(2)),
+  ]);
+  trend.addRow(["Tổng thưởng (₫)", trends.statistics.totalBonusDistributed]);
 
   return wb.xlsx.writeBuffer();
 }

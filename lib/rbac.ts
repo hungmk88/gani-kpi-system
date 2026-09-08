@@ -25,6 +25,7 @@ export const PERMISSIONS = {
   "admin.users": ["ADMIN"],
   "admin.departments": ["ADMIN"],
   "audit.view": ["CEO", "ADMIN"],
+  "production.kpiconfig.manage": ["CEO", "ADMIN"],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISSIONS;

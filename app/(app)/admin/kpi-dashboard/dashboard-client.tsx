@@ -125,22 +125,40 @@ export default function DashboardClient() {
     <div className="space-y-6">
       {/* Period Selector */}
       <div className="card p-4">
-        <div className="flex gap-2">
-          {(["today", "week", "month"] as const).map((p) => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={`px-4 py-2 rounded font-medium transition ${
-                period === p
-                  ? "bg-brand-600 text-white"
-                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-              }`}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex gap-2">
+            {(["today", "week", "month"] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={`px-4 py-2 rounded font-medium transition ${
+                  period === p
+                    ? "bg-brand-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                }`}
+              >
+                {p === "today" && "📅 Hôm Nay"}
+                {p === "week" && "📆 Tuần Này"}
+                {p === "month" && "📅 Tháng Này"}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <a
+              href={`/api/kpi/dashboard/export?period=${period}&days=7`}
+              className="btn-ghost"
             >
-              {p === "today" && "📅 Hôm Nay"}
-              {p === "week" && "📆 Tuần Này"}
-              {p === "month" && "📅 Tháng Này"}
-            </button>
-          ))}
+              📊 Tải Excel
+            </a>
+            <a
+              href={`/reports/kpi-dashboard?period=${period}&days=7`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-ghost"
+            >
+              🖨 Xuất PDF
+            </a>
+          </div>
         </div>
       </div>
 

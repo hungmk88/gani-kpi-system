@@ -3,16 +3,48 @@
 import { prisma } from "@/lib/db";
 
 /**
- * KPI Weight Configuration (6 KPI Phòng SX)
+ * Trọng số 6 KPI Phòng SX.
+ *
+ * Đọc từ bảng KpiConfig (Quản trị → 6 chỉ tiêu), KHÔNG viết cứng nữa — sửa
+ * trọng số qua giao diện có hiệu lực ngay lần tính điểm kế tiếp.
  */
-const KPI_WEIGHTS = {
-  PROD_OUTPUT: 25,      // Sản Lượng (cao tốt)
-  PROD_WASTE: 25,       // Hao Hụt (thấp tốt)
-  PROD_QUALITY: 20,     // Chất Lượng (cao tốt)
-  PROD_SPEC: 15,        // Đúng Spec (cao tốt)
-  PROD_SAFETY: 10,      // An Toàn (cao tốt)
-  PROD_DEADLINE: 5,     // Deadline (cao tốt)
-};
+const KPI_CODES = [
+  "PROD_OUTPUT",
+  "PROD_WASTE",
+  "PROD_QUALITY",
+  "PROD_SPEC",
+  "PROD_SAFETY",
+  "PROD_DEADLINE",
+] as const;
+
+type KpiCode = (typeof KPI_CODES)[number];
+
+/**
+ * Thiếu một trong 6 mã (vd ai đó lỡ tắt isActive) thì CHẶN HẲN việc tính điểm
+ * thay vì âm thầm tính sai — báo rõ để vào Quản trị bật/sửa lại.
+ */
+async function getKpiWeights(): Promise<Record<KpiCode, number>> {
+  const configs = await prisma.kpiConfig.findMany({
+    where: {
+      department: "PRODUCTION",
+      isActive: true,
+      code: { in: [...KPI_CODES] },
+    },
+  });
+  const map = new Map(configs.map((c) => [c.code, c.weightPercent]));
+
+  const weights = {} as Record<KpiCode, number>;
+  for (const code of KPI_CODES) {
+    const w = map.get(code);
+    if (w === undefined) {
+      throw new Error(
+        `Thiếu cấu hình trọng số cho chỉ tiêu ${code} trong KpiConfig — vào Quản trị → 6 chỉ tiêu để kiểm tra.`
+      );
+    }
+    weights[code] = w;
+  }
+  return weights;
+}
 
 /**
  * Tính Achievement % cho 1 KPI
@@ -137,6 +169,9 @@ export async function calculateShiftKpiScore(
     if (!periodTarget) {
       throw new Error("Period target not found");
     }
+
+    // 1b. Lấy trọng số hiện hành từ KpiConfig (Quản trị → 6 chỉ tiêu)
+    const KPI_WEIGHTS = await getKpiWeights();
 
     // 2. Tính 6 KPI Achievements & Weighted Scores
     const output_achievement = calculateAchievementPercent(

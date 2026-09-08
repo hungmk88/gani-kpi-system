@@ -61,6 +61,21 @@ export type PeriodStatus = (typeof PERIOD_STATUSES)[number];
 
 export const DATA_SOURCES = ["MANUAL", "EXCEL", "IPOS_API"] as const;
 
+/** Nguồn số liệu của KpiConfig (6 chỉ tiêu KPI sản xuất) — enum riêng, khác DATA_SOURCES ở trên. */
+export const KPI_CONFIG_DATA_SOURCES = [
+  "MANUAL",
+  "IPOS",
+  "QA_CHECK",
+  "SYSTEM_CALC",
+] as const;
+
+export const KPI_CONFIG_DATA_SOURCE_LABEL: Record<string, string> = {
+  MANUAL: "Nhập tay",
+  IPOS: "iPOS",
+  QA_CHECK: "KCS kiểm tra",
+  SYSTEM_CALC: "Hệ thống tự tính",
+};
+
 // ----------------------- NHÃN TIẾNG VIỆT -----------------------
 
 export const ROLE_LABEL: Record<string, string> = {
