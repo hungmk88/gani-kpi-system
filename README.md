@@ -521,10 +521,12 @@ npm run test:all
 > Phase 1 **16/18** (2 lỗi là lỗi của chính bài test — chọn ngẫu nhiên một dòng
 > KPI không xác định chiều cao/thấp tốt, đã xác minh logic tính điểm thật đúng
 > qua gọi API trực tiếp), Phase 2 **35/35**, Phase 3 **38/38**, KPI Sản xuất
-> **43/43**. Phase 4 phát hiện **lỗi seed data thật** (đã sửa, xem mục 10) và
-> còn **một lỗi chưa xử lý xong** ở phần phát hiện bất thường KPI — xem mục 10.
-> Vận hành và Bảng điều hành **chưa được chạy lại** trên Postgres kể từ khi
-> khôi phục schema — chạy trước khi tin tưởng hoàn toàn.
+> **43/43**. Phase 4 phát hiện **lỗi seed data thật** (đã sửa) và ban đầu tưởng
+> có lỗi ở phần phát hiện bất thường KPI, nhưng soát lại (09/09/2026) thì hoá
+> ra là **lỗi trong chính bài kiểm thử** (đọc kết quả trước khi tự kích hoạt
+> bước quét) — đã vá bài test, đối chiếu dữ liệu thật xác nhận công thức tính
+> đúng, xem mục 10. Vận hành và Bảng điều hành **chưa được chạy lại** trên
+> Postgres kể từ khi khôi phục schema — chạy trước khi tin tưởng hoàn toàn.
 
 **304 phép thử** bám đúng bảng test case trong tài liệu thiết kế:
 
@@ -940,12 +942,19 @@ Nói thẳng để không nhầm lẫn khi nghiệm thu. Cả bốn Phase của 
 - Giờ ước tính của mỗi việc hiện phần lớn **suy ra từ mức ưu tiên** chứ chưa phải
   số người thật điền. Bộ cân bằng tải có ghi rõ điều này ở cột độ tin cậy — muốn
   chuẩn hơn thì khi giao việc phải điền giờ.
-- 🔴 **Bộ phát hiện bất thường KPI đang có lỗi chưa xử lý xong (09/09/2026).**
-  `npm run test:phase4` TEST 4 báo "huy" khai đột biến 3,2 lần chỉ tiêu nhưng
-  hệ thống không gắn cờ, dù đã sửa xong 2 lỗi seed data liên quan (xem dưới) và
-  backfill lại dữ liệu lịch sử. Nguyên nhân còn lại chưa tìm ra — việc debug bị
-  dừng giữa chừng để quay lại rà soát README, **chưa quay lại xử lý**. Đừng tin
-  cột "Bất thường" trên Bảng điều hành / Phân tích cho tới khi mục này được gỡ.
+- ✅ **Bộ phát hiện bất thường KPI — đã tìm ra nguyên nhân (09/09/2026): không
+  phải lỗi công thức.** `npm run test:phase4` từng báo severity/sampleSize/
+  confidence đều `undefined` vì **chính bài kiểm thử đọc bảng `kpiAnomaly`
+  trước khi tự kích hoạt bước quét** (`/api/cron/run`) — nó chỉ đúng khi tình
+  cờ có `npm run scheduler` chạy song song ở cửa sổ khác kịp quét trước. Đã vá
+  `scripts/smoke-test-phase4.mjs` để tự gọi quét trước khi đọc kết quả, không
+  phụ thuộc tiến trình nền nào khác. Đối chiếu trực tiếp database dev xác nhận
+  công thức tính đúng: dòng bất thường của "huy" đã có sẵn
+  `severity: CRITICAL, sampleSize: 6, confidence: HIGH` — khớp chính xác điều
+  bài test mong đợi. **Chưa chạy lại toàn bộ `npm run test:phase4` để lấy kết
+  quả xanh mới** (cần server chạy tại chỗ, việc này để anh làm khi tiện) —
+  nhưng đối chiếu dữ liệu thật cho thấy cột "Bất thường" trên Bảng điều hành /
+  Phân tích đáng tin trở lại.
 
 **Phần Phase 3 — Dashboard & Báo cáo**
 - ✅ **Dashboard KPI sẵn sàng** — trang `/admin/kpi-dashboard` với 3 API endpoint (summary, distribution, trends). Phục vụ CEO/ADMIN xem tổng hợp điểm theo thời gian thực.

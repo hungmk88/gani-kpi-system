@@ -325,6 +325,13 @@ async function main() {
   /* ---------------------------------------------------------------- TEST 4 */
   console.log("\nTEST 4 — Phát hiện bất thường KPI");
 
+  // Bài test tự kích hoạt bước quét bất thường trước khi đọc kết quả — không
+  // được phép giả định có `npm run scheduler` đang chạy song song ở cửa sổ
+  // khác. Thiếu dòng này, đọc bảng kpiAnomaly trước khi có ai quét sẽ ra
+  // `null`, khiến mọi phép thử bên dưới báo severity/sampleSize/confidence
+  // đều `undefined` dù công thức tính bất thường hoàn toàn đúng.
+  await ceo("/api/cron/run", { method: "POST" });
+
   const anomaly = await prisma.kpiAnomaly.findFirst({
     where: { employeeId: huy.id },
     include: { kpiDefinition: true },
