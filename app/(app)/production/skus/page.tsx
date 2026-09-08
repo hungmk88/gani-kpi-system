@@ -21,10 +21,16 @@ export default async function SkusPage() {
     user.role === "ADMIN" ||
     user.productionRole === "PRODUCTION_DIRECTOR";
 
-  const skus = await prisma.productSku.findMany({
-    include: { _count: { select: { shiftLogs: true } } },
-    orderBy: [{ isActive: "desc" }, { skuCode: "asc" }],
-  });
+  const [skus, rawMaterials] = await Promise.all([
+    prisma.productSku.findMany({
+      include: { _count: { select: { shiftLogs: true } }, rawMaterial: true },
+      orderBy: [{ isActive: "desc" }, { skuCode: "asc" }],
+    }),
+    prisma.rawMaterial.findMany({
+      where: { isActive: true },
+      orderBy: { code: "asc" },
+    }),
+  ]);
 
   return (
     <>
@@ -40,10 +46,20 @@ export default async function SkusPage() {
       <PageHeader
         title="Danh mục sản phẩm & chuẩn"
         subtitle="Chuẩn của mỗi mã phải đặt TRƯỚC khi chạy ca. Đây là thước đo để chấm điểm — Ban Giám đốc đặt chỉ tiêu khác chuẩn lúc khoá số thì bắt buộc ghi lý do."
+        actions={
+          <Link href="/production/raw-materials" className="btn-ghost btn-sm">
+            📦 Kho NVL
+          </Link>
+        }
       />
 
       <SkuManager
         canEdit={canEdit}
+        rawMaterials={rawMaterials.map((m) => ({
+          id: m.id,
+          code: m.code,
+          name: m.name,
+        }))}
         skus={skus.map((s) => ({
           id: s.id,
           skuCode: s.skuCode,
@@ -54,6 +70,8 @@ export default async function SkusPage() {
           unitPriceVnd: s.unitPriceVnd,
           isActive: s.isActive,
           shiftCount: s._count.shiftLogs,
+          rawMaterialId: s.rawMaterialId,
+          rawMaterialName: s.rawMaterial?.name ?? null,
         }))}
       />
     </>

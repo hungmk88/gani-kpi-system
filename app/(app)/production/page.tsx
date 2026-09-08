@@ -85,6 +85,9 @@ export default async function ProductionPage() {
             <Link href="/production/skus" className="btn-ghost">
               Danh mục SKU
             </Link>
+            <Link href="/production/raw-materials" className="btn-ghost">
+              Kho NVL
+            </Link>
             {canDraft && (
               <Link href="/production/new" className="btn-primary">
                 + Khai ca sản xuất

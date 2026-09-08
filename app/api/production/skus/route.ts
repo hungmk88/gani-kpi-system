@@ -22,6 +22,7 @@ const schema = z.object({
     .max(100, "Tỷ lệ hao hụt định mức không thể vượt 100%."),
   stdKgPerLaborHour: z.number().min(0).default(0),
   unitPriceVnd: z.number().min(0),
+  rawMaterialId: z.string().nullable().optional(),
 });
 
 async function assertManager(user: Awaited<ReturnType<typeof requireUser>>) {

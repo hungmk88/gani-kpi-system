@@ -14,14 +14,20 @@ type Sku = {
   unitPriceVnd: number;
   isActive: boolean;
   shiftCount: number;
+  rawMaterialId: string | null;
+  rawMaterialName: string | null;
 };
+
+type RawMaterialOption = { id: string; code: string; name: string };
 
 export default function SkuManager({
   skus,
   canEdit,
+  rawMaterials,
 }: {
   skus: Sku[];
   canEdit: boolean;
+  rawMaterials: RawMaterialOption[];
 }) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
@@ -205,6 +211,7 @@ export default function SkuManager({
                 <th className="text-right">Sản lượng chuẩn</th>
                 <th className="text-right">Hao hụt ĐM</th>
                 <th className="text-right">Định mức NVL</th>
+                <th>NVL chính (kho)</th>
                 <th className="text-right">Đơn giá</th>
                 <th className="text-right">Số ca</th>
                 <th>Trạng thái</th>
@@ -244,6 +251,32 @@ export default function SkuManager({
                   </td>
                   <td className="text-right font-medium text-ink-900">
                     {norm(s.targetOutputKg, s.stdMaterialLossRate)} kg
+                  </td>
+                  <td>
+                    {editing === s.id ? (
+                      <select
+                        className="input py-1 text-xs"
+                        defaultValue={s.rawMaterialId ?? ""}
+                        onChange={(e) =>
+                          patch(s.id, { rawMaterialId: e.target.value || null })
+                        }
+                      >
+                        <option value="">— Chưa gán, không trừ kho —</option>
+                        {rawMaterials.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.code} — {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : s.rawMaterialName ? (
+                      <span className="text-xs text-ink-600">
+                        {s.rawMaterialName}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-ink-400">
+                        chưa gán — không trừ kho
+                      </span>
+                    )}
                   </td>
                   <td className="text-right text-ink-600">
                     {new Intl.NumberFormat("vi-VN").format(s.unitPriceVnd)} ₫

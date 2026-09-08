@@ -90,6 +90,7 @@ model User {
   shiftsQcApproved   ProductionShiftLog[]        @relation("ShiftQcOfficer")
   shiftsLocked       ProductionShiftLog[]        @relation("ShiftLocker")
   shiftParticipation ProductionShiftParticipant[]
+  materialTransactions RawMaterialTransaction[]
   dailyKpiResults    DailyKpiResult[]
   auditsExplained    AntiGamingAudit[]           @relation("AuditExplainer")
   auditsReviewed     AntiGamingAudit[]           @relation("AuditReviewer")
@@ -656,9 +657,58 @@ model ProductSku {
   isActive            Boolean  @default(true)
   createdAt           DateTime @default(now())
 
+  // NVL chính mà mã này tiêu thụ — gán rồi thì mỗi ca khoá số sẽ tự trừ kho lý
+  // thuyết theo định mức. Chưa gán thì bỏ qua, không chặn khoá ca.
+  rawMaterialId String?
+  rawMaterial   RawMaterial? @relation(fields: [rawMaterialId], references: [id])
+
   shiftLogs ProductionShiftLog[]
 
   @@map("product_skus")
+}
+
+// ==================== KHO NVL LÝ THUYẾT (Mục 1 — Phần A, 10/09/2026) =======
+// Trừ tự động theo ĐỊNH MỨC khi ca khoá số — không phải số NVL thực tế đã
+// dùng. Mục đích: có một con số "lẽ ra còn bao nhiêu" để sau này đối chiếu
+// với kho thực tế (đếm tay, hoặc nối MISA — Phần B, chưa làm) và phát hiện
+// thất thoát, không phải để đo hiệu suất dùng nguyên liệu (việc đó đã có ở
+// luật chống chạy chỉ tiêu số 1 trong lib/production/anti-gaming.ts).
+model RawMaterial {
+  id             String   @id @default(uuid())
+  code           String   @unique
+  name           String
+  unit           String   @default("kg")
+  currentStockKg Float    @default(0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  skus         ProductSku[]
+  transactions RawMaterialTransaction[]
+
+  @@map("raw_materials")
+}
+
+/// Sổ giao dịch kho — cộng dồn ra currentStockKg, không sửa/xoá được, giống
+/// audit_logs. Muốn chỉnh số dư thì ghi thêm dòng ADJUSTMENT kèm lý do, không
+/// sửa thẳng vào các dòng cũ.
+model RawMaterialTransaction {
+  id             String   @id @default(uuid())
+  rawMaterialId  String
+  type           String // STOCK_IN | SHIFT_DEDUCTION | ADJUSTMENT
+  quantityKg     Float // dương = nhập/cộng, âm = xuất/trừ
+  balanceAfterKg Float
+  shiftLogId     String?
+  note           String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  rawMaterial RawMaterial         @relation(fields: [rawMaterialId], references: [id])
+  shiftLog    ProductionShiftLog? @relation(fields: [shiftLogId], references: [id])
+  createdBy   User?               @relation(fields: [createdById], references: [id])
+
+  @@index([rawMaterialId, createdAt])
+  @@map("raw_material_transactions")
 }
 
 model ProductionShiftLog {
@@ -708,6 +758,7 @@ model ProductionShiftLog {
   kpiResults   DailyKpiResult[]
   audits       AntiGamingAudit[]
   kpiScore     ShiftKpiScore?
+  materialTransactions RawMaterialTransaction[]
 
   @@unique([shiftDate, shiftType, skuId])
   @@index([status])

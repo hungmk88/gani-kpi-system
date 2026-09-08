@@ -464,7 +464,69 @@ export async function lockAndTriggerKpi(
   // Chấm điểm và quét chống chạy chỉ tiêu — chỉ chạy ở đây, không sớm hơn
   const result = await executeCalculationAndAudit(logId);
 
-  return { log: locked, ...result };
+  // Trừ kho NVL lý thuyết theo định mức — không chặn việc khoá ca nếu lỗi,
+  // vì đây là phần phụ trợ, không phải nghiệp vụ chấm điểm/lương chính.
+  const inventory = await deductRawMaterialForShift(
+    logId,
+    log.skuId,
+    stdMaterialNormKg,
+    actor.id
+  ).catch((e) => {
+    console.error("[KHO NVL] Trừ kho lý thuyết thất bại:", e);
+    return null;
+  });
+
+  return { log: locked, ...result, inventory };
+}
+
+/**
+ * Trừ kho NVL lý thuyết theo ĐỊNH MỨC (không phải số thực tế đã dùng) khi một
+ * ca khoá số — xem chú thích ở model RawMaterial trong schema.prisma.
+ *
+ * Bỏ qua im lặng (trả `null`) nếu SKU chưa gán NVL nào — không phải lỗi, chỉ
+ * là mã đó chưa bật theo dõi kho.
+ */
+async function deductRawMaterialForShift(
+  shiftLogId: string,
+  skuId: string,
+  stdMaterialNormKg: number,
+  actorId: string
+) {
+  const sku = await prisma.productSku.findUnique({ where: { id: skuId } });
+  if (!sku?.rawMaterialId) return null;
+
+  const material = await prisma.rawMaterial.findUnique({
+    where: { id: sku.rawMaterialId },
+  });
+  if (!material || !material.isActive) return null;
+
+  const balanceAfter =
+    Math.round((material.currentStockKg - stdMaterialNormKg) * 100) / 100;
+
+  await prisma.$transaction([
+    prisma.rawMaterial.update({
+      where: { id: material.id },
+      data: { currentStockKg: balanceAfter },
+    }),
+    prisma.rawMaterialTransaction.create({
+      data: {
+        rawMaterialId: material.id,
+        type: "SHIFT_DEDUCTION",
+        quantityKg: -stdMaterialNormKg,
+        balanceAfterKg: balanceAfter,
+        shiftLogId,
+        createdById: actorId,
+        note: "Trừ tự động theo định mức SKU khi khoá ca",
+      },
+    }),
+  ]);
+
+  return {
+    materialId: material.id,
+    materialName: material.name,
+    deductedKg: stdMaterialNormKg,
+    balanceAfterKg: balanceAfter,
+  };
 }
 
 /* ============================================ CHẤM ĐIỂM & QUÉT BẤT THƯỜNG */
