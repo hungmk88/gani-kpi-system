@@ -63,11 +63,16 @@ const TONE: Record<string, string> = {
 /**
  * Nền cho StatCard khi tô cả tấm thẻ (prop `surface`).
  *
- * Hai màu lấy đúng từ logo GANI B2B (`logo GANI.png`), không phải màu chung
- * chung của Tailwind — đo trực tiếp từ điểm ảnh: chữ "GANI" `#1E89CA`, lá
- * `#3BA548`. Ba sắc độ mỗi màu tính bằng HSL giữ nguyên tông (hue), chỉ đổi độ
- * sáng (lightness): nền 87%, viền 60%, chữ 30% — chữ trên nền đạt tỉ lệ tương
- * phản 5,3–5,6:1, qua chuẩn AA cho cả chữ nhỏ (yêu cầu 4,5:1).
+ * "gani-blue"/"gani-green" lấy đúng từ logo GANI B2B (`logo GANI.png`), không
+ * phải màu chung chung của Tailwind — đo trực tiếp từ điểm ảnh: chữ "GANI"
+ * `#1E89CA`, lá `#3BA548`. Ba sắc độ mỗi màu tính bằng HSL giữ nguyên tông
+ * (hue), chỉ đổi độ sáng (lightness): nền 87%, viền 60%, chữ 30% — chữ trên
+ * nền đạt tỉ lệ tương phản 5,3–5,6:1, qua chuẩn AA cho cả chữ nhỏ (yêu cầu
+ * 4,5:1).
+ *
+ * Bốn màu ý nghĩa (đỏ/vàng/xanh/tím) dùng đúng thang Tailwind ở mức 100/300/800
+ * — cùng hue với `TONE` phía trên (chỉ đậm hơn vì tô cả thẻ chứ không phải một
+ * chip nhỏ), Tailwind đã tự đảm bảo tỉ lệ tương phản đạt AA ở tổ hợp này.
  */
 const SURFACE: Record<
   string,
@@ -84,6 +89,30 @@ const SURFACE: Record<
     border: "border-[#69C975]",
     label: "text-[#26692E]",
     hint: "border-white/60 bg-white/55 text-[#26692E]",
+  },
+  red: {
+    bg: "bg-red-100",
+    border: "border-red-300",
+    label: "text-red-800",
+    hint: "border-white/60 bg-white/55 text-red-800",
+  },
+  amber: {
+    bg: "bg-amber-100",
+    border: "border-amber-300",
+    label: "text-amber-800",
+    hint: "border-white/60 bg-white/55 text-amber-800",
+  },
+  green: {
+    bg: "bg-emerald-100",
+    border: "border-emerald-300",
+    label: "text-emerald-800",
+    hint: "border-white/60 bg-white/55 text-emerald-800",
+  },
+  violet: {
+    bg: "bg-violet-100",
+    border: "border-violet-300",
+    label: "text-violet-800",
+    hint: "border-white/60 bg-white/55 text-violet-800",
   },
 };
 
@@ -160,10 +189,10 @@ export function StatCard({
   /**
    * Nền màu cho cả tấm thẻ, không chỉ ô hint. Mặc định để trắng (giống mọi
    * StatCard khác trong hệ thống) — chỉ đặt khi cố ý muốn một nhóm thẻ nổi
-   * bật hẳn lên, ví dụ khối nhịp xưởng trên trang chủ. Hai màu lấy từ logo
-   * GANI B2B, xem chú thích ở hằng số SURFACE.
+   * bật hẳn lên, ví dụ khối nhịp xưởng trên trang chủ hoặc bảng điều hành.
+   * Xem chú thích ở hằng số SURFACE.
    */
-  surface?: "gani-blue" | "gani-green";
+  surface?: "gani-blue" | "gani-green" | "red" | "amber" | "green" | "violet";
 }) {
   // Một con số trần không nói được gì: 18 việc đang mở là nhiều hay ít?
   // Có mốc so sánh thì nó mới thành thông tin.

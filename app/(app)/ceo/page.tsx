@@ -182,12 +182,14 @@ export default async function CeoDashboard() {
           label="Cảnh báo cần xử lý"
           value={exceptionCount}
           tone={exceptionCount > 0 ? "red" : "green"}
+          surface={exceptionCount > 0 ? "red" : "green"}
           hint={exceptionCount > 0 ? "đang chờ can thiệp" : "không có ngoại lệ"}
         />
         <StatCard
           label="Việc trễ hạn"
           value={overdueTasks}
           tone={overdueTasks > 0 ? "red" : "green"}
+          surface={overdueTasks > 0 ? "red" : "green"}
           hint={`trên tổng ${openTasks} việc đang mở`}
           href="/tasks?filter=overdue"
         />
@@ -195,6 +197,7 @@ export default async function CeoDashboard() {
           label="Việc chưa có người nhận"
           value={unassigned}
           tone={unassigned > 0 ? "amber" : "green"}
+          surface={unassigned > 0 ? "amber" : "green"}
           hint="cần phân công"
           href="/tasks"
         />
@@ -202,6 +205,7 @@ export default async function CeoDashboard() {
           label="KPI chờ bạn chốt"
           value={pendingCeo}
           tone={pendingCeo > 0 ? "violet" : "green"}
+          surface={pendingCeo > 0 ? "violet" : "green"}
           hint={period?.name ?? "chưa mở kỳ"}
           href={period ? `/kpi/${period.id}` : "/kpi"}
         />
