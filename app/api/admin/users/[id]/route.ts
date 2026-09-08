@@ -6,11 +6,13 @@ import { hashPassword } from "@/lib/auth";
 import { checkPasswordStrength } from "@/lib/password";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { ERR, ROLES } from "@/lib/constants";
+import { EMPLOYMENT_TYPES } from "@/lib/production/constants";
 
 const schema = z.object({
   fullName: z.string().min(2).max(255).optional(),
   jobTitle: z.string().max(255).nullable().optional(),
   role: z.enum(ROLES).optional(),
+  employmentType: z.enum(EMPLOYMENT_TYPES).optional(),
   departmentId: z.string().nullable().optional(),
   telegramChatId: z.string().max(100).nullable().optional(),
   phone: z.string().max(50).nullable().optional(),
@@ -64,6 +66,7 @@ export async function PATCH(
       "fullName",
       "jobTitle",
       "role",
+      "employmentType",
       "departmentId",
       "telegramChatId",
       "phone",
@@ -95,12 +98,14 @@ export async function PATCH(
       entityId: id,
       before: {
         role: target.role,
+        employmentType: target.employmentType,
         departmentId: target.departmentId,
         isActive: target.isActive,
         telegramChatId: target.telegramChatId,
       },
       after: {
         role: updated.role,
+        employmentType: updated.employmentType,
         departmentId: updated.departmentId,
         isActive: updated.isActive,
         telegramChatId: updated.telegramChatId,

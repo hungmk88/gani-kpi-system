@@ -43,6 +43,10 @@ model User {
   fullName       String
   jobTitle       String?
   role           String    @default("EMPLOYEE") // EMPLOYEE | MANAGER | CEO | ADMIN
+  // OFFICIAL | PROBATION | SEASONAL — thử việc/thời vụ được chấm KPI xưởng
+  // bằng trọng số riêng (giảm ảnh hưởng của kết quả chung cả ca), xem
+  // lib/production/constants.ts PROBATION_TIER_WEIGHTS.
+  employmentType String    @default("OFFICIAL")
   departmentId   String?
   telegramChatId String?
   phone          String?

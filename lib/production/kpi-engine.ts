@@ -3,6 +3,8 @@ import {
   BASE_BONUS_PER_SHIFT_VND,
   DISCIPLINE_PENALTY_PER_VIOLATION,
   PRODUCTION_SCORE_CAP,
+  PROBATION_TIER1_COMPONENTS,
+  PROBATION_TIER_WEIGHTS,
   REWORK_LOSS_FACTOR,
   SAFETY_PENALTY_PER_VIOLATION,
   SHIFT_QUALITY_ZERO_AT_PERCENT,
@@ -242,10 +244,17 @@ export type Tier1Breakdown = Tier2Breakdown;
  * lấy mẫu số công bằng khi tính tỷ lệ lỗi: làm 10 giờ mà lỗi 2 kg khác hẳn làm
  * 2 giờ mà lỗi 2 kg.
  */
+export type Tier1ComponentWeights = {
+  STAGE_QUALITY: number;
+  ATTENDANCE: number;
+  DISCIPLINE: number;
+};
+
 export function computeTier1(
   p: ParticipantFacts,
   f: ShiftFacts,
-  totalHours: number
+  totalHours: number,
+  components: Tier1ComponentWeights = TIER1_COMPONENTS
 ): Tier1Breakdown {
   const parts: Tier1Breakdown["parts"] = [];
 
@@ -265,7 +274,7 @@ export function computeTier1(
   parts.push({
     key: "STAGE_QUALITY",
     label: "Chất lượng công đoạn",
-    weight: TIER1_COMPONENTS.STAGE_QUALITY,
+    weight: components.STAGE_QUALITY,
     rawValue: defectPercent,
     componentScore: round2(stageScore),
     note:
@@ -281,7 +290,7 @@ export function computeTier1(
   parts.push({
     key: "ATTENDANCE",
     label: "Chuyên cần",
-    weight: TIER1_COMPONENTS.ATTENDANCE,
+    weight: components.ATTENDANCE,
     rawValue: attendancePercent,
     componentScore: round2(attendanceScore),
     note:
@@ -299,7 +308,7 @@ export function computeTier1(
   parts.push({
     key: "DISCIPLINE",
     label: "Kỷ luật & an toàn cá nhân",
-    weight: TIER1_COMPONENTS.DISCIPLINE,
+    weight: components.DISCIPLINE,
     rawValue: p.violationCount,
     componentScore: round2(disciplineScore),
     note:
@@ -332,15 +341,39 @@ export type FinalScore = {
   };
 };
 
+export type TierWeights = { tier1: number; tier2: number };
+
+const STANDARD_WEIGHTS: TierWeights = { tier1: TIER1_WEIGHT, tier2: TIER2_WEIGHT };
+
+/**
+ * Bộ trọng số áp dụng theo loại nhân sự — xem lib/production/constants.ts.
+ * Thử việc/thời vụ dùng 80/20 + Tầng 1 nghiêng về an toàn, chính thức dùng
+ * 60/40 gốc.
+ */
+export function tierWeightsFor(employmentType: string | null | undefined): {
+  weights: TierWeights;
+  tier1Components: Tier1ComponentWeights;
+} {
+  if (employmentType === "PROBATION" || employmentType === "SEASONAL") {
+    return {
+      weights: { tier1: PROBATION_TIER_WEIGHTS.TIER1, tier2: PROBATION_TIER_WEIGHTS.TIER2 },
+      tier1Components: PROBATION_TIER1_COMPONENTS,
+    };
+  }
+  return { weights: STANDARD_WEIGHTS, tier1Components: TIER1_COMPONENTS };
+}
+
 export function computeFinalScore(
   p: ParticipantFacts,
   f: ShiftFacts,
   totalHours: number,
-  tier2: Tier2Breakdown
+  tier2: Tier2Breakdown,
+  tierWeights: TierWeights = STANDARD_WEIGHTS,
+  tier1Components: Tier1ComponentWeights = TIER1_COMPONENTS
 ): FinalScore {
-  const tier1 = computeTier1(p, f, totalHours);
+  const tier1 = computeTier1(p, f, totalHours, tier1Components);
   const final = round2(
-    tier1.score * TIER1_WEIGHT + tier2.score * TIER2_WEIGHT
+    tier1.score * tierWeights.tier1 + tier2.score * tierWeights.tier2
   );
   const multiplier = bonusMultiplierFor(final);
 
@@ -354,7 +387,7 @@ export function computeFinalScore(
       tier1,
       tier2,
       attributedKg: round2(f.qcPassedKg * (safeDiv(p.hoursWorked, totalHours) ?? 0)),
-      formula: `(${tier1.score} × ${TIER1_WEIGHT}) + (${tier2.score} × ${TIER2_WEIGHT}) = ${final}`,
+      formula: `(${tier1.score} × ${tierWeights.tier1}) + (${tier2.score} × ${tierWeights.tier2}) = ${final}`,
     },
   };
 }

@@ -10,6 +10,10 @@ import {
   ROLE_LABEL,
   ROLES,
 } from "@/lib/constants";
+import {
+  EMPLOYMENT_TYPES,
+  EMPLOYMENT_TYPE_LABEL,
+} from "@/lib/production/constants";
 import IntegrationsTab, {
   type LogRow,
   type SourceRow as IntegrationRow,
@@ -22,6 +26,7 @@ type UserRow = {
   fullName: string;
   jobTitle: string;
   role: string;
+  employmentType: string;
   departmentId: string | null;
   departmentName: string | null;
   telegramChatId: string | null;
@@ -320,6 +325,7 @@ function UsersTab({
               <th>Họ tên</th>
               <th>Email</th>
               <th>Vai trò</th>
+              <th>Loại nhân sự</th>
               <th>Phòng ban</th>
               <th>Telegram Chat ID</th>
               <th>Đăng nhập gần nhất</th>
@@ -351,6 +357,31 @@ function UsersTab({
                   ) : (
                     <Badge tone={u.role === "CEO" ? "violet" : "slate"}>
                       {ROLE_LABEL[u.role]}
+                    </Badge>
+                  )}
+                </td>
+                <td>
+                  {editing === u.id ? (
+                    <select
+                      className="input py-1 text-xs"
+                      defaultValue={u.employmentType}
+                      onChange={(e) =>
+                        patch(u.id, { employmentType: e.target.value })
+                      }
+                    >
+                      {EMPLOYMENT_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {EMPLOYMENT_TYPE_LABEL[t]}
+                        </option>
+                      ))}
+                    </select>
+                  ) : u.employmentType === "OFFICIAL" ? (
+                    <span className="text-xs text-ink-500">
+                      {EMPLOYMENT_TYPE_LABEL[u.employmentType]}
+                    </span>
+                  ) : (
+                    <Badge tone="amber">
+                      {EMPLOYMENT_TYPE_LABEL[u.employmentType]}
                     </Badge>
                   )}
                 </td>

@@ -128,6 +128,46 @@ export const STAGE_DEFECT_ZERO_AT_PERCENT = 5;
 export const SHIFT_QUALITY_ZERO_AT_PERCENT = 10;
 
 /* ============================================================================
+ * KPI ĐA TẦNG CHO THỬ VIỆC / THỜI VỤ
+ * ========================================================================== */
+
+export const EMPLOYMENT_TYPES = ["OFFICIAL", "PROBATION", "SEASONAL"] as const;
+export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
+
+export const EMPLOYMENT_TYPE_LABEL: Record<string, string> = {
+  OFFICIAL: "Chính thức",
+  PROBATION: "Thử việc",
+  SEASONAL: "Thời vụ",
+};
+
+/**
+ * Trọng số 2 tầng riêng cho thử việc/thời vụ (chốt 10/09/2026, anh duyệt số
+ * 80/20 làm ví dụ khi chọn hướng xử lý).
+ *
+ * Tầng 2 (kết quả chung cả ca — có cả Sản lượng, tức nhịp độ dây chuyền) không
+ * tách được theo từng người, nên không "miễn trừ" đúng nghĩa đen được. Thay
+ * vào đó giảm hẳn tỷ trọng của nó xuống 20% (thay vì 40%), tăng Tầng 1 (đo
+ * đúng phần việc cá nhân) lên 80% — người mới bị ảnh hưởng bởi tốc độ chung
+ * của cả ca ít hơn hẳn.
+ */
+export const PROBATION_TIER_WEIGHTS = {
+  TIER1: 0.8,
+  TIER2: 0.2,
+} as const;
+
+/**
+ * Trong Tầng 1 của thử việc/thời vụ, tăng trọng số "Kỷ luật & an toàn cá
+ * nhân" (đúng yêu cầu gốc: an toàn thực phẩm/HACCP quan trọng hơn tốc độ với
+ * người chưa quen việc), giảm Chất lượng công đoạn tương ứng — tổng vẫn 100.
+ * Chuyên cần giữ nguyên vì không liên quan tới tay nghề.
+ */
+export const PROBATION_TIER1_COMPONENTS = {
+  STAGE_QUALITY: 35,
+  ATTENDANCE: 25,
+  DISCIPLINE: 40,
+} as const;
+
+/* ============================================================================
  * LUẬT CHỐNG CHẠY CHỈ TIÊU — theo đúng 3 luật trong bản thiết kế
  * ========================================================================== */
 

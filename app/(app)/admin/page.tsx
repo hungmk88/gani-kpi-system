@@ -63,6 +63,7 @@ export default async function AdminPage() {
           fullName: u.fullName,
           jobTitle: u.jobTitle ?? "",
           role: u.role,
+          employmentType: u.employmentType,
           departmentId: u.departmentId,
           departmentName: u.department?.name ?? null,
           telegramChatId: u.telegramChatId,

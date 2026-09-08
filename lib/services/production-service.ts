@@ -10,6 +10,7 @@ import {
   computeShiftMetrics,
   computeStdMaterialNorm,
   computeTier2,
+  tierWeightsFor,
   type ParticipantFacts,
   type ShiftFacts,
 } from "../production/kpi-engine";
@@ -536,7 +537,15 @@ export async function executeCalculationAndAudit(logId: string) {
       personalDefectKg: p.personalDefectKg,
       violationCount: p.violationCount,
     };
-    const score = computeFinalScore(pf, facts, totalHours, tier2);
+    const { weights, tier1Components } = tierWeightsFor(p.user.employmentType);
+    const score = computeFinalScore(
+      pf,
+      facts,
+      totalHours,
+      tier2,
+      weights,
+      tier1Components
+    );
 
     const saved = await prisma.dailyKpiResult.upsert({
       where: { shiftLogId_userId: { shiftLogId: logId, userId: p.userId } },
