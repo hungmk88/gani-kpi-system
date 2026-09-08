@@ -32,7 +32,7 @@ export async function callTelegram(
   payload: Record<string, unknown>,
   timeoutMs = 15000
 ): Promise<TelegramResult> {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!token) {
     return { ok: false, error: "Chưa cấu hình TELEGRAM_BOT_TOKEN trong .env" };
   }
