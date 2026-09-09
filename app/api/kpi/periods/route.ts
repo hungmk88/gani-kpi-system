@@ -92,8 +92,13 @@ export async function POST(req: Request) {
 }
 
 /**
- * Gán bộ chỉ tiêu mặc định: mỗi nhân sự nhận toàn bộ KPI đang bật của phòng
- * ban mình, target lấy từ kỳ gần nhất nếu có, không thì để 0 cho quản lý điền.
+ * Gán bộ chỉ tiêu mặc định: mỗi nhân sự nhận KPI đang bật của phòng ban mình,
+ * target lấy từ kỳ gần nhất nếu có, không thì để 0 cho quản lý điền.
+ *
+ * `appliesToRole` lọc thêm theo vai trò khi một phòng ban có bộ chỉ tiêu
+ * KHÁC NHAU cho Trưởng phòng và Nhân viên (vd Sales: Trưởng phòng nhận tầng
+ * Team, nhân viên nhận tầng cá nhân) — NULL nghĩa là áp dụng cho cả phòng,
+ * giữ nguyên hành vi gốc cho mọi phòng ban khác chưa cần tách vai trò.
  */
 async function autoAssignTargets(periodId: string) {
   const users = await prisma.user.findMany({
@@ -108,7 +113,11 @@ async function autoAssignTargets(periodId: string) {
 
   let count = 0;
   for (const u of users) {
-    const myDefs = defs.filter((d) => d.departmentId === u.departmentId);
+    const myDefs = defs.filter(
+      (d) =>
+        d.departmentId === u.departmentId &&
+        (d.appliesToRole === null || d.appliesToRole === u.role)
+    );
     for (const d of myDefs) {
       const prev = prevPeriod
         ? await prisma.kpiResult.findFirst({

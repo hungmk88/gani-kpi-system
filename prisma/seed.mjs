@@ -71,12 +71,19 @@ const KPI_DEFS = [
   // Trọng số cộng dương đúng 100; SALES_RETURN weight=0 vì nó không cộng
   // điểm dương, chỉ TRỪ khi vượt ngưỡng — xem SALES_RETURN_RATE_GATEKEEPER
   // trong lib/constants.ts và recalcResult() trong lib/services/kpi-service.ts.
-  { code: "SALES_GP", name: "Lợi nhuận gộp (GP)", dept: "SALES", unit: "VND", higher: true, source: "EXCEL", weight: 40 },
-  { code: "SALES_REV", name: "Doanh thu thuần", dept: "SALES", unit: "VND", higher: true, source: "IPOS_API", weight: 25 },
-  { code: "SALES_COLLECTION", name: "Collection Rate (Tỷ lệ thu nợ)", dept: "SALES", unit: "%", higher: true, source: "EXCEL", weight: 15 },
-  { code: "SALES_NEW", name: "Khách hàng mới", dept: "SALES", unit: "khách", higher: true, source: "EXCEL", weight: 10 },
-  { code: "SALES_SKU", name: "Doanh số SKU chiến lược", dept: "SALES", unit: "VND", higher: true, source: "EXCEL", weight: 10 },
-  { code: "SALES_RETURN", name: "Tỷ lệ trả hàng / khiếu nại (Gatekeeper)", dept: "SALES", unit: "%", higher: false, source: "EXCEL", weight: 0 },
+  // Tầng cá nhân (Sales Executive) — role: "EMPLOYEE"
+  { code: "SALES_GP", name: "Lợi nhuận gộp (GP)", dept: "SALES", unit: "VND", higher: true, source: "EXCEL", weight: 40, role: "EMPLOYEE" },
+  { code: "SALES_REV", name: "Doanh thu thuần", dept: "SALES", unit: "VND", higher: true, source: "IPOS_API", weight: 25, role: "EMPLOYEE" },
+  { code: "SALES_COLLECTION", name: "Collection Rate (Tỷ lệ thu nợ)", dept: "SALES", unit: "%", higher: true, source: "EXCEL", weight: 15, role: "EMPLOYEE" },
+  { code: "SALES_NEW", name: "Khách hàng mới", dept: "SALES", unit: "khách", higher: true, source: "EXCEL", weight: 10, role: "EMPLOYEE" },
+  { code: "SALES_SKU", name: "Doanh số SKU chiến lược", dept: "SALES", unit: "VND", higher: true, source: "EXCEL", weight: 10, role: "EMPLOYEE" },
+  { code: "SALES_RETURN", name: "Tỷ lệ trả hàng / khiếu nại (Gatekeeper)", dept: "SALES", unit: "%", higher: false, source: "EXCEL", weight: 0, role: "EMPLOYEE" },
+  // Tầng Team (Sales Manager) — role: "MANAGER", cộng đúng 100
+  { code: "SALES_TEAM_GP", name: "Tổng GP team", dept: "SALES", unit: "VND", higher: true, source: "EXCEL", weight: 40, role: "MANAGER" },
+  { code: "SALES_TEAM_REV", name: "Tổng Doanh thu team", dept: "SALES", unit: "VND", higher: true, source: "EXCEL", weight: 20, role: "MANAGER" },
+  { code: "SALES_TEAM_DEBT", name: "Tỷ lệ nợ quá hạn team", dept: "SALES", unit: "%", higher: false, source: "EXCEL", weight: 20, role: "MANAGER" },
+  { code: "SALES_TEAM_TARGET_RATE", name: "Tỷ lệ Sales đạt Target (Min 70%)", dept: "SALES", unit: "%", higher: true, source: "EXCEL", weight: 10, role: "MANAGER" },
+  { code: "SALES_TEAM_SKU", name: "Doanh số SKU chiến lược team", dept: "SALES", unit: "VND", higher: true, source: "EXCEL", weight: 10, role: "MANAGER" },
   // Đã ngưng dùng (giữ lại lịch sử, không gán cho kỳ mới — xem đoạn deactivate bên dưới):
   { code: "SALES_DEBT", name: "Tỷ lệ công nợ quá hạn (đã thay bằng SALES_COLLECTION)", dept: "SALES", unit: "%", higher: false, source: "EXCEL", weight: 0 },
   { code: "SALES_VISIT", name: "Số lượt viếng thăm khách hàng (đã ngưng dùng)", dept: "SALES", unit: "lượt", higher: true, source: "MANUAL", weight: 0 },
@@ -299,6 +306,7 @@ async function main() {
         dataSource: k.source,
         defaultWeight: k.weight,
         departmentId: deptMap[k.dept],
+        appliesToRole: k.role ?? null,
       },
       create: {
         code: k.code,
@@ -308,6 +316,7 @@ async function main() {
         dataSource: k.source,
         defaultWeight: k.weight,
         departmentId: deptMap[k.dept],
+        appliesToRole: k.role ?? null,
       },
     });
     kpiMap[k.code] = row;

@@ -277,6 +277,12 @@ model KpiDefinition {
   defaultWeight Float?   // truong so mac dinh
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
+  // NULL = ap dung cho ca phong ban (hanh vi goc, moi phong ban khac deu
+  // NULL). Dat "MANAGER" hoac "EMPLOYEE" khi mot phong ban co bo chi tieu
+  // KHAC NHAU theo vai tro trong cung phong - vd Sales: Truong phong nhan
+  // tang Team, nhan vien nhan tang ca nhan. Xem autoAssignTargets() trong
+  // app/api/kpi/periods/route.ts.
+  appliesToRole String?
 
   department      Department? @relation(fields: [departmentId], references: [id])
   results         KpiResult[]
