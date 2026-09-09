@@ -164,7 +164,7 @@ Muốn dùng Gemini cho thông minh hơn:
 
    ```
    GEMINI_API_KEY="khoá vừa lấy"
-   GEMINI_MODEL="gemini-2.0-flash"
+   GEMINI_MODEL="gemini-3.6-flash"
    ```
 
 3. Khởi động lại server.

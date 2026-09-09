@@ -12,8 +12,15 @@
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
-/** Model mặc định: nhanh, rẻ, tiếng Việt tốt. Đổi được qua .env */
-export const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+/**
+ * Model mặc định: nhanh, rẻ, tiếng Việt tốt. Đổi được qua .env bằng GEMINI_MODEL.
+ *
+ * "gemini-2.0-flash" (số gốc ban đầu) đã ngừng hoạt động hẳn — gọi vào trả
+ * 404 "no longer available". Kiểm tra lại danh sách model còn dùng được bằng
+ * GET https://generativelanguage.googleapis.com/v1beta/models?key=<khoá> nếu
+ * sau này model dưới đây cũng bị Google khai tử.
+ */
+export const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
 export function isAiEnabled() {
   return !!process.env.GEMINI_API_KEY;
