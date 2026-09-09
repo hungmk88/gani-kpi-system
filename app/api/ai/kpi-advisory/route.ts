@@ -4,6 +4,9 @@ import { clientMeta } from "@/lib/audit";
 import { suggestKpiAdvisory } from "@/lib/services/ai-service";
 
 export const runtime = "nodejs";
+// Gọi Gemini có thể mất tới ~25-30s ở dòng model "thinking" — trần mặc định
+// của Vercel không đủ, xem lib/ai/provider.ts.
+export const maxDuration = 60;
 
 const schema = z.object({ kpiResultId: z.string().min(1) });
 

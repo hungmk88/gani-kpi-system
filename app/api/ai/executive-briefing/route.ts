@@ -7,6 +7,9 @@ import { gatherExecutiveBriefingFacts } from "@/lib/services/analytics-service";
 import { buildExecutiveBriefing } from "@/lib/ai/executive-advisor";
 
 export const runtime = "nodejs";
+// Gọi Gemini có thể mất tới ~25-30s ở dòng model "thinking" — trần mặc định
+// của Vercel không đủ, xem lib/ai/provider.ts.
+export const maxDuration = 60;
 
 /**
  * Báo cáo điều hành cho Ban Giám đốc — bấm tay.

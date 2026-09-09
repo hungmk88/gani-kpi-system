@@ -185,7 +185,10 @@ async function withGemini(
     prompt,
     schema,
     temperature: 0.35,
-    timeoutMs: 25000,
+    // Đo thật trên production: 24.5s cho đúng prompt này (dữ liệu vận hành đầy
+    // đủ), sát nút mức cũ 25s — từng khiến route rơi về bản luật cứng dù
+    // GEMINI_API_KEY hoàn toàn hợp lệ. Nới rộng cho chắc.
+    timeoutMs: 45000,
   });
 
   if (!res.ok || !res.data) return null;

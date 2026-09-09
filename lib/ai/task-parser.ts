@@ -156,7 +156,10 @@ async function parseWithGemini(
     prompt,
     schema: geminiSchema,
     temperature: 0.1,
-    timeoutMs: 20000,
+    // gemini-3.6-flash đo thật mất tới 24.5s cho prompt nặng hơn (báo cáo điều
+    // hành) dù đã hạ thinkingLevel — nới rộng cho chắc, đừng để timeout tự
+    // đá về luật cứng chỉ vì mạng chậm hôm đó.
+    timeoutMs: 45000,
   });
 
   if (!res.ok || !res.data) return null;

@@ -143,7 +143,9 @@ async function adviseWithGemini(ctx: KpiContext): Promise<KpiAdvisory | null> {
     prompt,
     schema,
     temperature: 0.3,
-    timeoutMs: 25000,
+    // Xem chú thích ở task-parser.ts — đo thật gemini-3.6-flash chạm gần
+    // ngưỡng cũ, nới rộng cho chắc.
+    timeoutMs: 45000,
   });
 
   if (!res.ok || !res.data) return null;
