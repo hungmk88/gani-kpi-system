@@ -1040,3 +1040,17 @@ Cũng nhận thấy: `/kpi` hiện đồng thời 2 kỳ "Đang mở" (Tháng 09
 10/2026) — có thể là dữ liệu còn sót lại từ lúc dựng/seed nhiều lần trong
 phiên làm việc trước, chưa xác minh có phải lỗi luồng khoá kỳ hay không; nêu ra
 để anh để ý, chưa đủ căn cứ kết luận là bug.
+
+**Ghi chú lịch sử — Vercel build vỡ suốt từ commit thêm `employmentType`
+(10/09/2026), đã vá:** phát hiện qua chính rà soát ở trên — bấm vào production
+thật thì cột "Loại nhân sự" và trang `/production/raw-materials` không có,
+kiểm Vercel Dashboard mới thấy **mọi deploy từ lúc thêm mục 2 (KPI thử việc)
+trở đi đều "Error"** sau 30-40 giây. Nguyên nhân: `package.json` chưa từng có
+`"postinstall": "prisma generate"` — Vercel dùng lại `node_modules` cache với
+Prisma Client cũ (sinh trước khi có `employmentType`), TypeScript báo
+`Property 'employmentType' does not exist`. `npm run build` ở máy dev luôn
+sạch vì máy dev tự chạy `prisma generate`/`migrate dev` ngay khi sửa schema —
+Vercel thì không, nên **bản sạch cục bộ không đảm bảo Vercel build được**. Đã
+thêm `postinstall` vào `package.json`. **Từ nay, mỗi lần đổi
+`schema.prisma` xong phải vào Vercel Dashboard → Deployments kiểm tra deploy
+có "Ready" thật không**, đừng chỉ tin build cục bộ.
