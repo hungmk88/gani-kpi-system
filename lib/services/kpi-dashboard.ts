@@ -152,12 +152,17 @@ export async function getDashboardDistribution() {
       ? validScores.reduce((a, b) => a + b, 0) / validScores.length
       : 0;
   const sorted = [...validScores].sort((a, b) => a - b);
+  // Mảng rỗng thì length % 2 === 0 đúng luôn, ra sorted[-1] + sorted[0] =
+  // undefined + undefined = NaN — JSON hoá thành null, làm .toFixed() ở màn
+  // hình vỡ ngay khi chưa có ca nào trong 30 ngày. Chặn riêng trường hợp rỗng.
   const median =
-    sorted.length % 2 === 0
-      ? (sorted[Math.floor(sorted.length / 2) - 1] +
-          sorted[Math.floor(sorted.length / 2)]) /
-        2
-      : sorted[Math.floor(sorted.length / 2)];
+    sorted.length === 0
+      ? 0
+      : sorted.length % 2 === 0
+        ? (sorted[Math.floor(sorted.length / 2) - 1] +
+            sorted[Math.floor(sorted.length / 2)]) /
+          2
+        : sorted[Math.floor(sorted.length / 2)];
   const stdDev =
     validScores.length > 0
       ? Math.sqrt(
