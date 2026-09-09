@@ -1109,3 +1109,19 @@ số. Anh vẫn tính tay/Excel như hiện tại cho tới khi quyết làm ti�
 
 Áp dụng ngay cho **kỳ KPI mở tiếp theo** — kỳ đang mở hiện tại đã gán dòng
 theo bộ cũ, không bị đổi ngược.
+
+**Ghi chú lịch sử — thêm Tầng Team cho Sales Manager (10/09/2026):** làm nốt
+phần còn thiếu ở trên. 5 chỉ tiêu: Tổng GP team 40% · Tổng Doanh thu team
+20% · Tỷ lệ nợ quá hạn team 20% · Tỷ lệ Sales đạt Target (Min 70%) 10% ·
+Doanh số SKU chiến lược team 10%.
+
+Việc này lộ ra một chỗ kiến trúc trước giờ chưa cần tới: hệ thống gán **toàn
+bộ** chỉ tiêu đang bật của một phòng ban cho **mọi người** trong phòng đó,
+không phân biệt Trưởng phòng hay Nhân viên (`autoAssignTargets()` trong
+`app/api/kpi/periods/route.ts`) — đúng cho mọi phòng ban khác vì trước giờ
+chưa phòng nào cần tách. Đã thêm cột `KpiDefinition.appliesToRole` (`NULL` =
+áp dụng cho cả phòng như cũ, `"MANAGER"`/`"EMPLOYEE"` = chỉ áp dụng cho đúng
+vai trò đó) và lọc thêm điều kiện này khi mở kỳ mới. Sáu chỉ tiêu tầng cá
+nhân của Sales đã gắn `EMPLOYEE`, năm chỉ tiêu Team gắn `MANAGER` — Trưởng
+phòng Sales từ kỳ tới sẽ chỉ thấy 5 chỉ tiêu Team, không lẫn với chỉ tiêu cá
+nhân của nhân viên.
