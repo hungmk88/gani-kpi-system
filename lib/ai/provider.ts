@@ -136,6 +136,12 @@ export async function generateJson<T>(opts: {
             temperature: opts.temperature ?? 0.2,
             responseMimeType: "application/json",
             responseSchema: opts.schema,
+            // Model dòng "thinking" (gemini-3.x) mặc định nghĩ rất lâu trước khi
+            // trả JSON — đo thật: 17.5s ở mức nghĩ mặc định, dễ vượt timeout bên
+            // dưới. Hạ xuống "low" thì còn ~6s, JSON vẫn đúng schema, lại rẻ hơn
+            // vì bớt hẳn thoughtsTokenCount. Việc ở đây chỉ cần trích xuất/tóm tắt
+            // có cấu trúc, không cần suy luận nhiều bước.
+            thinkingConfig: { thinkingLevel: "low" },
           },
           safetySettings: [
             "HARM_CATEGORY_HARASSMENT",
