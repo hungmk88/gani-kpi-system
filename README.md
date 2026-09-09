@@ -1054,3 +1054,31 @@ Vercel thì không, nên **bản sạch cục bộ không đảm bảo Vercel bu
 thêm `postinstall` vào `package.json`. **Từ nay, mỗi lần đổi
 `schema.prisma` xong phải vào Vercel Dashboard → Deployments kiểm tra deploy
 có "Ready" thật không**, đừng chỉ tin build cục bộ.
+
+**Ghi chú lịch sử — bật Gemini thật, model gốc đã chết + lỗi timeout ẩn
+(10/09/2026):** anh đưa khoá Gemini thật, kiểm tra trực tiếp thì phát hiện 2
+việc:
+
+1. **Model gốc `gemini-2.0-flash` không còn tồn tại** (API trả 404 thẳng).
+   Ngay cả `gemini-2.5-flash` cũng đã đóng với người dùng mới. Đổi sang
+   **`gemini-3.6-flash`** — model Google tự gợi ý trong thông báo lỗi 404. Nếu
+   sau này model này cũng ngừng, gọi
+   `GET https://generativelanguage.googleapis.com/v1beta/models?key=<khoá>`
+   để xem danh sách còn dùng được.
+2. **Dòng model mới mặc định "suy nghĩ" (thinking) rất lâu trước khi trả
+   JSON** — đo thật 17.5 giây khi gọi thẳng, 24.5 giây khi tính cả vòng qua
+   Vercel. Hậu quả: báo cáo điều hành (mục 5g, phần AI) **âm thầm rơi về bản
+   viết bằng luật cứng** dù khoá Gemini hoàn toàn hợp lệ, vì chạm đúng ngưỡng
+   chờ 25 giây đặt trong `generateJson`. Không có log lỗi rõ ràng — `engineError`
+   trả về chỉ là câu bọc ngoài chung chung, phải tự dựng lại đúng request thật
+   rồi đo bằng tay mới ra nguyên nhân. Đã vá 2 lớp trong `lib/ai/provider.ts`
+   và 3 route AI:
+   - `generationConfig.thinkingConfig: { thinkingLevel: "low" }` — hạ mức
+     nghĩ, còn ~6 giây gọi thẳng, JSON vẫn đúng schema, lại rẻ hơn (bớt hẳn
+     `thoughtsTokenCount`).
+   - Nới `timeoutMs` từ 20-25s lên 45s ở cả 3 nơi gọi Gemini (task-parser,
+     kpi-advisor, executive-advisor), thêm `export const maxDuration = 60;`
+     cho 3 route API tương ứng — phòng khi Vercel có ngày mạng chậm hơn mức
+     đã đo.
+   - Xác nhận lại bằng cách gọi thật `POST /api/ai/executive-briefing` trên
+     production sau khi vá: `engine: "GEMINI"`, không còn rơi về luật cứng.
