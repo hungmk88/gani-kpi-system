@@ -137,6 +137,11 @@ export const PERIOD_STATUS_LABEL: Record<string, string> = {
  * khoá/giảm Commission theo GM%) CHƯA code — anh tự tính tay/Excel như hiện
  * tại, vì hệ thống chưa có bộ tính hoa hồng VNĐ cho khối văn phòng.
  */
+export const SALES_DEPARTMENT_CODE = "SALES";
+
+/** Trần mỗi chỉ tiêu Sales — 120%, khác trần 150% chung toàn công ty. */
+export const SALES_KPI_CAP = 120;
+
 export const SALES_RETURN_RATE_GATEKEEPER = {
   KPI_CODE: "SALES_RETURN",
   THRESHOLD_PERCENT: 2,

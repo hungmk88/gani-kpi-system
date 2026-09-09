@@ -1,6 +1,12 @@
 import { prisma } from "../db";
 import { BusinessError } from "../rbac";
-import { ERR, KPI_SCORE_CAP, SALES_RETURN_RATE_GATEKEEPER } from "../constants";
+import {
+  ERR,
+  KPI_SCORE_CAP,
+  SALES_DEPARTMENT_CODE,
+  SALES_KPI_CAP,
+  SALES_RETURN_RATE_GATEKEEPER,
+} from "../constants";
 import {
   calculateKpiScore,
   detectMismatch,
@@ -22,7 +28,7 @@ type Meta = { ip?: string | null; userAgent?: string | null };
 export async function recalcResult(resultId: string) {
   const r = await prisma.kpiResult.findUnique({
     where: { id: resultId },
-    include: { kpiDefinition: true },
+    include: { kpiDefinition: { include: { department: true } } },
   });
   if (!r) throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy dòng KPI.", 404);
 
@@ -31,6 +37,14 @@ export async function recalcResult(resultId: string) {
   const effective =
     r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null;
 
+  // Trần Sales là 120% (tài liệu truyền thông KPI Sales, 10/09/2026) — khác
+  // trần 150% chung toàn công ty. Chỉ Sales bị ghi đè, phòng ban khác giữ
+  // nguyên KPI_SCORE_CAP mặc định.
+  const cap =
+    r.kpiDefinition?.department?.code === SALES_DEPARTMENT_CODE
+      ? SALES_KPI_CAP
+      : undefined;
+
   // Chưa gán chỉ tiêu thì không có gì để chấm — cho điểm 0, không đoán chiều.
   let calc = r.kpiDefinition
     ? calculateKpiScore({
@@ -38,6 +52,7 @@ export async function recalcResult(resultId: string) {
         actual: effective,
         weight: r.weightPercent ?? 0,
         isHigherBetter: r.kpiDefinition.isHigherBetter,
+        cap,
       })
     : {
         achievementPercent: 0,

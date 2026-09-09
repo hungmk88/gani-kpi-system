@@ -9,6 +9,12 @@ export type KpiCalcInput = {
   actual: number | null | undefined;
   weight: number;
   isHigherBetter: boolean;
+  /**
+   * Trần riêng cho chỉ tiêu này, ghi đè KPI_SCORE_CAP (150%) mặc định toàn
+   * công ty. Dùng khi một phòng ban có chính sách trần khác — vd Sales chốt
+   * 120% theo "GANI_FOODY_Tai_lieu_truyen_thong_KPI_Doi_Sales" (10/09/2026).
+   */
+  cap?: number;
 };
 
 export type KpiCalcOutput = {
@@ -33,6 +39,7 @@ export function calculateKpiScore({
   actual,
   weight,
   isHigherBetter,
+  cap = KPI_SCORE_CAP,
 }: KpiCalcInput): KpiCalcOutput {
   const zero = {
     achievementPercent: 0,
@@ -62,7 +69,7 @@ export function calculateKpiScore({
       } else {
         // Chỉ tiêu cho phép sai sót (vd: dưới 1,5% hàng lỗi) mà thực tế bằng 0
         // -> vượt xa mục tiêu, cho chạm trần.
-        raw = KPI_SCORE_CAP;
+        raw = cap;
       }
     } else {
       if (target === 0) {
@@ -75,10 +82,10 @@ export function calculateKpiScore({
 
   if (raw < 0) raw = 0;
 
-  // "Chạm trần" tính cả trường hợp đúng bằng 150 — giao diện ghi là "chạm trần
-  // 150%" nên đạt đúng mức trần cũng phải hiện, không chỉ khi vượt qua.
-  const isCapped = raw >= KPI_SCORE_CAP;
-  const achievementPercent = isCapped ? KPI_SCORE_CAP : raw;
+  // "Chạm trần" tính cả trường hợp đúng bằng mức trần — giao diện ghi là "chạm
+  // trần X%" nên đạt đúng mức trần cũng phải hiện, không chỉ khi vượt qua.
+  const isCapped = raw >= cap;
+  const achievementPercent = isCapped ? cap : raw;
   const weightedScore = (achievementPercent * weight) / 100;
 
   return {
