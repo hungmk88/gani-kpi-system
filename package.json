@@ -4,6 +4,7 @@
   "private": true,
   "description": "GANI FOODY - Work & KPI Management System (Phase 1 MVP Core)",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",
