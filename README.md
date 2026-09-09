@@ -958,8 +958,9 @@ Nói thẳng để không nhầm lẫn khi nghiệm thu. Cả bốn Phase của 
 
 **Phần Phase 3 — Dashboard & Báo cáo**
 - ✅ **Dashboard KPI sẵn sàng** — trang `/admin/kpi-dashboard` với 3 API endpoint (summary, distribution, trends). Phục vụ CEO/ADMIN xem tổng hợp điểm theo thời gian thực.
-- ⏳ **Báo cáo PDF/Excel** — sẽ implement trong Phase 3B (2–3 giờ).
-- ⏳ **Heatmap & Analytics** — sẽ implement trong Phase 3C (3–4 giờ).
+- ✅ **Báo cáo PDF/Excel** — xong (09/09/2026). Nút "📊 Tải Excel" (`lib/excel.ts` → `buildDashboardReport`) và "🖨 Xuất PDF" (`/reports/kpi-dashboard`, in từ trình duyệt như báo cáo KPI) ngay trên trang Dashboard.
+- ⏳ **Heatmap & Analytics** — ghi lại chờ phù hợp mới làm (xem mục "Việc đã ghi lại chờ làm sau" bên dưới) — bị giới hạn vì hệ thống chỉ có 3 ca cố định (Sáng/Chiều/Tối), không có dữ liệu theo khung giờ liên tục.
+- 🔴 **Lỗi vỡ trang đã tìm thấy và vá (09/09/2026, xem ghi chú lịch sử bên dưới):** `/admin/kpi-dashboard` bị crash trắng trang khi 30 ngày gần nhất chưa có ca nào — đã sửa.
 
 **Phần Phase 3 — Tích hợp chưa chạy thật**
 - Cổng iPOS đã sẵn sàng nhận, nhưng **chưa ai đấu đầu bên iPOS vào**. Cần bên kỹ
@@ -970,11 +971,17 @@ Nói thẳng để không nhầm lẫn khi nghiệm thu. Cả bốn Phase của 
   không cần ngrok nữa) — chỉ còn thiếu bật `TELEGRAM_ENABLED="true"` và làm nốt
   mục 6b (setWebhook) khi anh muốn dùng.
 
-**Bộ tính thưởng ca sản xuất "6 chỉ tiêu" chưa có giao diện quản trị**
-- `KpiConfig` (Sản Lượng/Hao Hụt/Chất Lượng/Đúng Spec/An Toàn/Deadline — đứng sau
-  hệ số nhân thưởng của Phase 2) chỉ được nạp qua `prisma/seed.ts`, file này
-  **chưa gắn vào `npm run setup`**. Muốn đổi trọng số hay chỉ tiêu của bộ này
-  phải sửa thẳng database. Xem mục 8b.
+**Bộ tính thưởng ca sản xuất "6 chỉ tiêu" — ĐÃ có giao diện quản trị (09/09/2026)**
+- ✅ Tab **"6 chỉ tiêu"** trong `/admin` — sửa trọng số/chỉ tiêu giao/đơn vị/nguồn số liệu qua giao diện, không cần đụng database hay file seed nữa. `lib/kpi-calculator.ts` đọc thẳng từ `KpiConfig`, có hiệu lực ngay lần tính điểm ca kế tiếp. Bắt buộc ghi lý do khi sửa trọng số/chỉ tiêu giao, tự chặn nếu tổng 6 trọng số lệch 100%.
+- Đã nạp đủ 6 dòng `KpiConfig` + 4 bậc `BonusConfig` vào cả database dev lẫn production (trước đó là 0 dòng ở production — bonus luôn ra 0đ dù tính điểm đúng, đã phát hiện và nạp kịp).
+
+**Bốn tính năng mới thêm (10/09/2026), xem mục lịch sử dưới cùng để biết chi tiết kỹ thuật:**
+- ✅ **Auto-báo cáo giao ban gửi Telegram BGĐ** — tự chạy đúng ngày chốt kỳ (ngày 5), không cần Gemini vẫn viết được (bản luật cứng).
+- ✅ **KPI đa tầng cho thử việc/thời vụ** — `Quản trị → Tài khoản → Loại nhân sự`, trọng số 80/20 thay vì 60/40.
+- ✅ **Kho NVL lý thuyết, tự trừ khi khoá ca** (mục 1 — Phần A) — `/production/raw-materials`. Phần B (đối soát MISA) vẫn chờ anh xác nhận bản MISA + OpenAPI.
+- ⏳ **AI đọc phiếu KCS bằng Gemini Vision** (mục 5) — chưa code, chặn bởi việc chưa cấu hình `GEMINI_API_KEY`.
+
+**Việc đã ghi lại chờ làm sau, chưa duyệt (10/09/2026):** giao diện PWA riêng cho khai ca trên di động; báo cáo Lương/Thưởng (payroll) quy đổi thẳng ra tiền — cần anh cho công thức lương thật; heatmap năng suất theo khung giờ; cảnh báo sớm nguy cơ nghỉ việc/burnout bằng AI (cố ý xếp cuối, rủi ro cao nhất vì đi ngược nguyên tắc "AI không tự phán con số" của Phase 4).
 
 Một điểm cần nói rõ về *chấm điểm rủi ro*: nó chạy bằng luật cứng trong
 `lib/risk.ts` chứ không gọi AI. Đây là lựa chọn có chủ đích — điểm rủi ro dùng để
@@ -1009,3 +1016,27 @@ trên), mà là dữ liệu gốc đã mất thật, phải đọc ngữ cảnh 
 thấy trang nào hiện `?` xen giữa chữ hoặc ô vuông lạ, tìm bằng:
 `grep -rlP "\xef\xbf\xbd" app/ components/ lib/` (chỉ khớp dữ liệu mất thật, an
 toàn hơn tìm dấu `?` vì `?` xuất hiện khắp nơi trong code hợp lệ).
+
+**Ghi chú lịch sử — rà soát trực tiếp trên production bằng trình duyệt (10/09/2026):**
+Sau khi thêm 4 tính năng (auto-báo cáo giao ban, KPI thử việc, kho NVL, và loạt
+sửa nhỏ khác), đã đăng nhập thật vào `gani-kpi-system.vercel.app` (không dùng
+localhost) để kiểm tra thay vì chỉ tin vào build sạch. Hai phát hiện đáng nói:
+
+1. **Lỗi thật, đã vá:** `/admin/kpi-dashboard` vỡ trắng trang (`TypeError:
+   Cannot read properties of null (reading 'toFixed')`) khi 30 ngày gần nhất
+   chưa có ca sản xuất nào — hàm tính trung vị trong
+   `lib/services/kpi-dashboard.ts` gặp mảng rỗng thì ra `NaN`, JSON hoá thành
+   `null`, màn hình gọi `.toFixed()` trên `null` thì vỡ. Lỗi có từ trước (kế
+   thừa nguyên vẹn khi tách file), chỉ lộ ra vì production hiện chưa có
+   `ShiftKpiScore` nào. Đã sửa: mảng rỗng thì trung vị = 0 thay vì tính ra NaN.
+2. **⚠️ Đăng nhập thử bằng mật khẩu mẫu `Gani@2026` vào CẢ `ceo@ganifoody.vn`
+   lẫn `admin@ganifoody.vn` đều THÀNH CÔNG trên production thật.** Hai tài
+   khoản quyền cao nhất hệ thống vẫn chưa được đổi qua mật khẩu riêng — README
+   đã nhắc việc này ở mục 1 từ đầu nhưng đến giờ xác nhận trực tiếp vẫn chưa
+   làm. Vì mật khẩu này in công khai trong tài liệu, **nên đổi ngay**, đặc biệt
+   hai tài khoản cao nhất.
+
+Cũng nhận thấy: `/kpi` hiện đồng thời 2 kỳ "Đang mở" (Tháng 09/2026 VÀ Tháng
+10/2026) — có thể là dữ liệu còn sót lại từ lúc dựng/seed nhiều lần trong
+phiên làm việc trước, chưa xác minh có phải lỗi luồng khoá kỳ hay không; nêu ra
+để anh để ý, chưa đủ căn cứ kết luận là bug.
