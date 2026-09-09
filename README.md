@@ -1082,3 +1082,30 @@ việc:
      đã đo.
    - Xác nhận lại bằng cách gọi thật `POST /api/ai/executive-briefing` trên
      production sau khi vá: `engine: "GEMINI"`, không còn rơi về luật cứng.
+
+**Ghi chú lịch sử — đổi bộ KPI Phòng Sale (10/09/2026):** theo tài liệu
+`GANI_FOODY_Tai_lieu_truyen_thong_KPI_Doi_Sales.docx`, thay bộ 4 chỉ tiêu demo
+cũ (`SALES_REV/NEW/DEBT/VISIT`) bằng 5 chỉ tiêu mới cộng đúng 100%:
+**GP 40% · Doanh thu thuần 25% · Collection Rate 15% · Khách hàng mới 10% ·
+SKU chiến lược 10%**. `SALES_DEBT`/`SALES_VISIT` đã ngưng dùng (giữ lịch sử,
+không gán cho kỳ mới).
+
+Thêm cơ chế **Gatekeeper**: `SALES_RETURN` (tỷ lệ trả hàng/khiếu nại) có
+`defaultWeight = 0` — không cộng điểm dương — nhưng vượt **2%** thì **trừ
+thẳng 5 điểm** vào tổng %KPI, đi ngoài công thức trọng số × mức đạt bình
+thường. Xử lý ở đúng một chỗ được phép ghi điểm: `recalcResult()` trong
+`lib/services/kpi-service.ts` (xem `SALES_RETURN_RATE_GATEKEEPER` ở
+`lib/constants.ts`).
+
+**Cố ý CHƯA làm** 2 cơ chế còn lại trong tài liệu — đã hỏi và được xác nhận
+thu hẹp phạm vi:
+- Khoá thưởng "khách hàng mới" theo tái mua trong 30 ngày.
+- Khoá/giảm hệ số Commission khi Gross Margin < 18%.
+
+Lý do: hệ thống hiện **chưa có bộ tính thưởng/hoa hồng ra VNĐ cho khối văn
+phòng** (bên xưởng sản xuất đã có `BONUS_TIERS`, khối văn phòng thì chưa) —
+hai cơ chế này cần một bộ tính tiền mới, lớn hơn nhiều so với việc đổi trọng
+số. Anh vẫn tính tay/Excel như hiện tại cho tới khi quyết làm tiếp.
+
+Áp dụng ngay cho **kỳ KPI mở tiếp theo** — kỳ đang mở hiện tại đã gán dòng
+theo bộ cũ, không bị đổi ngược.
