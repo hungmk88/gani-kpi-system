@@ -67,11 +67,19 @@ const USERS = [
 // ---------------------------------------------------------------- BỘ CHỈ TIÊU KPI
 // defaultWeight của các chỉ tiêu trong cùng 1 phòng ban cộng lại = 100
 const KPI_DEFS = [
-  // Kinh doanh
-  { code: "SALES_REV", name: "Doanh thu thực thu trong tháng", dept: "SALES", unit: "VND", higher: true, source: "IPOS_API", weight: 40 },
-  { code: "SALES_NEW", name: "Số khách hàng mới ký hợp đồng", dept: "SALES", unit: "khách", higher: true, source: "EXCEL", weight: 25 },
-  { code: "SALES_DEBT", name: "Tỷ lệ công nợ quá hạn", dept: "SALES", unit: "%", higher: false, source: "EXCEL", weight: 20 },
-  { code: "SALES_VISIT", name: "Số lượt viếng thăm khách hàng", dept: "SALES", unit: "lượt", higher: true, source: "MANUAL", weight: 15 },
+  // Kinh doanh — bộ 5 chỉ tiêu mới chốt 10/09/2026 (thay bộ cũ 4 chỉ tiêu).
+  // Trọng số cộng dương đúng 100; SALES_RETURN weight=0 vì nó không cộng
+  // điểm dương, chỉ TRỪ khi vượt ngưỡng — xem SALES_RETURN_RATE_GATEKEEPER
+  // trong lib/constants.ts và recalcResult() trong lib/services/kpi-service.ts.
+  { code: "SALES_GP", name: "Lợi nhuận gộp (GP)", dept: "SALES", unit: "VND", higher: true, source: "EXCEL", weight: 40 },
+  { code: "SALES_REV", name: "Doanh thu thuần", dept: "SALES", unit: "VND", higher: true, source: "IPOS_API", weight: 25 },
+  { code: "SALES_COLLECTION", name: "Collection Rate (Tỷ lệ thu nợ)", dept: "SALES", unit: "%", higher: true, source: "EXCEL", weight: 15 },
+  { code: "SALES_NEW", name: "Khách hàng mới", dept: "SALES", unit: "khách", higher: true, source: "EXCEL", weight: 10 },
+  { code: "SALES_SKU", name: "Doanh số SKU chiến lược", dept: "SALES", unit: "VND", higher: true, source: "EXCEL", weight: 10 },
+  { code: "SALES_RETURN", name: "Tỷ lệ trả hàng / khiếu nại (Gatekeeper)", dept: "SALES", unit: "%", higher: false, source: "EXCEL", weight: 0 },
+  // Đã ngưng dùng (giữ lại lịch sử, không gán cho kỳ mới — xem đoạn deactivate bên dưới):
+  { code: "SALES_DEBT", name: "Tỷ lệ công nợ quá hạn (đã thay bằng SALES_COLLECTION)", dept: "SALES", unit: "%", higher: false, source: "EXCEL", weight: 0 },
+  { code: "SALES_VISIT", name: "Số lượt viếng thăm khách hàng (đã ngưng dùng)", dept: "SALES", unit: "lượt", higher: true, source: "MANUAL", weight: 0 },
 
   // Marketing
   { code: "MKT_LEAD", name: "Số lead thu về", dept: "MKT", unit: "lead", higher: true, source: "EXCEL", weight: 35 },
@@ -108,8 +116,13 @@ const KPI_DEFS = [
 
 // Chỉ tiêu và số thực tế mẫu để hệ thống có dữ liệu chạy thật
 const TARGETS = {
+  SALES_GP: { target: 150_000_000, actualSystem: 175_000_000, actualSelf: 175_000_000 },
   SALES_REV: { target: 400_000_000, actualSystem: 520_000_000, actualSelf: 520_000_000 },
-  SALES_NEW: { target: 8, actualSystem: 6, actualSelf: 7 },
+  SALES_COLLECTION: { target: 90, actualSystem: 88, actualSelf: 88 },
+  SALES_NEW: { target: 5, actualSystem: 6, actualSelf: 7 },
+  SALES_SKU: { target: 100_000_000, actualSystem: 92_000_000, actualSelf: 92_000_000 },
+  SALES_RETURN: { target: 2, actualSystem: 1.2, actualSelf: 1.2 },
+  // Giữ lại số cũ cho 2 mã đã ngưng dùng, phòng khi có dòng KPI cũ tham chiếu:
   SALES_DEBT: { target: 5, actualSystem: 7.2, actualSelf: 7.2 },
   SALES_VISIT: { target: 40, actualSystem: null, actualSelf: 44 },
 
@@ -299,6 +312,10 @@ async function main() {
     });
     kpiMap[k.code] = row;
   }
+  await prisma.kpiDefinition.updateMany({
+    where: { code: { in: ["SALES_DEBT", "SALES_VISIT"] } },
+    data: { isActive: false },
+  });
   console.log(`  ✓ ${KPI_DEFS.length} chỉ tiêu KPI`);
 
   // 4. Dự án

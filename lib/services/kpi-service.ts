@@ -1,6 +1,6 @@
 import { prisma } from "../db";
 import { BusinessError } from "../rbac";
-import { ERR, KPI_SCORE_CAP } from "../constants";
+import { ERR, KPI_SCORE_CAP, SALES_RETURN_RATE_GATEKEEPER } from "../constants";
 import {
   calculateKpiScore,
   detectMismatch,
@@ -32,7 +32,7 @@ export async function recalcResult(resultId: string) {
     r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null;
 
   // Chưa gán chỉ tiêu thì không có gì để chấm — cho điểm 0, không đoán chiều.
-  const calc = r.kpiDefinition
+  let calc = r.kpiDefinition
     ? calculateKpiScore({
         target: r.targetValue ?? 0,
         actual: effective,
@@ -45,6 +45,22 @@ export async function recalcResult(resultId: string) {
         isCapped: false,
         rawAchievementPercent: 0,
       };
+
+  // Gatekeeper Sales: trả hàng/khiếu nại vượt ngưỡng thì trừ THẲNG vào tổng
+  // điểm, không đi qua công thức trọng số × mức đạt như mọi chỉ tiêu khác.
+  // Chỉ tiêu này có defaultWeight = 0 nên bình thường weightedScore đã là 0 —
+  // chỗ này chỉ ghi đè khi thật sự vượt ngưỡng.
+  if (
+    r.kpiDefinition?.code === SALES_RETURN_RATE_GATEKEEPER.KPI_CODE &&
+    effective !== null &&
+    effective !== undefined &&
+    effective > SALES_RETURN_RATE_GATEKEEPER.THRESHOLD_PERCENT
+  ) {
+    calc = {
+      ...calc,
+      weightedScore: -SALES_RETURN_RATE_GATEKEEPER.PENALTY_POINTS,
+    };
+  }
 
   const mismatch = detectMismatch(r.actualSystem, r.actualSelf);
 

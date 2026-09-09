@@ -125,6 +125,24 @@ export const PERIOD_STATUS_LABEL: Record<string, string> = {
   FINALIZED: "Đã chốt toàn kỳ",
 };
 
+/**
+ * Bộ KPI Sales mới (chốt 10/09/2026, xem tài liệu
+ * "GANI_FOODY_Tai_lieu_truyen_thong_KPI_Doi_Sales"): chỉ tiêu
+ * SALES_RETURN có defaultWeight = 0 (không cộng dương vào tổng điểm), nhưng
+ * vượt ngưỡng thì TRỪ THẲNG vào %KPI tổng — đi ngoài công thức trọng số ×
+ * mức đạt bình thường. Xử lý ở NƠI DUY NHẤT ghi điểm: recalcResult() trong
+ * lib/services/kpi-service.ts.
+ *
+ * Hai cơ chế còn lại trong tài liệu (khoá thưởng KH mới theo tái mua 30 ngày,
+ * khoá/giảm Commission theo GM%) CHƯA code — anh tự tính tay/Excel như hiện
+ * tại, vì hệ thống chưa có bộ tính hoa hồng VNĐ cho khối văn phòng.
+ */
+export const SALES_RETURN_RATE_GATEKEEPER = {
+  KPI_CODE: "SALES_RETURN",
+  THRESHOLD_PERCENT: 2,
+  PENALTY_POINTS: 5,
+} as const;
+
 /** Thứ tự tiến trình của 1 dòng KPI - dùng để chặn nhảy cóc trạng thái. */
 export const KPI_STATUS_ORDER: Record<string, number> = {
   DRAFT: 0,
