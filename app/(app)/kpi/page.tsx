@@ -26,6 +26,16 @@ export default async function KpiHomePage() {
 
   const current = periods[0];
 
+  // "Năm Quyết Định" chỉ áp dụng cho Phòng Sản Xuất (KpiPeriodTarget hardcode
+  // department: "PRODUCTION", xem app/api/kpi/targets/route.ts) — trước đây
+  // điều kiện chỉ kiểm tra "là Trưởng phòng có phòng ban" nên hiện nhầm cho
+  // MỌI trưởng phòng, kể cả Sales.
+  const myDept = user.departmentId
+    ? await prisma.department.findUnique({ where: { id: user.departmentId } })
+    : null;
+  const isProductionManager =
+    user.role === "MANAGER" && myDept?.code === "PRODUCTION";
+
   const myResults = current
     ? await prisma.kpiResult.findMany({
         where: { periodId: current.id, employeeId: user.id },
@@ -93,7 +103,7 @@ export default async function KpiHomePage() {
               }
               href={`/kpi/${current.id}`}
             />
-            {(user.role === "CEO" || (user.role === "MANAGER" && user.departmentId)) && (
+            {(user.role === "CEO" || isProductionManager) && (
               <Link
                 href={`/kpi/nam-quyet-dinh?periodId=${current.id}`}
                 className="card p-4 transition hover:shadow-md hover:bg-blue-50"
