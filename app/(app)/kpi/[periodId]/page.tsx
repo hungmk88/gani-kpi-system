@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { kpiScopeWhere } from "@/lib/rbac";
+import { can, kpiScopeWhere } from "@/lib/rbac";
 import {
   isManagerReviewOpen,
   isSelfReviewOpen,
@@ -98,7 +98,19 @@ export default async function KpiPeriodPage({
       <PageHeader
         title={`Bảng KPI ${period.name}`}
         subtitle={`${results.length} dòng chỉ tiêu · ${groups.length} nhân sự trong tầm quản lý của bạn`}
-        actions={<PeriodStatusBadge status={period.status} />}
+        actions={
+          <div className="flex items-center gap-2">
+            {can(user, "kpi.target.assign") && (
+              <Link
+                href={`/kpi/${period.id}/targets`}
+                className="rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100"
+              >
+                🎯 Đặt mục tiêu
+              </Link>
+            )}
+            <PeriodStatusBadge status={period.status} />
+          </div>
+        }
       />
 
       {/* ---------- Đường thời gian 2-4-5 ---------- */}
