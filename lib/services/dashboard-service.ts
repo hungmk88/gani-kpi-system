@@ -662,8 +662,8 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
   if (pendingLeaveRequests > 0) {
     queue.push({
       id: "leave",
-      title: `${pendingLeaveRequests} đơn xin nghỉ đang chờ bạn duyệt`,
-      detail: "Trong 24 tiếng kể từ lúc gửi, người xin nghỉ vẫn chờ quyết định.",
+      title: `${pendingLeaveRequests} đơn nghỉ phép đang chờ bạn duyệt`,
+      detail: "Người xin nghỉ vẫn đang chờ bạn quyết định.",
       href: "/leave-requests",
       cta: "Duyệt",
       tone: "brand",

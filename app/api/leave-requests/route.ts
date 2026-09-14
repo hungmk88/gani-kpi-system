@@ -95,7 +95,7 @@ export async function POST(req: Request) {
       for (const r of recipients) {
         await notify({
           userId: r.id,
-          title: `${urgentTag}Đơn xin nghỉ từ ${user.fullName}`,
+          title: `${urgentTag}Đơn nghỉ phép từ ${user.fullName}`,
           body: `Từ ${startDate.toLocaleDateString("vi-VN")} đến ${endDate.toLocaleDateString(
             "vi-VN"
           )}. Lý do: ${body.reason}`,
@@ -107,7 +107,7 @@ export async function POST(req: Request) {
       if (recipients.length === 0) {
         await notify({
           userId: user.id,
-          title: "Đơn xin nghỉ chưa có ai nhận duyệt",
+          title: "Đơn nghỉ phép chưa có ai nhận duyệt",
           body: "Phòng bạn chưa có trưởng phòng và hệ thống chưa tìm được Ban Giám đốc. Báo trực tiếp cho quản trị hệ thống.",
           level: "WARNING",
           linkUrl: "/leave-requests",

@@ -25,7 +25,7 @@ export async function PATCH(
       include: { employee: true },
     });
     if (!request) {
-      throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy đơn xin nghỉ.", 404);
+      throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy đơn nghỉ phép.", 404);
     }
     if (request.status !== "PENDING") {
       throw new BusinessError(
@@ -101,7 +101,7 @@ export async function PATCH(
       });
       await notify({
         userId: request.employeeId,
-        title: "Đơn xin nghỉ bị từ chối",
+        title: "Đơn nghỉ phép bị từ chối",
         body: `${user.fullName} từ chối. Lý do: ${body.note}`,
         level: "WARNING",
         linkUrl: "/leave-requests",
@@ -128,7 +128,7 @@ export async function PATCH(
     });
     await notify({
       userId: request.employeeId,
-      title: "Đơn xin nghỉ đã được duyệt",
+      title: "Đơn nghỉ phép đã được duyệt",
       body: `${user.fullName} đã duyệt đơn nghỉ từ ${request.startDate.toLocaleDateString(
         "vi-VN"
       )} đến ${request.endDate.toLocaleDateString("vi-VN")}.`,

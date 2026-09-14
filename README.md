@@ -1125,3 +1125,32 @@ vai trò đó) và lọc thêm điều kiện này khi mở kỳ mới. Sáu ch�
 nhân của Sales đã gắn `EMPLOYEE`, năm chỉ tiêu Team gắn `MANAGER` — Trưởng
 phòng Sales từ kỳ tới sẽ chỉ thấy 5 chỉ tiêu Team, không lẫn với chỉ tiêu cá
 nhân của nhân viên.
+
+**Ghi chú lịch sử — thêm tính năng Nghỉ phép (14/09/2026):** model
+`LeaveRequest` mới, trang `/leave-requests` + API `/api/leave-requests`. Luật
+báo trước 24h **không chặn cứng** khi gửi trễ hơn — chỉ gắn `isUrgent` (nhãn
+đỏ "Khẩn cấp") để người duyệt tự quyết, vì ốm đột xuất là chuyện thật. Ai
+duyệt: Trưởng phòng duyệt nhân viên phòng mình; Trưởng phòng/Admin xin nghỉ
+thì Ban Giám đốc duyệt; CEO tự động duyệt luôn. Cố ý **chưa nối vào công
+thức Chuyên cần (Tier 1)** bên Sản Xuất — đơn nghỉ được duyệt chỉ lưu record,
+không tự sửa điểm KPI thật, để tránh sai lương thật. Có nút xuất Excel tổng
+hợp theo tháng (`/api/leave-requests/export`, dùng `buildLeaveReport()` ở
+`lib/excel.ts`).
+
+**🐛 Lỗi tìm thấy, CHƯA VÁ (14/09/2026) — toàn hệ thống hiển thị giờ theo UTC
+chứ không phải giờ Việt Nam:** Vercel chạy server ở múi UTC, nhưng không có
+chỗ nào trong code chỉ định `timeZone: "Asia/Ho_Chi_Minh"` khi format ngày
+giờ (`toLocaleDateString("vi-VN")`, `toLocaleTimeString("vi-VN")` ở
+`app/(app)/dashboard/page.tsx` và nhiều nơi khác) hay khi tính hạn kỳ KPI
+(`computeDeadlines()` ở `lib/kpi.ts`, dùng `new Date(y, m, d, 23, 59, 59)` —
+constructor này chạy theo múi giờ của server). Hậu quả: lệch **7 tiếng**
+so với giờ Việt Nam thật — phát hiện được vì trang chủ hiện "20:13 14/09"
+trong khi giờ Việt Nam thật là "03:13 15/09". Nghiêm trọng hơn: lịch chốt
+KPI "khoá lúc 23:59 ngày 2" đang khoá lúc **23:59 UTC = 06:59 sáng hôm sau
+giờ Việt Nam** — nhân viên đang có dư gần 7 tiếng so với hạn công bố, từ lúc
+dựng hệ thống tới giờ. **Cách sửa đúng nhất**: đặt biến môi trường
+`TZ=Asia/Ho_Chi_Minh` trên Vercel (Project Settings → Environment Variables)
+rồi redeploy — sửa một chỗ, mọi `new Date()`/giờ hiển thị/hạn chốt trong cả
+app tự động đúng theo giờ Việt Nam, không cần vá từng file. **Anh đã chọn
+để sau, chưa đổi trên production** — kỳ KPI đang mở tiếp tục trễ 7 tiếng so
+với hạn công bố cho tới khi anh quyết đổi.

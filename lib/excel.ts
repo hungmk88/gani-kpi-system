@@ -409,6 +409,91 @@ export async function buildDashboardReport(input: {
   return wb.xlsx.writeBuffer();
 }
 
+/* ------------------------------------------------------------ BÁO CÁO NGHỈ PHÉP */
+
+export type LeaveExportRow = {
+  employee: string;
+  department: string;
+  startDate: string;
+  endDate: string;
+  days: number;
+  reason: string;
+  isUrgent: boolean;
+  status: string;
+  reviewedBy: string;
+  reviewNote: string;
+  createdAt: string;
+};
+
+/** Xuất danh sách đơn nghỉ phép trong khoảng thời gian đang xem trên trang /leave-requests. */
+export async function buildLeaveReport(
+  rangeLabel: string,
+  rows: LeaveExportRow[]
+) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "GANI FOODY KPI System";
+  wb.created = new Date();
+
+  const sheet = wb.addWorksheet("NGHI_PHEP");
+  sheet.mergeCells("A1:K1");
+  sheet.getCell("A1").value = `TỔNG HỢP NGHỈ PHÉP — ${rangeLabel}`;
+  sheet.getCell("A1").font = { bold: true, size: 14 };
+  sheet.getCell("A1").alignment = { horizontal: "center" };
+  sheet.addRow([]);
+
+  sheet.columns = [
+    { width: 24 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 10 },
+    { width: 32 },
+    { width: 12 },
+    { width: 14 },
+    { width: 20 },
+    { width: 28 },
+    { width: 18 },
+  ];
+  sheet.addRow([
+    "Họ tên",
+    "Phòng ban",
+    "Từ ngày giờ",
+    "Đến ngày giờ",
+    "Số ngày",
+    "Lý do",
+    "Khẩn cấp",
+    "Trạng thái",
+    "Người duyệt",
+    "Ghi chú duyệt",
+    "Gửi lúc",
+  ]);
+  styleHeader(sheet.getRow(3));
+
+  rows.forEach((r) => {
+    const row = sheet.addRow([
+      r.employee,
+      r.department,
+      r.startDate,
+      r.endDate,
+      r.days,
+      r.reason,
+      r.isUrgent ? "CÓ" : "",
+      r.status,
+      r.reviewedBy,
+      r.reviewNote,
+      r.createdAt,
+    ]);
+    if (r.isUrgent) {
+      row.getCell(7).font = { color: { argb: "FFC00000" }, bold: true };
+    }
+  });
+
+  sheet.autoFilter = { from: "A3", to: "K3" };
+  sheet.views = [{ state: "frozen", ySplit: 3 }];
+
+  return wb.xlsx.writeBuffer();
+}
+
 /* ------------------------------------------------------------ tiện ích nội bộ */
 
 function styleHeader(row: ExcelJS.Row) {

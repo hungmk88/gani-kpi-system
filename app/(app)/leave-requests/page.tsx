@@ -63,8 +63,13 @@ export default async function LeaveRequestsPage() {
   return (
     <>
       <PageHeader
-        title="Xin nghỉ"
+        title="Nghỉ phép"
         subtitle="Phải gửi trước giờ bắt đầu nghỉ ít nhất 24 tiếng. Gửi trễ hơn vẫn gửi được nhưng hệ thống gắn nhãn khẩn cấp để người duyệt biết."
+        actions={
+          <a href="/api/leave-requests/export" className="btn-ghost btn-sm">
+            ⬇ Tải tổng hợp tháng này (Excel)
+          </a>
+        }
       />
 
       <section className="mb-8">
@@ -110,7 +115,7 @@ export default async function LeaveRequestsPage() {
         <h2 className="section-title mb-3">Đơn của tôi ({mine.length})</h2>
         {mine.length === 0 ? (
           <div className="card p-4 text-sm text-ink-500">
-            Bạn chưa gửi đơn xin nghỉ nào.
+            Bạn chưa gửi đơn nghỉ phép nào.
           </div>
         ) : (
           <div className="table-wrap">
