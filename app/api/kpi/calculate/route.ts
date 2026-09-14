@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { calculateShiftKpiScore } from "@/lib/kpi-calculator";
 import { getSession } from "@/lib/auth";
+import { PRODUCTION_DEPARTMENT_CODE } from "@/lib/constants";
 
 /**
  * POST /api/kpi/calculate
@@ -51,7 +52,7 @@ export async function POST(request: NextRequest) {
     const hasPermission =
       user.role === "CEO" ||
       user.role === "ADMIN" ||
-      (user.role === "MANAGER" && user.department?.code === "PRODUCTION");
+      (user.role === "MANAGER" && user.department?.code === PRODUCTION_DEPARTMENT_CODE);
 
     if (!hasPermission) {
       return NextResponse.json(

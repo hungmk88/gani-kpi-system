@@ -139,6 +139,15 @@ export const PERIOD_STATUS_LABEL: Record<string, string> = {
  */
 export const SALES_DEPARTMENT_CODE = "SALES";
 
+/**
+ * Mã phòng ban Sản xuất thật trong database (seed ở `prisma/seed.mjs`) là
+ * "PROD", KHÔNG PHẢI "PRODUCTION" — hai route `/api/kpi/targets` và
+ * `/api/kpi/calculate` từng hardcode nhầm "PRODUCTION" nên Giám đốc Sản xuất
+ * (role=MANAGER) không bao giờ khớp được điều kiện quyền, chỉ CEO/Admin gọi
+ * được (phát hiện + vá 14/09/2026). Dùng hằng số này thay vì gõ tay lại.
+ */
+export const PRODUCTION_DEPARTMENT_CODE = "PROD";
+
 /** Trần mỗi chỉ tiêu Sales — 120%, khác trần 150% chung toàn công ty. */
 export const SALES_KPI_CAP = 120;
 

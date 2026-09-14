@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { PRODUCTION_DEPARTMENT_CODE } from "@/lib/constants";
 
 // Kiểm tra quyền (CEO hoặc Giám Đốc SX)
 async function checkPermission(userId: string) {
@@ -20,7 +21,7 @@ async function checkPermission(userId: string) {
     const dept = await prisma.department.findUnique({
       where: { id: user.departmentId },
     });
-    if (dept?.code === "PRODUCTION") return true;
+    if (dept?.code === PRODUCTION_DEPARTMENT_CODE) return true;
   }
 
   return false;
