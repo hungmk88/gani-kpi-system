@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Badge, EmptyState, PageHeader, formatDateTime } from "@/components/ui";
+import { canExportLeaveReport } from "@/lib/services/leave-service";
 import LeaveRequestForm from "./leave-request-form";
 import LeaveRequestActions from "./leave-request-actions";
 
@@ -8,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function LeaveRequestsPage() {
   const user = (await requireSession())!;
+  const canExport = await canExportLeaveReport(user);
 
   const where =
     user.role === "CEO" || user.role === "ADMIN"
@@ -66,16 +68,20 @@ export default async function LeaveRequestsPage() {
         title="Nghỉ phép"
         subtitle="Phải gửi trước giờ bắt đầu nghỉ ít nhất 24 tiếng. Gửi trễ hơn vẫn gửi được nhưng hệ thống gắn nhãn khẩn cấp để người duyệt biết."
         actions={
-          <a href="/api/leave-requests/export" className="btn-ghost btn-sm">
-            ⬇ Tải tổng hợp tháng này (Excel)
-          </a>
+          canExport ? (
+            <a href="/api/leave-requests/export" className="btn-ghost btn-sm">
+              ⬇ Tải tổng hợp tháng trước — toàn công ty (Excel)
+            </a>
+          ) : undefined
         }
       />
 
-      <section className="mb-8">
-        <h2 className="section-title mb-3">Gửi đơn mới</h2>
-        <LeaveRequestForm />
-      </section>
+      {user.role !== "CEO" && (
+        <section className="mb-8">
+          <h2 className="section-title mb-3">Gửi đơn mới</h2>
+          <LeaveRequestForm />
+        </section>
+      )}
 
       {(user.role === "MANAGER" || user.role === "CEO") && (
         <section className="mb-8">

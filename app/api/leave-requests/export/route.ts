@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/api";
 import { buildLeaveReport, type LeaveExportRow } from "@/lib/excel";
 import { formatDateTime } from "@/components/ui";
+import { canExportLeaveReport } from "@/lib/services/leave-service";
 
 export const runtime = "nodejs";
 
@@ -13,41 +14,59 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 /**
- * Xuất Excel danh sách đơn nghỉ phép trong 1 tháng dương lịch — tự xuất lúc
- * bấm, không phải báo cáo hẹn giờ. `month`/`year` mặc định tháng hiện tại.
+ * Xuất Excel tổng hợp TOÀN CÔNG TY danh sách nghỉ phép của 1 THÁNG ĐÃ XONG.
+ * Danh sách chốt vào ngày cuối tháng — nên chỉ tải được từ ngày 1 tháng sau
+ * trở đi, không cho tải tháng đang chạy (số còn phát sinh thêm, chưa chốt).
+ * Mặc định (không truyền month/year) là tháng liền trước tháng hiện tại.
  */
 export async function GET(req: Request) {
   const user = await requireUser();
+
+  const allowed = await canExportLeaveReport(user);
+  if (!allowed) {
+    return Response.json(
+      {
+        statusCode: 403,
+        errorCode: "FORBIDDEN",
+        message:
+          "Chỉ Trưởng phòng, Ban Giám đốc và phòng Kế toán mới tải được file tổng hợp nghỉ phép.",
+      },
+      { status: 403 }
+    );
+  }
+
   const url = new URL(req.url);
   const now = new Date();
-  const month = Number(url.searchParams.get("month") ?? now.getMonth() + 1);
-  const year = Number(url.searchParams.get("year") ?? now.getFullYear());
+  const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const month = Number(
+    url.searchParams.get("month") ?? prevMonthDate.getMonth() + 1
+  );
+  const year = Number(
+    url.searchParams.get("year") ?? prevMonthDate.getFullYear()
+  );
 
   const rangeStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
   const rangeEnd = new Date(year, month, 1, 0, 0, 0, 0);
 
-  const scopeWhere =
-    user.role === "CEO" || user.role === "ADMIN"
-      ? {}
-      : user.role === "MANAGER"
-        ? {
-            OR: [
-              { employeeId: user.id },
-              {
-                departmentId: user.departmentId ?? "__none__",
-                employee: { role: { not: "MANAGER" as const } },
-              },
-            ],
-          }
-        : { employeeId: user.id };
+  if (rangeEnd > now) {
+    return Response.json(
+      {
+        statusCode: 400,
+        errorCode: "VALIDATION_FAILED",
+        message:
+          "Tháng này chưa kết thúc nên chưa chốt được danh sách. Chỉ tải được tháng đã xong, từ ngày 1 tháng sau trở đi.",
+      },
+      { status: 400 }
+    );
+  }
 
   const requests = await prisma.leaveRequest.findMany({
-    where: {
-      ...scopeWhere,
-      startDate: { gte: rangeStart, lt: rangeEnd },
-    },
+    where: { startDate: { gte: rangeStart, lt: rangeEnd } },
     include: { employee: { include: { department: true } }, reviewedBy: true },
-    orderBy: [{ startDate: "asc" }],
+    orderBy: [
+      { employee: { department: { name: "asc" } } },
+      { startDate: "asc" },
+    ],
   });
 
   const rows: LeaveExportRow[] = requests.map((r) => ({
@@ -67,7 +86,7 @@ export async function GET(req: Request) {
     createdAt: formatDateTime(r.createdAt),
   }));
 
-  const rangeLabel = `Tháng ${String(month).padStart(2, "0")}/${year}`;
+  const rangeLabel = `Tháng ${String(month).padStart(2, "0")}/${year} — toàn công ty`;
   const buffer = await buildLeaveReport(rangeLabel, rows);
 
   return new Response(buffer as ArrayBuffer, {

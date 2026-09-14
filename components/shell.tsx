@@ -20,7 +20,7 @@ const NAV: NavItem[] = [
   { href: "/tasks", label: "Công việc", icon: "✅", roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
   { href: "/kpi", label: "KPI", icon: "📊", roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
   { href: "/requests", label: "Yêu cầu liên phòng", icon: "🔁", roles: ["MANAGER", "CEO"] },
-  { href: "/leave-requests", label: "Nghỉ phép", icon: "🌴", roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"] },
+  { href: "/leave-requests", label: "Nghỉ phép", icon: "🌴", roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
   { href: "/reconciliation", label: "Đối soát dữ liệu", icon: "⚖️", roles: ["MANAGER", "CEO"] },
   { href: "/production", label: "Xưởng sản xuất", icon: "🏭", roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], productionOnly: true },
   { href: "/analytics", label: "Phân tích & Dự báo", icon: "📈", roles: ["MANAGER", "CEO"] },
