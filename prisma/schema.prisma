@@ -32,6 +32,7 @@ model Department {
   tasks             Task[]
   kpiDefinitions    KpiDefinition[]
   crossDeptRequests CrossDeptRequest[] @relation("TargetDept")
+  leaveRequests     LeaveRequest[]
 
   @@map("departments")
 }
@@ -72,6 +73,8 @@ model User {
   imports          DataImport[]
   requestsSent     CrossDeptRequest[] @relation("RequesterUser")
   requestsReceived CrossDeptRequest[] @relation("ApproverUser")
+  leaveRequests    LeaveRequest[]     @relation("LeaveRequester")
+  leaveReviews     LeaveRequest[]     @relation("LeaveReviewer")
   aiRequested      AiSuggestion[]     @relation("AiRequester")
   aiDecided        AiSuggestion[]     @relation("AiDecider")
   reconciliations  Reconciliation[]   @relation("ReconEmployee")
@@ -238,6 +241,39 @@ model CrossDeptRequest {
 
   @@index([status])
   @@map("cross_dept_requests")
+}
+
+/**
+ * Đơn xin nghỉ. Luật: phải gửi trước giờ bắt đầu nghỉ ít nhất 24 tiếng —
+ * KHÔNG chặn cứng khi gửi trễ hơn (ốm đột xuất là chuyện thật), chỉ đánh
+ * dấu isUrgent để người duyệt thấy rõ đây là trường hợp không kịp báo trước.
+ * Nhân viên/Trưởng phòng gửi cho Trưởng phòng của mình duyệt; nếu người gửi
+ * đã là Trưởng phòng (hoặc phòng chưa có Trưởng phòng) thì Ban Giám đốc duyệt
+ * thẳng. CEO/ADMIN tự gửi thì tự động duyệt luôn, không ai ở trên để duyệt.
+ * Cố ý CHƯA nối vào công thức KPI Chuyên cần bên Sản Xuất (xem README) — đó
+ * là việc khác, để sau.
+ */
+model LeaveRequest {
+  id           String    @id @default(uuid())
+  employeeId   String
+  departmentId String?
+  startDate    DateTime
+  endDate      DateTime
+  reason       String
+  isUrgent     Boolean   @default(false)
+  status       String    @default("PENDING") // PENDING | APPROVED | REJECTED | CANCELLED
+  reviewedById String?
+  reviewNote   String?
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+
+  employee   User        @relation("LeaveRequester", fields: [employeeId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  reviewedBy User?       @relation("LeaveReviewer", fields: [reviewedById], references: [id])
+
+  @@index([status])
+  @@index([employeeId])
+  @@map("leave_requests")
 }
 
 // ========================= KPI ========================

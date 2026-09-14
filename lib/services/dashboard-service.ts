@@ -316,6 +316,7 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
     mismatchCount,
     capacity,
     production,
+    pendingLeaveRequests,
   ] = await Promise.all([
     prisma.task.count({ where: openWhere }),
     prisma.task.count({ where: { ...openWhere, dueDate: { lt: now } } }),
@@ -438,6 +439,26 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
     user.role === "ADMIN" || user.role === "CEO"
       ? buildProductionSummary(now)
       : Promise.resolve(null),
+
+    // Đơn xin nghỉ đang chờ ĐÚNG người này duyệt — khớp luật ở
+    // app/api/leave-requests/[id]/route.ts: Trưởng phòng duyệt nhân viên
+    // phòng mình, Ban Giám đốc duyệt Trưởng phòng/Admin.
+    user.role === "MANAGER"
+      ? prisma.leaveRequest.count({
+          where: {
+            status: "PENDING",
+            departmentId: user.departmentId ?? "__none__",
+            employee: { role: { not: "MANAGER" } },
+          },
+        })
+      : user.role === "CEO"
+        ? prisma.leaveRequest.count({
+            where: {
+              status: "PENDING",
+              employee: { role: { in: ["MANAGER", "ADMIN"] } },
+            },
+          })
+        : Promise.resolve(0),
   ]);
 
   /* ------------------------------------------------ điểm KPI theo kỳ */
@@ -634,6 +655,21 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
       when: "kỳ này",
       hardLock: false,
       dueAt: period ? new Date(period.ceoApprovalDeadline) : null,
+    });
+  }
+
+  // 6. Đơn xin nghỉ chờ duyệt
+  if (pendingLeaveRequests > 0) {
+    queue.push({
+      id: "leave",
+      title: `${pendingLeaveRequests} đơn xin nghỉ đang chờ bạn duyệt`,
+      detail: "Trong 24 tiếng kể từ lúc gửi, người xin nghỉ vẫn chờ quyết định.",
+      href: "/leave-requests",
+      cta: "Duyệt",
+      tone: "brand",
+      when: "mới gửi",
+      hardLock: false,
+      dueAt: null,
     });
   }
 
