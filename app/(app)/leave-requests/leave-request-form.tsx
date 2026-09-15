@@ -4,7 +4,12 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { TriangleAlert, CalendarCheck } from "lucide-react";
 
-type Quota = { total: number; used: number; remaining: number };
+type Quota = {
+  total: number;
+  used: number;
+  remaining: number;
+  half: { label: string; cap: number; used: number; remaining: number };
+};
 
 function toLocalInputValue(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -64,9 +69,14 @@ export default function LeaveRequestForm() {
   return (
     <div className="card space-y-3 p-4">
       {quota && (
-        <div className="flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-700">
-          <CalendarCheck size={15} strokeWidth={2} />
-          Số ngày phép còn lại trong năm: <b>{quota.remaining}/{quota.total}</b>
+        <div className="space-y-1 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-700">
+          <div className="flex items-center gap-1.5">
+            <CalendarCheck size={15} strokeWidth={2} />
+            Số ngày phép còn lại trong năm: <b>{quota.remaining}/{quota.total}</b>
+          </div>
+          <div className="pl-[21px] text-xs text-brand-600">
+            {quota.half.label}: <b>{quota.half.remaining}/{quota.half.cap}</b> — tối đa 6 ngày mỗi nửa năm
+          </div>
         </div>
       )}
       {error && (

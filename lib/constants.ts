@@ -155,6 +155,12 @@ export const PRODUCTION_DEPARTMENT_CODE = "PROD";
  */
 export const ANNUAL_LEAVE_QUOTA_DAYS = 12;
 
+/**
+ * Trần nửa năm — tối đa 6 ngày mỗi nửa (Th01–Th06 / Th07–Th12), chốt
+ * 15/09/2026, chống dồn hết 12 ngày phép vào nửa đầu năm.
+ */
+export const HALF_YEAR_LEAVE_CAP_DAYS = 6;
+
 /** Trần mỗi chỉ tiêu Sales — 120%, khác trần 150% chung toàn công ty. */
 export const SALES_KPI_CAP = 120;
 
