@@ -8,6 +8,9 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["exceljs", "bcryptjs"],
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: false },
+  experimental: {
+    instrumentationHook: true,
+  },
 };
 
 export default nextConfig;
