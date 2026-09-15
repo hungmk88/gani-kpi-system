@@ -136,11 +136,9 @@ export function computeDeadlines(month: number, year: number) {
   const nextYear = month === 12 ? year + 1 : year;
 
   const at = (day: number) => {
+    // Vercel server ở UTC, cộng 7 tiếng để được Vietnam time
     const utcDate = new Date(nextYear, nextMonth - 1, day, 23, 59, 59, 0);
-    const vietnamOffsetMinutes = 7 * 60;
-    const localOffsetMinutes = utcDate.getTimezoneOffset();
-    const offsetDiff = (vietnamOffsetMinutes + localOffsetMinutes) * 60 * 1000;
-    return new Date(utcDate.getTime() + offsetDiff);
+    return new Date(utcDate.getTime() + 7 * 60 * 60 * 1000);
   };
 
   return {
