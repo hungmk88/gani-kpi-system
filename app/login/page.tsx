@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Image from "next/image";
 import { Check } from "lucide-react";
 import { getSession } from "@/lib/auth";
 import LoginForm from "./login-form";
@@ -14,8 +15,9 @@ export default async function LoginPage() {
       {/* Cột trái: giới thiệu hệ thống */}
       <section className="hidden flex-col justify-between bg-gradient-to-br from-brand-800 via-brand-700 to-brand-900 p-12 text-white lg:flex">
         <div>
-          <div className="mb-2 text-2xl font-bold tracking-tight">
-            GANI FOODY
+          <div className="mb-3 flex items-center gap-3">
+            <Image src="/logo-mark.png" alt="" width={44} height={44} />
+            <div className="text-2xl font-bold tracking-tight">GANI FOODY</div>
           </div>
           <div className="text-sm text-brand-200">
             Hệ thống Quản lý Công việc &amp; KPI

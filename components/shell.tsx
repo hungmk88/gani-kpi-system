@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import {
@@ -86,9 +87,12 @@ export default function Shell({
     <div className="flex min-h-screen">
       {/* ---------------- Sidebar (desktop) ---------------- */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-ink-200 bg-white lg:flex">
-        <div className="border-b border-ink-100 px-5 py-4">
-          <div className="text-lg font-bold text-brand-700">GANI FOODY</div>
-          <div className="text-xs text-ink-500">Công việc &amp; KPI</div>
+        <div className="flex items-center gap-2.5 border-b border-ink-100 px-5 py-4">
+          <Image src="/logo-mark.png" alt="" width={36} height={36} className="shrink-0" />
+          <div>
+            <div className="text-lg font-bold text-brand-700">GANI FOODY</div>
+            <div className="text-xs text-ink-500">Công việc &amp; KPI</div>
+          </div>
         </div>
 
         <nav className="flex-1 space-y-1 p-3">
@@ -152,11 +156,14 @@ export default function Shell({
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Thanh trên (mobile) */}
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-ink-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
-          <div>
-            <div className="font-bold text-brand-700">GANI FOODY</div>
-            <div className="text-[11px] text-ink-500">
-              {ROLE_LABEL[user.role]}
-              {user.departmentName ? ` · ${user.departmentName}` : ""}
+          <div className="flex items-center gap-2">
+            <Image src="/logo-mark.png" alt="" width={28} height={28} className="shrink-0" />
+            <div>
+              <div className="font-bold text-brand-700">GANI FOODY</div>
+              <div className="text-[11px] text-ink-500">
+                {ROLE_LABEL[user.role]}
+                {user.departmentName ? ` · ${user.departmentName}` : ""}
+              </div>
             </div>
           </div>
           <button
