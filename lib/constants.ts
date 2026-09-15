@@ -148,6 +148,13 @@ export const SALES_DEPARTMENT_CODE = "SALES";
  */
 export const PRODUCTION_DEPARTMENT_CODE = "PROD";
 
+/**
+ * Hạn mức nghỉ phép năm — 12 ngày/người/năm, chốt 15/09/2026. Cố định
+ * trong code, áp dụng chung cho mọi người, chưa phân biệt thâm niên/loại
+ * hợp đồng. Xem `getAnnualLeaveQuota()` ở lib/services/leave-service.ts.
+ */
+export const ANNUAL_LEAVE_QUOTA_DAYS = 12;
+
 /** Trần mỗi chỉ tiêu Sales — 120%, khác trần 150% chung toàn công ty. */
 export const SALES_KPI_CAP = 120;
 

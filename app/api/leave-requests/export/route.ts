@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/api";
 import { buildLeaveReport, type LeaveExportRow } from "@/lib/excel";
 import { formatDateTime } from "@/components/ui";
-import { canExportLeaveReport } from "@/lib/services/leave-service";
+import { canExportLeaveReport, leaveDaysBetween } from "@/lib/services/leave-service";
 
 export const runtime = "nodejs";
 
@@ -74,10 +74,7 @@ export async function GET(req: Request) {
     department: r.employee.department?.name ?? "—",
     startDate: formatDateTime(r.startDate),
     endDate: formatDateTime(r.endDate),
-    days:
-      Math.round(
-        ((r.endDate.getTime() - r.startDate.getTime()) / 86_400_000) * 10
-      ) / 10,
+    days: leaveDaysBetween(r.startDate, r.endDate),
     reason: r.reason,
     isUrgent: r.isUrgent,
     status: STATUS_LABEL[r.status] ?? r.status,

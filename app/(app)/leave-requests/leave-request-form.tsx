@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { TriangleAlert } from "lucide-react";
+import { TriangleAlert, CalendarCheck } from "lucide-react";
+
+type Quota = { total: number; used: number; remaining: number };
 
 function toLocalInputValue(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -20,6 +22,14 @@ export default function LeaveRequestForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
+  const [quota, setQuota] = useState<Quota | null>(null);
+
+  useEffect(() => {
+    fetch("/api/leave-requests/quota")
+      .then((r) => r.json())
+      .then((data) => setQuota(data.quota ?? null))
+      .catch(() => {});
+  }, []);
 
   const noticeMs = new Date(startDate).getTime() - Date.now();
   const isUrgent = noticeMs < 24 * 3600_000;
@@ -53,6 +63,12 @@ export default function LeaveRequestForm() {
 
   return (
     <div className="card space-y-3 p-4">
+      {quota && (
+        <div className="flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-700">
+          <CalendarCheck size={15} strokeWidth={2} />
+          Số ngày phép còn lại trong năm: <b>{quota.remaining}/{quota.total}</b>
+        </div>
+      )}
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
