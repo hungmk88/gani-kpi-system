@@ -408,14 +408,16 @@ export function formatDate(d: Date | string | null | undefined) {
 
 export function formatDateTime(d: Date | string | null | undefined) {
   if (!d) return "—";
-  return new Date(d).toLocaleString("vi-VN", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "Asia/Ho_Chi_Minh",
-  });
+  const date = new Date(d);
+  // Cộng 7 tiếng để chuyển từ UTC → Vietnam time
+  const vietnamDate = new Date(date.getTime() + 7 * 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const day = pad(vietnamDate.getUTCDate());
+  const month = pad(vietnamDate.getUTCMonth() + 1);
+  const year = vietnamDate.getUTCFullYear();
+  const hour = pad(vietnamDate.getUTCHours());
+  const minute = pad(vietnamDate.getUTCMinutes());
+  return `${day}/${month}/${year} · ${hour}:${minute}`;
 }
 
 export function DueDate({ date, done }: { date: Date | string; done?: boolean }) {
