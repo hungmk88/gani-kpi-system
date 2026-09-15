@@ -22,6 +22,13 @@ export default async function LoginPage() {
           <div className="text-sm text-brand-200">
             Hệ thống Quản lý Công việc &amp; KPI
           </div>
+          <Image
+            src="/logo-full.png"
+            alt="GANI FOODY — Giòn ngon tròn vị"
+            width={200}
+            height={201}
+            className="mt-8"
+          />
         </div>
 
         <div className="max-w-md space-y-6">
@@ -77,10 +84,13 @@ export default async function LoginPage() {
       {/* Cột phải: form đăng nhập */}
       <section className="flex items-center justify-center bg-white p-6 sm:p-12">
         <div className="w-full max-w-sm">
-          <div className="mb-8 lg:hidden">
-            <div className="text-xl font-bold text-brand-700">GANI FOODY</div>
-            <div className="text-sm text-ink-500">
-              Quản lý Công việc &amp; KPI
+          <div className="mb-8 flex items-center gap-2.5 lg:hidden">
+            <Image src="/logo-mark.png" alt="" width={36} height={36} />
+            <div>
+              <div className="text-xl font-bold text-brand-700">GANI FOODY</div>
+              <div className="text-sm text-ink-500">
+                Quản lý Công việc &amp; KPI
+              </div>
             </div>
           </div>
 
