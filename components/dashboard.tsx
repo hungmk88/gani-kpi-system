@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Check } from "lucide-react";
 import AnomalyActions from "@/components/anomaly-actions";
 import {
   ANOMALY_SEVERITY_LABEL,
@@ -170,7 +171,7 @@ export function ActionQueue({ items }: { items: ActionItem[] }) {
   if (items.length === 0) {
     return (
       <div className="mb-5 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-800">
-        <span aria-hidden>✓</span>
+        <Check size={15} strokeWidth={2.5} aria-hidden />
         <span>Không có việc nào đang chờ bạn. Hàng chờ sạch.</span>
       </div>
     );

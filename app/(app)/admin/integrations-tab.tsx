@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { KeyRound, Check, Circle } from "lucide-react";
 import { Badge, formatDateTime } from "@/components/ui";
 
 export type SourceRow = {
@@ -161,8 +162,8 @@ export default function IntegrationsTab({
       {freshSecret && (
         <div className="card border-amber-300 bg-amber-50 p-5">
           <div className="mb-2 flex items-start justify-between gap-3">
-            <h3 className="font-semibold text-amber-900">
-              🔑 Khoá bí mật của nguồn &quot;{freshSecret.code}&quot;
+            <h3 className="flex items-center gap-1.5 font-semibold text-amber-900">
+              <KeyRound size={15} strokeWidth={2} /> Khoá bí mật của nguồn &quot;{freshSecret.code}&quot;
             </h3>
             <button
               className="text-sm text-amber-700 hover:underline"
@@ -436,7 +437,7 @@ function ChannelCard({
         {checks.map((c) => (
           <li key={c.label} className="flex items-center gap-1.5">
             <span className={c.ok ? "text-emerald-600" : "text-ink-400"}>
-              {c.ok ? "✓" : "○"}
+              {c.ok ? <Check size={13} strokeWidth={2.5} /> : <Circle size={13} strokeWidth={2} />}
             </span>
             <code className={c.ok ? "text-ink-700" : "text-ink-400"}>
               {c.label}

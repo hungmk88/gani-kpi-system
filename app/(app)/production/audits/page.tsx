@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { CircleCheck, Lock } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { withProductionRole } from "@/lib/services/production-service";
@@ -99,7 +100,7 @@ export default async function AuditsPage() {
 
       {audits.length === 0 ? (
         <EmptyState
-          icon="✅"
+          icon={<CircleCheck size={32} strokeWidth={1.75} />}
           title="Không có cảnh báo nào"
           hint="Hệ thống quét ba dấu hiệu: chạy sản lượng mà phá nguyên liệu, giấu phế phẩm sang mục làm lại, và lệch cân đối khối lượng."
         />
@@ -162,8 +163,8 @@ export default async function AuditsPage() {
                               {AUDIT_STATUS_LABEL[a.status] ?? a.status}
                             </Badge>
                             {lockedCount > 0 && (
-                              <div className="mt-1 text-xs font-medium text-red-700">
-                                🔒 {lockedCount} người đang khoá thưởng
+                              <div className="mt-1 flex items-center gap-1 text-xs font-medium text-red-700">
+                                <Lock size={11} strokeWidth={2.5} /> {lockedCount} người đang khoá thưởng
                               </div>
                             )}
                           </div>

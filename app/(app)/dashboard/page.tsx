@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PartyPopper, Target } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { buildDashboard } from "@/lib/services/dashboard-service";
 import {
@@ -138,7 +139,7 @@ export default async function DashboardPage() {
 
           {d.overdueTasks.length === 0 && d.todayTasks.length === 0 ? (
             <EmptyState
-              icon="🎉"
+              icon={<PartyPopper size={32} strokeWidth={1.75} />}
               title="Không có việc nào trễ hay tới hạn hôm nay"
               hint="Danh sách sạch. Vào mục Công việc để xem các việc còn hạn."
             />
@@ -289,7 +290,7 @@ export default async function DashboardPage() {
               className="card block p-4 transition hover:shadow-md"
             >
               <div className="flex items-center gap-2 font-medium text-brand-700">
-                🎯 Mở Bảng điều hành Ban Giám đốc
+                <Target size={16} strokeWidth={2} /> Mở Bảng điều hành Ban Giám đốc
               </div>
               <p className="mt-1 text-xs text-ink-500">
                 Toàn bộ cảnh báo ngoại lệ, lệch số liệu và KPI chờ duyệt gom về

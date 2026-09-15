@@ -4,6 +4,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { LineChart, Save, Lightbulb } from "lucide-react";
 
 interface KpiDefinition {
   code: string;
@@ -126,7 +127,7 @@ function NamQuyetDinhContent() {
 
       const result = await response.json();
       setPeriodTarget(result.data);
-      alert("✅ Mục tiêu KPI đã được lưu thành công!");
+      alert("Mục tiêu KPI đã được lưu thành công!");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lỗi khi lưu dữ liệu");
     } finally {
@@ -147,7 +148,9 @@ function NamQuyetDinhContent() {
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">📊 Năm Quyết Định</h1>
+          <h1 className="flex items-center gap-2 text-3xl font-bold text-gray-900">
+            <LineChart size={28} strokeWidth={2} /> Năm Quyết Định
+          </h1>
           <p className="text-gray-600 mt-2">
             {period?.name} • Phòng Sản Xuất (HCM01)
           </p>
@@ -224,9 +227,15 @@ function NamQuyetDinhContent() {
               <button
                 type="submit"
                 disabled={saving}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
+                className="inline-flex items-center gap-1.5 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
               >
-                {saving ? "Đang lưu..." : "💾 Lưu Mục Tiêu"}
+                {saving ? (
+                  "Đang lưu..."
+                ) : (
+                  <>
+                    <Save size={16} strokeWidth={2} /> Lưu Mục Tiêu
+                  </>
+                )}
               </button>
               <button
                 type="button"
@@ -274,8 +283,8 @@ function NamQuyetDinhContent() {
                 </div>
               )}
             </div>
-            <p className="text-sm text-gray-600 mt-6">
-              💡 Tạo mục tiêu từng ca sẽ được cập nhật trong Phase 2
+            <p className="flex items-center gap-1.5 text-sm text-gray-600 mt-6">
+              <Lightbulb size={14} strokeWidth={2} /> Tạo mục tiêu từng ca sẽ được cập nhật trong Phase 2
             </p>
           </div>
         )}

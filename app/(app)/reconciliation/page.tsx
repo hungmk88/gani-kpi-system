@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { CircleCheck } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { DATA_MISMATCH_THRESHOLD_PERCENT } from "@/lib/constants";
@@ -93,7 +94,7 @@ export default async function ReconciliationPage() {
 
         {mismatches.length === 0 ? (
           <EmptyState
-            icon="✅"
+            icon={<CircleCheck size={32} strokeWidth={1.75} />}
             title="Các nguồn số liệu đang khớp nhau"
             hint="Khi iPOS, file Excel và số nhân viên tự khai lệch nhau quá 5%, ô đó sẽ hiện ở đây."
           />

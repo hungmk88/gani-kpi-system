@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Check } from "lucide-react";
 
 export default function LeaveRequestActions({
   requestId,
@@ -83,11 +84,11 @@ export default function LeaveRequestActions({
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <button
-            className="btn-success btn-sm"
+            className="btn-success btn-sm inline-flex items-center gap-1.5"
             disabled={busy}
             onClick={() => send("APPROVE")}
           >
-            ✓ Duyệt
+            <Check size={14} strokeWidth={2.5} /> Duyệt
           </button>
           <button className="btn-ghost btn-sm" onClick={() => setRejecting(true)}>
             Từ chối

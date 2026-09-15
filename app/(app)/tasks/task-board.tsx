@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Wand2, TriangleAlert } from "lucide-react";
 import {
   KANBAN_COLUMNS,
   TASK_PRIORITIES,
@@ -172,7 +173,12 @@ export default function TaskBoard({
                     >
                       <div className="mb-2 line-clamp-2 text-sm font-medium text-ink-900">
                         {t.isAiGenerated && (
-                          <span title="Việc này dựng từ bản nháp của máy, đã có người xác nhận">🪄 </span>
+                          <span
+                            title="Việc này dựng từ bản nháp của máy, đã có người xác nhận"
+                            className="mr-1 inline-flex"
+                          >
+                            <Wand2 size={13} strokeWidth={2} />
+                          </span>
                         )}
                         {t.title}
                       </div>
@@ -180,8 +186,13 @@ export default function TaskBoard({
                         <PriorityBadge priority={t.priority} />
                         {t.riskScore >= 60 && <RiskBadge score={t.riskScore} />}
                       </div>
-                      <div className="mb-2 text-xs text-ink-500">
-                        {t.assigneeName ?? "⚠️ Chưa giao"} ·{" "}
+                      <div className="mb-2 flex items-center gap-1 text-xs text-ink-500">
+                        {t.assigneeName ?? (
+                          <span className="inline-flex items-center gap-1">
+                            <TriangleAlert size={11} strokeWidth={2.5} /> Chưa giao
+                          </span>
+                        )}{" "}
+                        ·{" "}
                         <DueDate
                           date={t.dueDate}
                           done={t.status === "DONE"}

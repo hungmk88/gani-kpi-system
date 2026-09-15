@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Play, Ban, Check, Undo2, CircleCheck, type LucideIcon } from "lucide-react";
 import { TASK_PRIORITIES, TASK_PRIORITY_LABEL } from "@/lib/constants";
 
 type Task = {
@@ -14,22 +15,25 @@ type Task = {
 };
 
 /** Nút bấm nhanh — nhân viên ngoài xưởng cập nhật việc trong 3 chạm. */
-const QUICK: Record<string, { label: string; status: string; cls: string }[]> = {
+const QUICK: Record<
+  string,
+  { label: string; icon: LucideIcon; status: string; cls: string }[]
+> = {
   TO_DO: [
-    { label: "▶ Bắt đầu làm", status: "IN_PROGRESS", cls: "btn-primary" },
-    { label: "⛔ Báo tắc", status: "BLOCKED", cls: "btn-ghost" },
+    { label: "Bắt đầu làm", icon: Play, status: "IN_PROGRESS", cls: "btn-primary" },
+    { label: "Báo tắc", icon: Ban, status: "BLOCKED", cls: "btn-ghost" },
   ],
   IN_PROGRESS: [
-    { label: "✓ Xong, xin nghiệm thu", status: "REVIEW", cls: "btn-success" },
-    { label: "⛔ Báo tắc", status: "BLOCKED", cls: "btn-ghost" },
+    { label: "Xong, xin nghiệm thu", icon: Check, status: "REVIEW", cls: "btn-success" },
+    { label: "Báo tắc", icon: Ban, status: "BLOCKED", cls: "btn-ghost" },
   ],
   BLOCKED: [
-    { label: "▶ Đã gỡ, làm tiếp", status: "IN_PROGRESS", cls: "btn-primary" },
+    { label: "Đã gỡ, làm tiếp", icon: Play, status: "IN_PROGRESS", cls: "btn-primary" },
   ],
   REVIEW: [
-    { label: "↩ Làm lại", status: "IN_PROGRESS", cls: "btn-ghost" },
+    { label: "Làm lại", icon: Undo2, status: "IN_PROGRESS", cls: "btn-ghost" },
   ],
-  DONE: [{ label: "↩ Mở lại việc", status: "IN_PROGRESS", cls: "btn-ghost" }],
+  DONE: [{ label: "Mở lại việc", icon: Undo2, status: "IN_PROGRESS", cls: "btn-ghost" }],
 };
 
 export default function TaskActions({
@@ -114,18 +118,18 @@ export default function TaskActions({
             key={q.status}
             disabled={busy}
             onClick={() => patch({ status: q.status })}
-            className={`${q.cls} w-full`}
+            className={`${q.cls} inline-flex w-full items-center justify-center gap-1.5`}
           >
-            {q.label}
+            <q.icon size={14} strokeWidth={2} /> {q.label}
           </button>
         ))}
         {task.status === "REVIEW" && canApprove && (
           <button
             disabled={busy}
             onClick={() => patch({ status: "DONE" })}
-            className="btn-success w-full"
+            className="btn-success inline-flex w-full items-center justify-center gap-1.5"
           >
-            ✅ Nghiệm thu · Hoàn thành
+            <CircleCheck size={14} strokeWidth={2} /> Nghiệm thu · Hoàn thành
           </button>
         )}
       </div>

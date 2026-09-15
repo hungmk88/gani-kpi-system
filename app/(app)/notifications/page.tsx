@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Bell } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Badge, EmptyState, PageHeader, formatDateTime } from "@/components/ui";
@@ -34,7 +35,7 @@ export default async function NotificationsPage() {
 
       {items.length === 0 ? (
         <EmptyState
-          icon="🔔"
+          icon={<Bell size={32} strokeWidth={1.75} />}
           title="Chưa có thông báo nào"
           hint="Khi có việc giao cho bạn, KPI được duyệt hoặc cảnh báo trễ hạn, thông báo sẽ hiện ở đây."
         />

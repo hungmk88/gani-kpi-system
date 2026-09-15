@@ -3,12 +3,29 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
+import {
+  Home,
+  CheckSquare,
+  BarChart3,
+  Repeat2,
+  Palmtree,
+  Scale,
+  Factory,
+  TrendingUp,
+  Target,
+  ScrollText,
+  Settings,
+  Bell,
+  KeyRound,
+  Menu as MenuIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { ROLE_LABEL } from "@/lib/constants";
 
 type NavItem = {
   href: string;
   label: string;
-  icon: string;
+  icon: LucideIcon;
   roles: string[];
   mobile?: boolean;
   /** Chỉ hiện cho người có vai trò trong xưởng (hoặc BGĐ / quản trị). */
@@ -16,17 +33,17 @@ type NavItem = {
 };
 
 const NAV: NavItem[] = [
-  { href: "/dashboard", label: "Trang chủ", icon: "🏠", roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
-  { href: "/tasks", label: "Công việc", icon: "✅", roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
-  { href: "/kpi", label: "KPI", icon: "📊", roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
-  { href: "/requests", label: "Yêu cầu liên phòng", icon: "🔁", roles: ["MANAGER", "CEO"] },
-  { href: "/leave-requests", label: "Nghỉ phép", icon: "🌴", roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"] },
-  { href: "/reconciliation", label: "Đối soát dữ liệu", icon: "⚖️", roles: ["MANAGER", "CEO"] },
-  { href: "/production", label: "Xưởng sản xuất", icon: "🏭", roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], productionOnly: true },
-  { href: "/analytics", label: "Phân tích & Dự báo", icon: "📈", roles: ["MANAGER", "CEO"] },
-  { href: "/ceo", label: "Bảng điều hành", icon: "🎯", roles: ["CEO"], mobile: true },
-  { href: "/audit", label: "Nhật ký hệ thống", icon: "🧾", roles: ["CEO", "ADMIN"] },
-  { href: "/admin", label: "Quản trị", icon: "⚙️", roles: ["ADMIN"], mobile: true },
+  { href: "/dashboard", label: "Trang chủ", icon: Home, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
+  { href: "/tasks", label: "Công việc", icon: CheckSquare, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
+  { href: "/kpi", label: "KPI", icon: BarChart3, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
+  { href: "/requests", label: "Yêu cầu liên phòng", icon: Repeat2, roles: ["MANAGER", "CEO"] },
+  { href: "/leave-requests", label: "Nghỉ phép", icon: Palmtree, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"] },
+  { href: "/reconciliation", label: "Đối soát dữ liệu", icon: Scale, roles: ["MANAGER", "CEO"] },
+  { href: "/production", label: "Xưởng sản xuất", icon: Factory, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], productionOnly: true },
+  { href: "/analytics", label: "Phân tích & Dự báo", icon: TrendingUp, roles: ["MANAGER", "CEO"] },
+  { href: "/ceo", label: "Bảng điều hành", icon: Target, roles: ["CEO"], mobile: true },
+  { href: "/audit", label: "Nhật ký hệ thống", icon: ScrollText, roles: ["CEO", "ADMIN"] },
+  { href: "/admin", label: "Quản trị", icon: Settings, roles: ["ADMIN"], mobile: true },
 ];
 
 export default function Shell({
@@ -85,7 +102,7 @@ export default function Shell({
                   : "text-ink-600 hover:bg-ink-50"
               }`}
             >
-              <span className="text-base">{n.icon}</span>
+              <n.icon size={18} strokeWidth={2} className="shrink-0" />
               {n.label}
             </Link>
           ))}
@@ -97,7 +114,7 @@ export default function Shell({
             className="mb-2 flex items-center justify-between rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-ink-50"
           >
             <span className="flex items-center gap-3">
-              <span>🔔</span> Thông báo
+              <Bell size={18} strokeWidth={2} /> Thông báo
             </span>
             {unread > 0 && (
               <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
@@ -144,9 +161,9 @@ export default function Shell({
           </div>
           <button
             onClick={() => setMenuOpen((v) => !v)}
-            className="btn-ghost btn-sm"
+            className="btn-ghost btn-sm inline-flex items-center gap-1.5"
           >
-            ☰ Menu
+            <MenuIcon size={16} strokeWidth={2} /> Menu
           </button>
         </header>
 
@@ -163,7 +180,7 @@ export default function Shell({
                     : "text-ink-600"
                 }`}
               >
-                <span>{n.icon}</span>
+                <n.icon size={18} strokeWidth={2} className="shrink-0" />
                 {n.label}
               </Link>
             ))}
@@ -172,14 +189,14 @@ export default function Shell({
               onClick={() => setMenuOpen(false)}
               className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-ink-600"
             >
-              🔔 Thông báo {unread > 0 && `(${unread})`}
+              <Bell size={18} strokeWidth={2} /> Thông báo {unread > 0 && `(${unread})`}
             </Link>
             <Link
               href="/doi-mat-khau"
               onClick={() => setMenuOpen(false)}
               className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-ink-600"
             >
-              🔑 Đổi mật khẩu
+              <KeyRound size={18} strokeWidth={2} /> Đổi mật khẩu
             </Link>
             <button
               onClick={logout}
@@ -204,7 +221,7 @@ export default function Shell({
                 isActive(n.href) ? "text-brand-700" : "text-ink-500"
               }`}
             >
-              <span className="text-lg leading-none">{n.icon}</span>
+              <n.icon size={20} strokeWidth={2} />
               {n.label}
             </Link>
           ))}

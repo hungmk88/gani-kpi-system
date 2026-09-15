@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Check, Ban } from "lucide-react";
 
 /**
  * Hai thao tác trên một cảnh báo:
@@ -123,22 +124,22 @@ export default function AuditActions({
           />
           <div className="flex flex-wrap gap-2">
             <button
-              className="btn-success btn-sm"
+              className="btn-success btn-sm inline-flex items-center gap-1.5"
               disabled={busy || note.trim().length < 10}
               onClick={() =>
                 call({ action: "REVIEW", approved: true, reviewNote: note })
               }
             >
-              ✅ Đồng ý — mở khoá thưởng
+              <Check size={14} strokeWidth={2.5} /> Đồng ý — mở khoá thưởng
             </button>
             <button
-              className="btn-danger btn-sm"
+              className="btn-danger btn-sm inline-flex items-center gap-1.5"
               disabled={busy || note.trim().length < 10}
               onClick={() =>
                 call({ action: "REVIEW", approved: false, reviewNote: note })
               }
             >
-              🚫 Từ chối — giữ khoá thưởng
+              <Ban size={14} strokeWidth={2} /> Từ chối — giữ khoá thưởng
             </button>
           </div>
         </div>

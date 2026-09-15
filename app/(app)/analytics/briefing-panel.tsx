@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { FileText } from "lucide-react";
 import { Badge, ProgressBar } from "@/components/ui";
 import { HEALTH_BANDS } from "@/lib/analytics/constants";
 
@@ -98,13 +99,19 @@ export default function BriefingPanel({
             disabled={busy}
             onClick={data ? () => setOpen(!open) : generate}
           >
-            {busy
-              ? "Đang viết..."
-              : data
-                ? open
-                  ? "Thu gọn báo cáo"
-                  : "Mở lại báo cáo"
-                : "📋 Viết báo cáo điều hành"}
+            {busy ? (
+              "Đang viết..."
+            ) : data ? (
+              open ? (
+                "Thu gọn báo cáo"
+              ) : (
+                "Mở lại báo cáo"
+              )
+            ) : (
+              <span className="inline-flex items-center gap-1.5">
+                <FileText size={14} strokeWidth={2} /> Viết báo cáo điều hành
+              </span>
+            )}
           </button>
         </div>
 

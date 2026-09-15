@@ -1,3 +1,4 @@
+import { Download, CircleCheck } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Badge, EmptyState, PageHeader, formatDateTime } from "@/components/ui";
@@ -69,8 +70,8 @@ export default async function LeaveRequestsPage() {
         subtitle="Phải gửi trước giờ bắt đầu nghỉ ít nhất 24 tiếng. Gửi trễ hơn vẫn gửi được nhưng hệ thống gắn nhãn khẩn cấp để người duyệt biết."
         actions={
           canExport ? (
-            <a href="/api/leave-requests/export" className="btn-ghost btn-sm">
-              ⬇ Tải tổng hợp tháng trước — toàn công ty (Excel)
+            <a href="/api/leave-requests/export" className="btn-ghost btn-sm inline-flex items-center gap-1.5">
+              <Download size={14} strokeWidth={2} /> Tải tổng hợp tháng trước — toàn công ty (Excel)
             </a>
           ) : undefined
         }
@@ -90,7 +91,7 @@ export default async function LeaveRequestsPage() {
           </h2>
           {inbox.length === 0 ? (
             <EmptyState
-              icon="✅"
+              icon={<CircleCheck size={32} strokeWidth={1.75} />}
               title="Không có đơn nào chờ bạn"
               hint="Khi nhân sự trong tầm quản lý của bạn xin nghỉ, đơn sẽ hiện ở đây."
             />

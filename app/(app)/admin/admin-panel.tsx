@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { CircleCheck, CircleX } from "lucide-react";
 import { Badge, formatDateTime } from "@/components/ui";
 import {
   DATA_SOURCES,
@@ -1058,7 +1059,7 @@ function SystemTab({
   }[];
 }) {
   const [chatId, setChatId] = useState("");
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<React.ReactNode | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function test() {
@@ -1072,9 +1073,15 @@ function SystemTab({
       });
       const data = await res.json();
       setResult(
-        res.ok && data.ok
-          ? "✅ Gửi thành công. Kiểm tra Telegram xem đã nhận chưa."
-          : `❌ ${data.error || data.message}`
+        res.ok && data.ok ? (
+          <span className="inline-flex items-center gap-1.5">
+            <CircleCheck size={14} strokeWidth={2} /> Gửi thành công. Kiểm tra Telegram xem đã nhận chưa.
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5">
+            <CircleX size={14} strokeWidth={2} /> {data.error || data.message}
+          </span>
+        )
       );
     } finally {
       setBusy(false);

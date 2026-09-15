@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Wand2, Check } from "lucide-react";
 import { TASK_PRIORITIES, TASK_PRIORITY_LABEL } from "@/lib/constants";
 
 type Draft = {
@@ -177,7 +178,7 @@ export default function AiQuickTask({
         className="card mb-4 flex w-full items-center gap-3 p-3.5 text-left transition hover:shadow-md"
         onClick={() => setOpen(true)}
       >
-        <span className="text-xl">🪄</span>
+        <Wand2 size={20} strokeWidth={2} className="shrink-0 text-brand-600" />
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium text-ink-800">
             Gõ một câu, máy dựng thành việc
@@ -196,7 +197,7 @@ export default function AiQuickTask({
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 font-medium text-ink-900">
-            🪄 Trợ lý giao việc
+            <Wand2 size={16} strokeWidth={2} /> Trợ lý giao việc
           </div>
           <p className="mt-0.5 text-xs text-ink-500">
             Máy chỉ đọc và dựng bản nháp. Việc chỉ được tạo khi anh bấm xác nhận.
@@ -400,11 +401,17 @@ export default function AiQuickTask({
 
             <div className="flex flex-wrap gap-2 pt-1">
               <button
-                className="btn-primary"
+                className="btn-primary inline-flex items-center gap-1.5"
                 disabled={busy || !canSubmit}
                 onClick={accept}
               >
-                {busy ? "Đang tạo..." : "✓ Xác nhận & tạo việc"}
+                {busy ? (
+                  "Đang tạo..."
+                ) : (
+                  <>
+                    <Check size={14} strokeWidth={2.5} /> Xác nhận & tạo việc
+                  </>
+                )}
               </button>
               <button className="btn-ghost" disabled={busy} onClick={reject}>
                 Bỏ bản nháp này

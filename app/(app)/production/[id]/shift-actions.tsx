@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Lock, LockOpen, Check } from "lucide-react";
 import { STAGE_LABEL } from "@/lib/production/constants";
 
 type Shift = {
@@ -127,8 +128,8 @@ export default function ShiftActions({
 
       {shift.status === "LOCKED" && (
         <div className="space-y-3">
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-            🔒 Ca đã khoá số và chấm điểm xong.
+          <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            <Lock size={14} strokeWidth={2} /> Ca đã khoá số và chấm điểm xong.
           </div>
           {isCeo && (
             <ReopenForm busy={busy} onCall={call} />
@@ -293,7 +294,7 @@ function QcForm({
       </div>
 
       <button
-        className="btn-primary w-full"
+        className="btn-primary inline-flex w-full items-center justify-center gap-1.5"
         disabled={busy || qcPassedKg === ""}
         onClick={() =>
           onCall({
@@ -311,7 +312,13 @@ function QcForm({
           })
         }
       >
-        {busy ? "Đang lưu..." : "✓ Xác nhận & chuyển Ban Giám đốc"}
+        {busy ? (
+          "Đang lưu..."
+        ) : (
+          <>
+            <Check size={15} strokeWidth={2.5} /> Xác nhận & chuyển Ban Giám đốc
+          </>
+        )}
       </button>
     </div>
   );
@@ -432,7 +439,7 @@ function CeoLockForm({
       </div>
 
       <button
-        className="btn-primary w-full"
+        className="btn-primary inline-flex w-full items-center justify-center gap-1.5"
         disabled={busy || !canSubmit}
         onClick={() =>
           onCall({
@@ -445,7 +452,13 @@ function CeoLockForm({
           })
         }
       >
-        {busy ? "Đang khoá..." : "🔒 Duyệt & khoá số liệu"}
+        {busy ? (
+          "Đang khoá..."
+        ) : (
+          <>
+            <Lock size={15} strokeWidth={2} /> Duyệt & khoá số liệu
+          </>
+        )}
       </button>
       <p className="text-[11px] text-ink-500">
         Khoá xong hệ thống mới chấm điểm và quét chống chạy chỉ tiêu.
@@ -468,8 +481,11 @@ function ReopenForm({
 
   if (!open) {
     return (
-      <button className="btn-ghost btn-sm w-full" onClick={() => setOpen(true)}>
-        🔓 Mở lại ca này
+      <button
+        className="btn-ghost btn-sm inline-flex w-full items-center justify-center gap-1.5"
+        onClick={() => setOpen(true)}
+      >
+        <LockOpen size={14} strokeWidth={2} /> Mở lại ca này
       </button>
     );
   }

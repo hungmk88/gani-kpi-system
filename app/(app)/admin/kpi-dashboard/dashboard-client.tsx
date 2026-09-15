@@ -2,6 +2,15 @@
 
 import { useEffect, useState } from "react";
 import {
+  CircleX,
+  CalendarDays,
+  CalendarRange,
+  Download,
+  Printer,
+  BarChart3,
+  TrendingUp,
+} from "lucide-react";
+import {
   BarChart,
   Bar,
   LineChart,
@@ -115,8 +124,8 @@ export default function DashboardClient() {
 
   if (error) {
     return (
-      <div className="card border-red-200 bg-red-50 p-4 text-red-800">
-        ❌ {error}
+      <div className="card flex items-center gap-1.5 border-red-200 bg-red-50 p-4 text-red-800">
+        <CircleX size={16} strokeWidth={2} /> {error}
       </div>
     );
   }
@@ -131,32 +140,44 @@ export default function DashboardClient() {
               <button
                 key={p}
                 onClick={() => setPeriod(p)}
-                className={`px-4 py-2 rounded font-medium transition ${
+                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded font-medium transition ${
                   period === p
                     ? "bg-brand-600 text-white"
                     : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                 }`}
               >
-                {p === "today" && "📅 Hôm Nay"}
-                {p === "week" && "📆 Tuần Này"}
-                {p === "month" && "📅 Tháng Này"}
+                {p === "today" && (
+                  <>
+                    <CalendarDays size={15} strokeWidth={2} /> Hôm Nay
+                  </>
+                )}
+                {p === "week" && (
+                  <>
+                    <CalendarRange size={15} strokeWidth={2} /> Tuần Này
+                  </>
+                )}
+                {p === "month" && (
+                  <>
+                    <CalendarDays size={15} strokeWidth={2} /> Tháng Này
+                  </>
+                )}
               </button>
             ))}
           </div>
           <div className="flex gap-2">
             <a
               href={`/api/kpi/dashboard/export?period=${period}&days=7`}
-              className="btn-ghost"
+              className="btn-ghost inline-flex items-center gap-1.5"
             >
-              📊 Tải Excel
+              <Download size={15} strokeWidth={2} /> Tải Excel
             </a>
             <a
               href={`/reports/kpi-dashboard?period=${period}&days=7`}
               target="_blank"
               rel="noopener noreferrer"
-              className="btn-ghost"
+              className="btn-ghost inline-flex items-center gap-1.5"
             >
-              🖨 Xuất PDF
+              <Printer size={15} strokeWidth={2} /> Xuất PDF
             </a>
           </div>
         </div>
@@ -220,7 +241,9 @@ export default function DashboardClient() {
         {/* Score Distribution */}
         {distribution && (
           <div className="card p-5">
-            <h2 className="section-title mb-4">📊 Phân Bố Điểm (30 ngày)</h2>
+            <h2 className="section-title mb-4 flex items-center gap-1.5">
+              <BarChart3 size={17} strokeWidth={2} /> Phân Bố Điểm (30 ngày)
+            </h2>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={distribution.chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -256,7 +279,9 @@ export default function DashboardClient() {
         {/* Trends */}
         {trends && (
           <div className="card p-5">
-            <h2 className="section-title mb-4">📈 Xu Hướng (7 ngày)</h2>
+            <h2 className="section-title mb-4 flex items-center gap-1.5">
+              <TrendingUp size={17} strokeWidth={2} /> Xu Hướng (7 ngày)
+            </h2>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={trends.trendData}>
                 <CartesianGrid strokeDasharray="3 3" />

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Calculator, CircleX, CircleCheck, Loader2 } from "lucide-react";
 
 interface KpiScoreCalculatorProps {
   shiftLogId: string;
@@ -92,33 +93,47 @@ export default function KpiScoreCalculator({ shiftLogId }: KpiScoreCalculatorPro
 
   return (
     <div className="card border-blue-200 bg-blue-50/40 p-5">
-      <h2 className="section-title mb-2">🧮 Tính Điểm KPI 6 Chỉ Tiêu</h2>
+      <h2 className="section-title mb-2 flex items-center gap-1.5">
+        <Calculator size={18} strokeWidth={2} /> Tính Điểm KPI 6 Chỉ Tiêu
+      </h2>
       <p className="text-sm text-ink-600 mb-4">
         Hệ thống sẽ tự động tính điểm dựa trên số liệu ca sản xuất.
       </p>
 
       {error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-          ❌ {error}
+        <div className="mb-4 flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          <CircleX size={15} strokeWidth={2} /> {error}
         </div>
       )}
 
       {success && (
-        <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-          ✅ Tính điểm thành công! Đang tải lại...
+        <div className="mb-4 flex items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+          <CircleCheck size={15} strokeWidth={2} /> Tính điểm thành công! Đang tải lại...
         </div>
       )}
 
       <button
         onClick={handleCalculate}
         disabled={loading || success}
-        className={`px-6 py-2 rounded-lg font-medium text-white ${
+        className={`inline-flex items-center gap-1.5 px-6 py-2 rounded-lg font-medium text-white ${
           loading || success
             ? "bg-gray-400 cursor-not-allowed"
             : "bg-blue-600 hover:bg-blue-700"
         }`}
       >
-        {loading ? "⏳ Đang tính..." : success ? "✅ Thành công" : "🧮 Tính Điểm"}
+        {loading ? (
+          <>
+            <Loader2 size={15} strokeWidth={2} className="animate-spin" /> Đang tính...
+          </>
+        ) : success ? (
+          <>
+            <CircleCheck size={15} strokeWidth={2} /> Thành công
+          </>
+        ) : (
+          <>
+            <Calculator size={15} strokeWidth={2} /> Tính Điểm
+          </>
+        )}
       </button>
     </div>
   );

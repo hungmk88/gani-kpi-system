@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { TriangleAlert } from "lucide-react";
 
 function toLocalInputValue(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -102,9 +103,12 @@ export default function LeaveRequestForm() {
       </label>
 
       {isUrgent && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          ⚠ Chưa đủ 24 tiếng báo trước — đơn vẫn gửi được nhưng sẽ gắn nhãn
-          "Khẩn cấp" để người duyệt thấy rõ.
+        <div className="flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <TriangleAlert size={13} strokeWidth={2.5} className="mt-0.5 shrink-0" />
+          <span>
+            Chưa đủ 24 tiếng báo trước — đơn vẫn gửi được nhưng sẽ gắn nhãn
+            "Khẩn cấp" để người duyệt thấy rõ.
+          </span>
         </div>
       )}
 

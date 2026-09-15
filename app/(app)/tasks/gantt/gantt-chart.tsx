@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { TriangleAlert } from "lucide-react";
 import type { GanttResult } from "@/lib/gantt";
 import { TASK_STATUS_LABEL } from "@/lib/constants";
 
@@ -161,7 +162,8 @@ export default function GanttChart({
         </Chip>
         {data.cycleDetected && (
           <Chip tone="red">
-            ⚠ Có vòng lặp phụ thuộc ở {data.cycleTaskIds.length} việc — phải gỡ
+            <TriangleAlert size={11} strokeWidth={2.5} className="mr-1 inline -mt-0.5" />
+            Có vòng lặp phụ thuộc ở {data.cycleTaskIds.length} việc — phải gỡ
             mới tính được đường găng
           </Chip>
         )}

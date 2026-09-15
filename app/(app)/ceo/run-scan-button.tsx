@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { RefreshCw } from "lucide-react";
 
 /** Chạy tay bộ máy nền: quét rủi ro + kiểm tra mốc khoá KPI. */
 export default function RunScanButton() {
@@ -31,8 +32,18 @@ export default function RunScanButton() {
   return (
     <div className="flex flex-wrap items-center gap-2">
       {msg && <span className="text-xs text-ink-600">{msg}</span>}
-      <button className="btn-ghost btn-sm" disabled={busy} onClick={run}>
-        {busy ? "Đang quét..." : "🔄 Quét lại rủi ro ngay"}
+      <button
+        className="btn-ghost btn-sm inline-flex items-center gap-1.5"
+        disabled={busy}
+        onClick={run}
+      >
+        {busy ? (
+          "Đang quét..."
+        ) : (
+          <>
+            <RefreshCw size={13} strokeWidth={2} /> Quét lại rủi ro ngay
+          </>
+        )}
       </button>
     </div>
   );

@@ -1,5 +1,7 @@
 "use client";
 
+import { Printer } from "lucide-react";
+
 /**
  * Thanh điều khiển của trang báo cáo. Chỉ hiện trên màn hình, tự ẩn khi in.
  *
@@ -10,8 +12,11 @@
 export default function PrintButton() {
   return (
     <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-ink-200 bg-ink-50 p-3 print:hidden">
-      <button className="btn-primary" onClick={() => window.print()}>
-        🖨 In / Lưu thành PDF
+      <button
+        className="btn-primary inline-flex items-center gap-1.5"
+        onClick={() => window.print()}
+      >
+        <Printer size={15} strokeWidth={2} /> In / Lưu thành PDF
       </button>
       <button className="btn-ghost" onClick={() => window.close()}>
         Đóng tab

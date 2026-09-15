@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { CheckCircle2, Save } from "lucide-react";
 
 export type TargetRow = {
   resultId: string;
@@ -132,8 +133,8 @@ export default function TargetEditor({
         </div>
       )}
       {savedAt && !error && (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          ✅ Đã lưu mục tiêu.
+        <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <CheckCircle2 size={15} strokeWidth={2} /> Đã lưu mục tiêu.
         </div>
       )}
 
@@ -141,9 +142,15 @@ export default function TargetEditor({
         <button
           onClick={save}
           disabled={busy}
-          className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         >
-          {busy ? "Đang lưu..." : "💾 Lưu mục tiêu"}
+          {busy ? (
+            "Đang lưu..."
+          ) : (
+            <>
+              <Save size={15} strokeWidth={2} /> Lưu mục tiêu
+            </>
+          )}
         </button>
       )}
     </div>

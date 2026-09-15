@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Lock, BarChart3, Check } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
@@ -73,7 +74,9 @@ export default async function ShiftDetailPage({
   if (!isWide && !isParticipant && log.createdById !== user.id) {
     return (
       <div className="card p-8 text-center">
-        <div className="mb-2 text-3xl">🔒</div>
+        <div className="mb-2 flex justify-center text-ink-400">
+          <Lock size={30} strokeWidth={1.75} />
+        </div>
         <div className="font-medium text-ink-800">
           Bạn không tham gia ca này
         </div>
@@ -365,8 +368,8 @@ export default async function ShiftDetailPage({
           {/* ---- Hiển Thị Kết Quả KPI 6 chỉ tiêu ---- */}
           {log.kpiScore && (
             <div>
-              <h2 className="section-title mb-3">
-                📊 Điểm KPI 6 chỉ tiêu (Phòng SX)
+              <h2 className="section-title mb-3 flex items-center gap-1.5">
+                <BarChart3 size={17} strokeWidth={2} /> Điểm KPI 6 chỉ tiêu (Phòng SX)
               </h2>
               <KpiScoreDisplay
                 scoreId={log.kpiScore.id}
@@ -403,7 +406,10 @@ export default async function ShiftDetailPage({
                         </span>
                         <span className="flex items-center gap-2">
                           {r.isBonusLocked && (
-                            <Badge tone="red">🔒 Khoá thưởng</Badge>
+                            <Badge tone="red">
+                              <Lock size={10} strokeWidth={2.5} className="mr-1 inline -mt-0.5" />
+                              Khoá thưởng
+                            </Badge>
                           )}
                           <Badge tone="slate">
                             Cá nhân {r.tier1Score}
@@ -558,7 +564,7 @@ function Step({
                 : "bg-ink-200 text-ink-600"
           }`}
         >
-          {done ? "✓" : n}
+          {done ? <Check size={13} strokeWidth={3} /> : n}
         </span>
         <span className="text-sm font-medium text-ink-800">{title}</span>
       </div>

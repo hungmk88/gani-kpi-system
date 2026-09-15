@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Factory, TriangleAlert } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { withProductionRole } from "@/lib/services/production-service";
@@ -126,7 +127,7 @@ export default async function ProductionPage() {
 
       {shifts.length === 0 ? (
         <EmptyState
-          icon="🏭"
+          icon={<Factory size={32} strokeWidth={1.75} />}
           title="Chưa có ca sản xuất nào được khai"
           hint={
             canDraft
@@ -193,7 +194,10 @@ export default async function ProductionPage() {
                     <StatusBadge status={s.status} />
                     {s._count.audits > 0 && (
                       <div className="mt-1">
-                        <Badge tone="red">⚠ {s._count.audits} cảnh báo</Badge>
+                        <Badge tone="red">
+                          <TriangleAlert size={10} strokeWidth={2.5} className="mr-1 inline -mt-0.5" />
+                          {s._count.audits} cảnh báo
+                        </Badge>
                       </div>
                     )}
                   </td>

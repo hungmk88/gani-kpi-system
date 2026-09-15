@@ -2,6 +2,14 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  Download,
+  Printer,
+  CheckCheck,
+  AlertTriangle,
+  LockOpen,
+  Upload,
+} from "lucide-react";
 import { KpiStatusBadge, ProgressBar, ScoreBadge } from "@/components/ui";
 import KpiAdvisoryPanel from "@/components/kpi-advisory";
 
@@ -116,33 +124,33 @@ export default function KpiWorkTable({
       <div className="card mb-4 flex flex-wrap items-center gap-2 p-3">
         <a
           href={`/api/kpi/export?periodId=${periodId}`}
-          className="btn-ghost btn-sm"
+          className="btn-ghost btn-sm inline-flex items-center gap-1.5"
         >
-          ⬇ Tải bảng KPI (Excel)
+          <Download size={14} strokeWidth={2} /> Tải bảng KPI (Excel)
         </a>
         <a
           href={`/reports/kpi/${periodId}`}
           target="_blank"
           rel="noreferrer"
-          className="btn-ghost btn-sm"
+          className="btn-ghost btn-sm inline-flex items-center gap-1.5"
         >
-          🖨 Báo cáo điều hành (PDF)
+          <Printer size={14} strokeWidth={2} /> Báo cáo điều hành (PDF)
         </a>
         {(role === "MANAGER" || role === "CEO" || role === "ADMIN") && (
           <>
-            <a href="/api/kpi/template" className="btn-ghost btn-sm">
-              ⬇ Tải file mẫu nhập số
+            <a href="/api/kpi/template" className="btn-ghost btn-sm inline-flex items-center gap-1.5">
+              <Download size={14} strokeWidth={2} /> Tải file mẫu nhập số
             </a>
             <ImportButton periodId={periodId} />
           </>
         )}
         {role === "CEO" && periodStatus !== "FINALIZED" && (
           <button
-            className="btn-primary btn-sm ml-auto"
+            className="btn-primary btn-sm ml-auto inline-flex items-center gap-1.5"
             disabled={busy}
             onClick={() => approveAll()}
           >
-            ✅ Duyệt tất cả &amp; chốt kỳ
+            <CheckCheck size={14} strokeWidth={2} /> Duyệt tất cả &amp; chốt kỳ
           </button>
         )}
       </div>
@@ -194,8 +202,8 @@ export default function KpiWorkTable({
                       </span>
                     )}
                     {mismatches > 0 && (
-                      <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
-                        ⚠ LỆCH SỐ {mismatches}
+                      <span className="inline-flex items-center gap-1 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
+                        <AlertTriangle size={10} strokeWidth={2.5} /> LỆCH SỐ {mismatches}
                       </span>
                     )}
                   </div>
@@ -286,11 +294,11 @@ export default function KpiWorkTable({
                     pendingCeo + pendingManager + pendingSelf > 0 && (
                       <div className="border-t border-ink-100 p-3">
                         <button
-                          className="btn-primary btn-sm"
+                          className="btn-primary btn-sm inline-flex items-center gap-1.5"
                           disabled={busy}
                           onClick={() => approveAll(g.employeeId)}
                         >
-                          ✅ Duyệt &amp; khoá KPI của {g.employeeName}
+                          <CheckCheck size={14} strokeWidth={2} /> Duyệt &amp; khoá KPI của {g.employeeName}
                         </button>
                       </div>
                     )}
@@ -356,8 +364,8 @@ function RowEditor({
           {row.unit} · nguồn {sourceLabel(row.dataSource)}
         </div>
         {row.hasMismatch && (
-          <div className="mt-1 text-xs font-medium text-red-600">
-            ⚠ Lệch {row.mismatchPercent}% so với số hệ thống
+          <div className="mt-1 flex items-center gap-1 text-xs font-medium text-red-600">
+            <AlertTriangle size={11} strokeWidth={2.5} /> Lệch {row.mismatchPercent}% so với số hệ thống
           </div>
         )}
         {row.selfNote && (
@@ -518,10 +526,10 @@ function RowEditor({
             </div>
           ) : (
             <button
-              className="btn-ghost btn-sm"
+              className="btn-ghost btn-sm inline-flex items-center gap-1.5"
               onClick={() => setEditing(true)}
             >
-              🔓 Sửa điểm đã khoá
+              <LockOpen size={14} strokeWidth={2} /> Sửa điểm đã khoá
             </button>
           ))}
 
@@ -572,8 +580,14 @@ function ImportButton({ periodId }: { periodId: string }) {
 
   return (
     <>
-      <label className="btn-ghost btn-sm cursor-pointer">
-        {busy ? "Đang nạp..." : "⬆ Nạp số từ Excel"}
+      <label className="btn-ghost btn-sm inline-flex cursor-pointer items-center gap-1.5">
+        {busy ? (
+          "Đang nạp..."
+        ) : (
+          <>
+            <Upload size={14} strokeWidth={2} /> Nạp số từ Excel
+          </>
+        )}
         <input
           type="file"
           accept=".xlsx,.xls"

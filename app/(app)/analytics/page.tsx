@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { TriangleAlert, CircleCheck } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
@@ -72,8 +73,8 @@ export default async function AnalyticsPage() {
       {/* ============ CẢNH BÁO NỀN DỮ LIỆU ============ */}
       {accuracy.total === 0 && (
         <div className="card mb-6 border-amber-300 bg-amber-50/60 p-4">
-          <div className="mb-1 font-semibold text-amber-900">
-            ⚠ Bộ dự báo chưa được đo lần nào
+          <div className="mb-1 flex items-center gap-1.5 font-semibold text-amber-900">
+            <TriangleAlert size={16} strokeWidth={2} /> Bộ dự báo chưa được đo lần nào
           </div>
           <p className="text-sm text-amber-900">
             Chưa có việc nào đóng lại sau khi được dự báo, nên chưa biết hệ thống
@@ -221,7 +222,9 @@ export default async function AnalyticsPage() {
             {scan.predictions.filter((p) => p.riskCategory !== "ON_TRACK")
               .length === 0 && (
               <div className="card border-emerald-200 bg-emerald-50/50 p-6 text-center">
-                <div className="mb-1 text-2xl">✅</div>
+                <div className="mb-1 flex justify-center text-emerald-600">
+                  <CircleCheck size={28} strokeWidth={1.75} />
+                </div>
                 <div className="font-medium text-emerald-800">
                   Không có việc nào đang bị dự báo trễ
                 </div>
@@ -387,7 +390,9 @@ export default async function AnalyticsPage() {
 
         {anomalies.length === 0 ? (
           <div className="card border-emerald-200 bg-emerald-50/50 p-6 text-center">
-            <div className="mb-1 text-2xl">✅</div>
+            <div className="mb-1 flex justify-center text-emerald-600">
+              <CircleCheck size={28} strokeWidth={1.75} />
+            </div>
             <div className="font-medium text-emerald-800">
               Không có khai báo nào lệch khỏi nếp
             </div>

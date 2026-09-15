@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CalendarDays, LineChart } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { can } from "@/lib/rbac";
@@ -81,7 +82,7 @@ export default async function KpiHomePage() {
 
       {!current ? (
         <EmptyState
-          icon="📅"
+          icon={<CalendarDays size={32} strokeWidth={1.75} />}
           title="Chưa có kỳ KPI nào được mở"
           hint={
             can(user, "kpi.period.manage")
@@ -108,7 +109,9 @@ export default async function KpiHomePage() {
                 href={`/kpi/nam-quyet-dinh?periodId=${current.id}`}
                 className="card p-4 transition hover:shadow-md hover:bg-blue-50"
               >
-                <div className="text-sm font-semibold text-ink-600">📊 Năm Quyết Định</div>
+                <div className="flex items-center gap-1.5 text-sm font-semibold text-ink-600">
+                  <LineChart size={16} strokeWidth={2} /> Năm Quyết Định
+                </div>
                 <div className="mt-2 text-sm text-ink-500">Nhập mục tiêu KPI phòng SX</div>
               </Link>
             )}

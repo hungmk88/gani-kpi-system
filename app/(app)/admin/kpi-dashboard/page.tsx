@@ -1,6 +1,7 @@
 // File: app/(app)/admin/kpi-dashboard/page.tsx
 
 import { notFound } from "next/navigation";
+import { BarChart3 } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { Badge, PageHeader } from "@/components/ui";
 import DashboardClient from "./dashboard-client";
@@ -17,7 +18,11 @@ export default async function KpiDashboardPage() {
   return (
     <>
       <PageHeader
-        title="📊 Dashboard KPI"
+        title={
+          <span className="flex items-center gap-2">
+            <BarChart3 size={22} strokeWidth={2} /> Dashboard KPI
+          </span>
+        }
         subtitle="Tổng hợp điểm KPI 6 chỉ tiêu theo ngày/tuần/tháng"
         actions={
           <Badge tone="blue">

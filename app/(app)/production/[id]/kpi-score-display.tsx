@@ -1,5 +1,7 @@
 "use client";
 
+import { Calculator, CircleCheck, FileEdit } from "lucide-react";
+
 interface KpiBreakdown {
   code: string;
   name: string;
@@ -75,10 +77,22 @@ export default function KpiScoreDisplay({
       <div className="flex items-center justify-between pb-3 border-b">
         <div>
           <p className="text-sm text-ink-500">Status:</p>
-          <p className="font-semibold text-ink-900">
-            {status === "CALCULATED" && "🧮 Đã Tính"}
-            {status === "APPROVED" && "✅ Đã Phê Duyệt"}
-            {status === "DRAFT" && "📝 Nháp"}
+          <p className="flex items-center gap-1.5 font-semibold text-ink-900">
+            {status === "CALCULATED" && (
+              <>
+                <Calculator size={15} strokeWidth={2} /> Đã Tính
+              </>
+            )}
+            {status === "APPROVED" && (
+              <>
+                <CircleCheck size={15} strokeWidth={2} /> Đã Phê Duyệt
+              </>
+            )}
+            {status === "DRAFT" && (
+              <>
+                <FileEdit size={15} strokeWidth={2} /> Nháp
+              </>
+            )}
           </p>
         </div>
         {calculatedBy && calculatedAt && (
@@ -169,8 +183,9 @@ export default function KpiScoreDisplay({
 
       {/* Approval Info */}
       {approvedBy && approvedAt && (
-        <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-          ✅ Phê duyệt bởi <span className="font-semibold">{approvedBy.fullName}</span> vào{" "}
+        <div className="flex items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+          <CircleCheck size={14} strokeWidth={2} />
+          Phê duyệt bởi <span className="font-semibold">{approvedBy.fullName}</span> vào{" "}
           <span className="font-semibold">{new Date(approvedAt).toLocaleString("vi-VN")}</span>
         </div>
       )}

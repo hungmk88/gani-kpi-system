@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Target, Lock, Check } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { can, kpiScopeWhere } from "@/lib/rbac";
@@ -103,9 +104,9 @@ export default async function KpiPeriodPage({
             {can(user, "kpi.target.assign") && (
               <Link
                 href={`/kpi/${period.id}/targets`}
-                className="rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100"
               >
-                🎯 Đặt mục tiêu
+                <Target size={15} strokeWidth={2} /> Đặt mục tiêu
               </Link>
             )}
             <PeriodStatusBadge status={period.status} />
@@ -142,8 +143,9 @@ export default async function KpiPeriodPage({
           />
         </div>
         {period.status === "FINALIZED" && (
-          <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-            🔒 Kỳ này đã chốt và khoá vĩnh viễn. Chỉ Ban Giám đốc mới sửa được,
+          <div className="mt-3 flex items-start gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            <Lock size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
+            Kỳ này đã chốt và khoá vĩnh viễn. Chỉ Ban Giám đốc mới sửa được,
             và mỗi lần sửa đều để lại dấu vết không xoá được trong nhật ký hệ
             thống.
           </div>
@@ -196,7 +198,7 @@ function Phase({
                 : "bg-ink-200 text-ink-600"
           }`}
         >
-          {done ? "✓" : step}
+          {done ? <Check size={14} strokeWidth={3} /> : step}
         </span>
         <span className="text-sm font-medium text-ink-800">{title}</span>
       </div>

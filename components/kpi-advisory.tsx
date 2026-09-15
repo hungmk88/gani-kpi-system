@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Search } from "lucide-react";
 
 type Advisory = {
   suggestedScore: number;
@@ -63,10 +64,10 @@ export default function KpiAdvisoryPanel({
   if (!open) {
     return (
       <button
-        className="mt-1.5 w-full rounded-lg border border-violet-200 bg-violet-50 px-2 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100"
+        className="mt-1.5 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100"
         onClick={ask}
       >
-        🔍 Xin phân tích tham khảo
+        <Search size={13} strokeWidth={2} /> Xin phân tích tham khảo
       </button>
     );
   }

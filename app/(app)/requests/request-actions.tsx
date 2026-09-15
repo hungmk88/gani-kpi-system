@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Check } from "lucide-react";
 
 export default function RequestActions({
   requestId,
@@ -88,11 +89,11 @@ export default function RequestActions({
             ))}
           </select>
           <button
-            className="btn-success btn-sm"
+            className="btn-success btn-sm inline-flex items-center gap-1.5"
             disabled={busy}
             onClick={() => send("ACCEPT")}
           >
-            ✓ Tiếp nhận &amp; tạo việc
+            <Check size={14} strokeWidth={2.5} /> Tiếp nhận &amp; tạo việc
           </button>
           <button
             className="btn-ghost btn-sm"

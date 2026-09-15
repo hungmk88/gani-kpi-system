@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Flame } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { taskScopeWhere } from "@/lib/rbac";
@@ -187,9 +188,11 @@ export default async function CalendarPage({
                           }\n${TASK_STATUS_LABEL[t.status]} · ${
                             TASK_PRIORITY_LABEL[t.priority]
                           }`}
-                          className={`block truncate rounded border px-1.5 py-1 text-[11px] leading-tight ${tone} hover:brightness-95`}
+                          className={`flex items-center gap-0.5 truncate rounded border px-1.5 py-1 text-[11px] leading-tight ${tone} hover:brightness-95`}
                         >
-                          {t.priority === "CRITICAL" && "🔴 "}
+                          {t.priority === "CRITICAL" && (
+                            <Flame size={10} strokeWidth={2.5} className="shrink-0" />
+                          )}
                           {t.title}
                         </Link>
                       );

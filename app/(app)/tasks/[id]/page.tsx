@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Lock, Paperclip } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
@@ -50,7 +51,9 @@ export default async function TaskDetailPage({
   if (!allowed) {
     return (
       <div className="card p-8 text-center">
-        <div className="mb-2 text-3xl">🔒</div>
+        <div className="mb-2 flex justify-center text-ink-400">
+          <Lock size={30} strokeWidth={1.75} />
+        </div>
         <div className="font-medium text-ink-800">
           Bạn không có quyền xem công việc này
         </div>
@@ -203,9 +206,9 @@ export default async function TaskDetailPage({
                       href={c.fileUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="mt-1.5 inline-block text-xs text-brand-600 hover:underline"
+                      className="mt-1.5 inline-flex items-center gap-1 text-xs text-brand-600 hover:underline"
                     >
-                      📎 Xem tệp đính kèm
+                      <Paperclip size={12} strokeWidth={2} /> Xem tệp đính kèm
                     </a>
                   )}
                 </div>

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { CircleCheck, Smartphone } from "lucide-react";
 
 type LinkInfo = {
   code: string;
@@ -55,8 +56,8 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
     return (
       <div className="card mb-4 flex flex-wrap items-center justify-between gap-3 border-emerald-200 bg-emerald-50/50 p-4">
         <div>
-          <div className="font-medium text-emerald-900">
-            ✅ Đã nối Telegram
+          <div className="flex items-center gap-1.5 font-medium text-emerald-900">
+            <CircleCheck size={15} strokeWidth={2} /> Đã nối Telegram
           </div>
           <div className="mt-0.5 text-xs text-emerald-700">
             Thông báo sẽ về cả trong ứng dụng lẫn Telegram. Trong Telegram gõ
@@ -74,7 +75,9 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
     return (
       <div className="card mb-4 flex flex-wrap items-center justify-between gap-3 p-4">
         <div>
-          <div className="font-medium text-ink-900">📱 Nhận thông báo qua Telegram</div>
+          <div className="flex items-center gap-1.5 font-medium text-ink-900">
+            <Smartphone size={15} strokeWidth={2} /> Nhận thông báo qua Telegram
+          </div>
           <div className="mt-0.5 text-xs text-ink-500">
             Nối một lần, sau đó việc giao cho bạn và hạn KPI sẽ báo thẳng vào
             điện thoại.
@@ -95,7 +98,9 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
   return (
     <div className="card mb-4 p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="font-medium text-ink-900">📱 Nối Telegram — 3 bước</div>
+        <div className="flex items-center gap-1.5 font-medium text-ink-900">
+          <Smartphone size={15} strokeWidth={2} /> Nối Telegram — 3 bước
+        </div>
         <button className="btn-ghost btn-sm" onClick={() => setInfo(null)}>
           Đóng
         </button>

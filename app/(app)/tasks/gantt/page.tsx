@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { GanttChartSquare } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { taskScopeWhere } from "@/lib/rbac";
@@ -77,7 +78,7 @@ export default async function GanttPage({
 
       {tasks.length === 0 ? (
         <EmptyState
-          icon="📊"
+          icon={<GanttChartSquare size={32} strokeWidth={1.75} />}
           title="Không có công việc nào để vẽ"
           hint="Biểu đồ Gantt cần ít nhất một công việc trong tầm quản lý của bạn."
         />

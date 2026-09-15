@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { CircleCheck } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { classifyScore, round2 } from "@/lib/kpi";
@@ -237,7 +238,9 @@ export default async function CeoDashboard() {
 
         {exceptionCount === 0 ? (
           <div className="card border-emerald-200 bg-emerald-50/50 p-6 text-center">
-            <div className="mb-1 text-2xl">✅</div>
+            <div className="mb-1 flex justify-center text-emerald-600">
+              <CircleCheck size={28} strokeWidth={1.75} />
+            </div>
             <div className="font-medium text-emerald-800">
               Không có mắt xích nào báo động
             </div>

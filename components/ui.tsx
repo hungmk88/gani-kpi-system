@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Inbox, Lock, Flame } from "lucide-react";
 import {
   TASK_PRIORITY_LABEL,
   TASK_STATUS_LABEL,
@@ -14,7 +15,7 @@ export function PageHeader({
   subtitle,
   actions,
 }: {
-  title: string;
+  title: React.ReactNode;
   subtitle?: string;
   actions?: React.ReactNode;
 }) {
@@ -32,15 +33,15 @@ export function PageHeader({
 export function EmptyState({
   title,
   hint,
-  icon = "📭",
+  icon = <Inbox size={32} strokeWidth={1.75} />,
 }: {
   title: string;
   hint?: string;
-  icon?: string;
+  icon?: React.ReactNode;
 }) {
   return (
     <div className="card flex flex-col items-center justify-center px-6 py-14 text-center">
-      <div className="mb-3 text-3xl">{icon}</div>
+      <div className="mb-3 text-ink-400">{icon}</div>
       <div className="font-medium text-ink-700">{title}</div>
       {hint && <div className="mt-1 max-w-md text-sm text-ink-500">{hint}</div>}
     </div>
@@ -325,7 +326,9 @@ const PRIORITY_TONE: Record<string, keyof typeof TONE> = {
 export function PriorityBadge({ priority }: { priority: string }) {
   return (
     <Badge tone={PRIORITY_TONE[priority] ?? "slate"}>
-      {priority === "CRITICAL" && "🔴 "}
+      {priority === "CRITICAL" && (
+        <Flame size={11} strokeWidth={2.5} className="mr-1 inline -mt-0.5" />
+      )}
       {TASK_PRIORITY_LABEL[priority] ?? priority}
     </Badge>
   );
@@ -358,7 +361,9 @@ const KPI_STATUS_TONE: Record<string, keyof typeof TONE> = {
 export function KpiStatusBadge({ status }: { status: string }) {
   return (
     <Badge tone={KPI_STATUS_TONE[status] ?? "slate"}>
-      {status === "FINALIZED" && "🔒 "}
+      {status === "FINALIZED" && (
+        <Lock size={11} strokeWidth={2.5} className="mr-1 inline -mt-0.5" />
+      )}
       {KPI_STATUS_LABEL[status] ?? status}
     </Badge>
   );

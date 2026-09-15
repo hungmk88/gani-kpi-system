@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { CircleCheck } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Badge, EmptyState, PageHeader, PriorityBadge, formatDateTime } from "@/components/ui";
@@ -64,7 +65,7 @@ export default async function RequestsPage() {
         </h2>
         {inbox.length === 0 ? (
           <EmptyState
-            icon="✅"
+            icon={<CircleCheck size={32} strokeWidth={1.75} />}
             title="Không có yêu cầu nào chờ bạn"
             hint="Khi phòng ban khác cần phòng bạn làm việc gì, yêu cầu sẽ hiện ở đây."
           />

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Package } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { withProductionRole } from "@/lib/services/production-service";
@@ -56,7 +57,7 @@ export default async function NewShiftPage() {
 
       {skus.length === 0 ? (
         <EmptyState
-          icon="📦"
+          icon={<Package size={32} strokeWidth={1.75} />}
           title="Chưa có mã sản phẩm nào"
           hint="Phải khai danh mục SKU kèm chuẩn sản lượng và định mức hao hụt trước, vì đó là thước đo để chấm điểm ca."
         />

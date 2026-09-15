@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Check } from "lucide-react";
 
 /**
  * Hai thao tác trên một cảnh báo khai báo bất thường.
@@ -102,13 +103,13 @@ export default function AnomalyActions({
             />
             <div className="flex flex-wrap gap-2">
               <button
-                className="btn-success btn-sm"
+                className="btn-success btn-sm inline-flex items-center gap-1.5"
                 disabled={busy || note.trim().length < 10}
                 onClick={() =>
                   call({ action: "REVIEW", accepted: true, reviewNote: note })
                 }
               >
-                ✅ Chấp nhận giải thích
+                <Check size={14} strokeWidth={2.5} /> Chấp nhận giải thích
               </button>
               <button
                 className="btn-ghost btn-sm"

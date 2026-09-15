@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { Check } from "lucide-react";
 import { getSession } from "@/lib/auth";
 import LoginForm from "./login-form";
 
@@ -31,26 +32,34 @@ export default async function LoginPage() {
           </p>
           <ul className="space-y-3 text-sm text-brand-100/90">
             <li className="flex gap-3">
-              <span className="mt-0.5">✓</span>
+              <span className="mt-0.5 text-brand-200">
+                <Check size={16} strokeWidth={2.5} />
+              </span>
               <span>
                 Chấm KPI theo thang 100, cho vượt chỉ tiêu, chặn trần ở 150%
               </span>
             </li>
             <li className="flex gap-3">
-              <span className="mt-0.5">✓</span>
+              <span className="mt-0.5 text-brand-200">
+                <Check size={16} strokeWidth={2.5} />
+              </span>
               <span>
                 Luồng duyệt 3 cấp khoá tự động theo lịch ngày 2 – 4 – 5
               </span>
             </li>
             <li className="flex gap-3">
-              <span className="mt-0.5">✓</span>
+              <span className="mt-0.5 text-brand-200">
+                <Check size={16} strokeWidth={2.5} />
+              </span>
               <span>
                 Cấm giao việc vượt cấp sang phòng ban khác, có đường đi chính
                 thức thay thế
               </span>
             </li>
             <li className="flex gap-3">
-              <span className="mt-0.5">✓</span>
+              <span className="mt-0.5 text-brand-200">
+                <Check size={16} strokeWidth={2.5} />
+              </span>
               <span>
                 Mọi lần sửa điểm KPI đã chốt đều để lại dấu vết không xoá được
               </span>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Package } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { withProductionRole } from "@/lib/services/production-service";
@@ -47,8 +48,8 @@ export default async function SkusPage() {
         title="Danh mục sản phẩm & chuẩn"
         subtitle="Chuẩn của mỗi mã phải đặt TRƯỚC khi chạy ca. Đây là thước đo để chấm điểm — Ban Giám đốc đặt chỉ tiêu khác chuẩn lúc khoá số thì bắt buộc ghi lý do."
         actions={
-          <Link href="/production/raw-materials" className="btn-ghost btn-sm">
-            📦 Kho NVL
+          <Link href="/production/raw-materials" className="btn-ghost btn-sm inline-flex items-center gap-1.5">
+            <Package size={14} strokeWidth={2} /> Kho NVL
           </Link>
         }
       />
