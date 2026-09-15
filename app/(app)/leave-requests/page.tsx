@@ -2,7 +2,7 @@ import { Download, CircleCheck } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Badge, EmptyState, PageHeader, formatDateTime } from "@/components/ui";
-import { canExportLeaveReport } from "@/lib/services/leave-service";
+import { canExportLeaveReport, getAnnualLeaveQuota } from "@/lib/services/leave-service";
 import LeaveRequestForm from "./leave-request-form";
 import LeaveRequestActions from "./leave-request-actions";
 
@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function LeaveRequestsPage() {
   const user = (await requireSession())!;
   const canExport = await canExportLeaveReport(user);
+  const quota = await getAnnualLeaveQuota(user.id, new Date().getFullYear());
 
   const where =
     user.role === "CEO" || user.role === "ADMIN"
@@ -132,6 +133,7 @@ export default async function LeaveRequestsPage() {
                   <th>Thời gian nghỉ</th>
                   <th>Lý do</th>
                   <th>Trạng thái</th>
+                  <th>Ngày phép còn lại</th>
                   <th>Thao tác</th>
                 </tr>
               </thead>
@@ -156,6 +158,9 @@ export default async function LeaveRequestsPage() {
                     </td>
                     <td>
                       <StatusBadge status={r.status} />
+                    </td>
+                    <td className="text-ink-600">
+                      {quota.remaining}/{quota.total} ngày
                     </td>
                     <td>
                       {r.status === "PENDING" && (

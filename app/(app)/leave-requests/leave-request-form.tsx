@@ -13,9 +13,7 @@ type Quota = {
 
 function toLocalInputValue(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours()
-  )}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 export default function LeaveRequestForm() {
@@ -48,8 +46,8 @@ export default function LeaveRequestForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          startDate: new Date(startDate).toISOString(),
-          endDate: new Date(endDate).toISOString(),
+          startDate: new Date(startDate + "T00:00:00").toISOString(),
+          endDate: new Date(endDate + "T00:00:00").toISOString(),
           reason,
         }),
       });
@@ -93,10 +91,10 @@ export default function LeaveRequestForm() {
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-ink-600">
-            Từ ngày giờ
+            Từ ngày
           </span>
           <input
-            type="datetime-local"
+            type="date"
             className="input"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
@@ -104,10 +102,10 @@ export default function LeaveRequestForm() {
         </label>
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-ink-600">
-            Đến ngày giờ
+            Đến ngày
           </span>
           <input
-            type="datetime-local"
+            type="date"
             className="input"
             value={endDate}
             onChange={(e) => setEndDate(e.target.value)}
