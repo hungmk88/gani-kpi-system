@@ -13,13 +13,13 @@ export default async function LoginPage() {
   return (
     <main className="grid min-h-screen lg:grid-cols-2">
       {/* Cột trái: giới thiệu hệ thống */}
-      <section className="hidden flex-col justify-between bg-gradient-to-br from-brand-800 via-brand-700 to-brand-900 p-12 text-white lg:flex">
+      <section className="hidden flex-col justify-between border-r border-ink-200 bg-white p-12 text-brand-800 lg:flex">
         <div>
           <div className="mb-3 flex items-center gap-3">
             <Image src="/logo-mark.png" alt="" width={44} height={44} />
-            <div className="text-2xl font-bold tracking-tight">GANI FOODY</div>
+            <div className="text-2xl font-bold tracking-tight text-brand-700">GANI FOODY</div>
           </div>
-          <div className="text-sm text-brand-200">
+          <div className="text-sm text-brand-500">
             Hệ thống Quản lý Công việc &amp; KPI
           </div>
           <Image
@@ -32,16 +32,16 @@ export default async function LoginPage() {
         </div>
 
         <div className="max-w-md space-y-6">
-          <h1 className="text-3xl leading-snug font-bold">
+          <h1 className="text-3xl leading-snug font-bold text-brand-800">
             Ban Giám đốc chỉ cần nhìn vào chỗ đang có vấn đề.
           </h1>
-          <p className="text-brand-100/90">
+          <p className="text-brand-600">
             Hệ thống vận hành theo nguyên tắc quản trị ngoại lệ: việc chạy đúng
             thì im lặng, việc trục trặc thì nổi lên đầu bảng.
           </p>
-          <ul className="space-y-3 text-sm text-brand-100/90">
+          <ul className="space-y-3 text-sm text-brand-700">
             <li className="flex gap-3">
-              <span className="mt-0.5 text-brand-200">
+              <span className="mt-0.5 text-brand-600">
                 <Check size={16} strokeWidth={2.5} />
               </span>
               <span>
@@ -49,7 +49,7 @@ export default async function LoginPage() {
               </span>
             </li>
             <li className="flex gap-3">
-              <span className="mt-0.5 text-brand-200">
+              <span className="mt-0.5 text-brand-600">
                 <Check size={16} strokeWidth={2.5} />
               </span>
               <span>
@@ -57,7 +57,7 @@ export default async function LoginPage() {
               </span>
             </li>
             <li className="flex gap-3">
-              <span className="mt-0.5 text-brand-200">
+              <span className="mt-0.5 text-brand-600">
                 <Check size={16} strokeWidth={2.5} />
               </span>
               <span>
@@ -66,7 +66,7 @@ export default async function LoginPage() {
               </span>
             </li>
             <li className="flex gap-3">
-              <span className="mt-0.5 text-brand-200">
+              <span className="mt-0.5 text-brand-600">
                 <Check size={16} strokeWidth={2.5} />
               </span>
               <span>
@@ -76,7 +76,7 @@ export default async function LoginPage() {
           </ul>
         </div>
 
-        <div className="text-xs text-brand-300">
+        <div className="text-xs text-brand-400">
           Phase 1 — MVP Core · Bản triển khai nội bộ
         </div>
       </section>
