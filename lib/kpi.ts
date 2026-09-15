@@ -129,14 +129,19 @@ export function detectMismatch(
 
 /**
  * Lịch chốt 2-4-5: KPI của tháng M được chốt vào ngày 2/4/5 của tháng M+1.
- * Trả về mốc 23:59:59 theo giờ máy chủ.
+ * Trả về mốc 23:59:59 theo giờ Việt Nam (UTC+7).
  */
 export function computeDeadlines(month: number, year: number) {
   const nextMonth = month === 12 ? 1 : month + 1;
   const nextYear = month === 12 ? year + 1 : year;
 
-  const at = (day: number) =>
-    new Date(nextYear, nextMonth - 1, day, 23, 59, 59, 0);
+  const at = (day: number) => {
+    const utcDate = new Date(nextYear, nextMonth - 1, day, 23, 59, 59, 0);
+    const vietnamOffsetMinutes = 7 * 60;
+    const localOffsetMinutes = utcDate.getTimezoneOffset();
+    const offsetDiff = (vietnamOffsetMinutes + localOffsetMinutes) * 60 * 1000;
+    return new Date(utcDate.getTime() + offsetDiff);
+  };
 
   return {
     selfReviewDeadline: at(KPI_DEADLINE_DAYS.SELF_REVIEW),
