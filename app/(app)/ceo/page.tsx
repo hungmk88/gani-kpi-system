@@ -1,3 +1,4 @@
+import { formatVnDateTime, vnDate, vnParts } from "@/lib/vn-time";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { CircleCheck } from "lucide-react";
@@ -67,7 +68,7 @@ export default async function CeoDashboard() {
     prisma.task.count({
       where: {
         status: "DONE",
-        completedAt: { gte: new Date(now.getFullYear(), now.getMonth(), 1) },
+        completedAt: { gte: vnDate(vnParts(now).year, vnParts(now).month, 1) },
       },
     }),
     period
@@ -119,7 +120,7 @@ export default async function CeoDashboard() {
             departmentId: d.id,
             status: "DONE",
             completedAt: {
-              gte: new Date(now.getFullYear(), now.getMonth(), 1),
+              gte: vnDate(vnParts(now).year, vnParts(now).month, 1),
             },
           },
         }),
@@ -297,7 +298,7 @@ export default async function CeoDashboard() {
                         {t.department.name} ·{" "}
                         {t.assignee?.fullName ?? "CHƯA GIAO"} · tắc từ{" "}
                         {t.blockedSince
-                          ? new Date(t.blockedSince).toLocaleString("vi-VN")
+                          ? formatVnDateTime(t.blockedSince)
                           : "—"}
                       </div>
                     </div>

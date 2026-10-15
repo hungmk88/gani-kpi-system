@@ -1,6 +1,3 @@
 {
-  "regions": ["sin1"],
-  "env": {
-    "TZ": "Asia/Ho_Chi_Minh"
-  }
+  "regions": ["sin1"]
 }

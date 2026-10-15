@@ -1,3 +1,4 @@
+import { formatVnDate, formatVnDateTime } from "@/lib/vn-time";
 import Link from "next/link";
 import { Inbox, Lock, Flame } from "lucide-react";
 import {
@@ -399,25 +400,12 @@ export function ScoreBadge({ score }: { score: number }) {
 
 export function formatDate(d: Date | string | null | undefined) {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("vi-VN", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  return formatVnDate(d);
 }
 
+/** Ngày giờ theo giờ Việt Nam, đúng ở cả server (UTC) lẫn trình duyệt. */
 export function formatDateTime(d: Date | string | null | undefined) {
-  if (!d) return "—";
-  const date = new Date(d);
-  // Cộng 7 tiếng để chuyển từ UTC → Vietnam time
-  const vietnamDate = new Date(date.getTime() + 7 * 60 * 60 * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const day = pad(vietnamDate.getUTCDate());
-  const month = pad(vietnamDate.getUTCMonth() + 1);
-  const year = vietnamDate.getUTCFullYear();
-  const hour = pad(vietnamDate.getUTCHours());
-  const minute = pad(vietnamDate.getUTCMinutes());
-  return `${day}/${month}/${year} · ${hour}:${minute}`;
+  return formatVnDateTime(d);
 }
 
 export function DueDate({ date, done }: { date: Date | string; done?: boolean }) {

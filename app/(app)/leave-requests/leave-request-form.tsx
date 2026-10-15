@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { TriangleAlert, CalendarCheck } from "lucide-react";
+import { addDays, parseVnDate, vnDateKey } from "@/lib/vn-time";
 
 type Quota = {
   total: number;
@@ -11,16 +12,23 @@ type Quota = {
   half: { label: string; cap: number; used: number; remaining: number };
 };
 
-function toLocalInputValue(d: Date) {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+/**
+ * Thời gian báo trước tính GIỐNG server: từ bây giờ tới 00:00 giờ VN của ngày
+ * bắt đầu nghỉ (không theo múi giờ của trình duyệt).
+ */
+function noticeMsUntil(dateKey: string): number | null {
+  try {
+    return parseVnDate(dateKey).getTime() - Date.now();
+  } catch {
+    return null;
+  }
 }
 
 export default function LeaveRequestForm() {
   const router = useRouter();
-  const tomorrow = new Date(Date.now() + 24 * 3600_000);
-  const [startDate, setStartDate] = useState(toLocalInputValue(tomorrow));
-  const [endDate, setEndDate] = useState(toLocalInputValue(tomorrow));
+  const tomorrow = vnDateKey(addDays(new Date(), 1));
+  const [startDate, setStartDate] = useState(tomorrow);
+  const [endDate, setEndDate] = useState(tomorrow);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,8 +42,8 @@ export default function LeaveRequestForm() {
       .catch(() => {});
   }, []);
 
-  const noticeMs = new Date(startDate).getTime() - Date.now();
-  const isUrgent = noticeMs < 24 * 3600_000;
+  const noticeMs = noticeMsUntil(startDate);
+  const isUrgent = noticeMs !== null && noticeMs < 24 * 3600_000;
 
   async function submit() {
     setBusy(true);
@@ -46,8 +54,9 @@ export default function LeaveRequestForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          startDate: new Date(startDate + "T00:00:00").toISOString(),
-          endDate: new Date(endDate + "T00:00:00").toISOString(),
+          // Gửi nguyên "YYYY-MM-DD" — server quy về 00:00 giờ VN.
+          startDate,
+          endDate,
           reason,
         }),
       });

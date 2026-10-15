@@ -5,6 +5,7 @@ import { writeAudit } from "../audit";
 import { parseTaskText, type ParsedTask } from "../ai/task-parser";
 import { adviseKpi, type KpiAdvisory, type KpiContext } from "../ai/kpi-advisor";
 import { createTask } from "./task-service";
+import { vnDayRange } from "../vn-time";
 import type { SessionUser } from "../auth";
 
 type Meta = { ip?: string | null; userAgent?: string | null };
@@ -17,6 +18,50 @@ type Meta = { ip?: string | null; userAgent?: string | null };
  * Muốn thành dữ liệu thật thì phải có người bấm duyệt, và lúc đó vẫn phải đi qua
  * đúng các chốt chặn nghiệp vụ như khi làm tay.
  */
+
+/* ---------------------------------------------------- HẠN MỨC GỌI AI */
+
+/** Số lượt gọi AI tối đa mỗi người mỗi ngày (theo lịch VN). */
+export const AI_DAILY_QUOTA: Record<string, number> = {
+  EMPLOYEE: 50,
+  MANAGER: 50,
+  CEO: 200,
+  ADMIN: 50,
+};
+
+/**
+ * Chặn gọi AI quá hạn mức trong ngày. Mỗi lượt gọi AI đều để lại đúng một dòng
+ * ai_suggestions (requestedById = người gọi) nên đếm thẳng trên bảng đó —
+ * có index (requestedById, createdAt), không cần bảng đếm riêng.
+ */
+export async function assertAiQuota(actor: SessionUser) {
+  const limit = AI_DAILY_QUOTA[actor.role] ?? 50;
+  const used = await prisma.aiSuggestion.count({
+    where: { requestedById: actor.id, createdAt: vnDayRange() },
+  });
+  if (used >= limit) {
+    throw new BusinessError(
+      "AI_QUOTA_EXCEEDED",
+      `Bạn đã dùng hết ${limit} lượt trợ lý AI trong hôm nay. Vui lòng thử lại vào ngày mai.`,
+      429
+    );
+  }
+}
+
+/** Chỉ người yêu cầu đề xuất (hoặc Ban Giám đốc) mới được quyết định nó. */
+function assertSuggestionOwner(
+  actor: SessionUser,
+  s: { requestedById: string },
+  verb: string
+) {
+  if (s.requestedById !== actor.id && actor.role !== "CEO") {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      `Chỉ người yêu cầu đề xuất (hoặc Ban Giám đốc) mới ${verb} được nó.`,
+      403
+    );
+  }
+}
 
 /* ------------------------------------------------ ĐỌC CÂU LỆNH THÀNH VIỆC */
 
@@ -32,6 +77,7 @@ export async function suggestTaskFromText(
       403
     );
   }
+  await assertAiQuota(actor);
 
   // Chỉ đưa cho máy danh sách nhân sự mà người này thực sự được giao việc.
   // Máy không được biết, và do đó không thể gợi ý, người của phòng ban khác.
@@ -123,36 +169,49 @@ export async function acceptTaskSuggestion(
       409
     );
   }
-  if (s.requestedById !== actor.id && actor.role !== "CEO") {
-    throw new BusinessError(
-      ERR.FORBIDDEN,
-      "Chỉ người yêu cầu đề xuất mới duyệt được nó.",
-      403
-    );
-  }
+  assertSuggestionOwner(actor, s, "duyệt");
 
   const parsed: ParsedTask = JSON.parse(s.payload);
 
+  // Giành quyền xử lý trước khi tạo việc — bấm duyệt 2 lần (hoặc 2 tab) không
+  // đẻ ra 2 công việc.
+  const claimed = await prisma.aiSuggestion.updateMany({
+    where: { id: suggestionId, status: "PENDING" },
+    data: { status: "ACCEPTED", decidedById: actor.id, decidedAt: new Date() },
+  });
+  if (claimed.count === 0) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      "Đề xuất này đã được xử lý rồi.",
+      409
+    );
+  }
+
   // Đi qua đúng cửa tạo việc bình thường, kể cả chốt chặn giao việc vượt cấp
-  const task = await createTask(
-    actor,
-    {
-      ...overrides,
-      isAiGenerated: true,
-      aiConfidence: s.confidencePercent,
-    },
-    meta
-  );
+  let task: Awaited<ReturnType<typeof createTask>>;
+  try {
+    task = await createTask(
+      actor,
+      {
+        ...overrides,
+        isAiGenerated: true,
+        aiConfidence: s.confidencePercent,
+      },
+      meta
+    );
+  } catch (e) {
+    // Tạo việc bị chặn (sai quyền, người nhận bị khoá...) — trả đề xuất về
+    // trạng thái chờ để người dùng sửa lại rồi duyệt tiếp.
+    await prisma.aiSuggestion.update({
+      where: { id: suggestionId },
+      data: { status: "PENDING", decidedById: null, decidedAt: null },
+    });
+    throw e;
+  }
 
   await prisma.aiSuggestion.update({
     where: { id: suggestionId },
-    data: {
-      status: "ACCEPTED",
-      decidedById: actor.id,
-      decidedAt: new Date(),
-      resultEntityId: task.id,
-      entityId: task.id,
-    },
+    data: { resultEntityId: task.id, entityId: task.id },
   });
 
   // Ghi lại phần con người đã sửa khác máy — đây là dữ liệu để sau này biết
@@ -214,15 +273,23 @@ export async function rejectSuggestion(
       409
     );
   }
+  assertSuggestionOwner(actor, s, "từ chối");
 
-  await prisma.aiSuggestion.update({
-    where: { id: suggestionId },
+  const claimed = await prisma.aiSuggestion.updateMany({
+    where: { id: suggestionId, status: "PENDING" },
     data: {
       status: "REJECTED",
       decidedById: actor.id,
       decidedAt: new Date(),
     },
   });
+  if (claimed.count === 0) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      "Đề xuất này đã được xử lý rồi.",
+      409
+    );
+  }
 
   await writeAudit({
     actor,
@@ -255,7 +322,14 @@ export async function suggestKpiAdvisory(
     where: { id: kpiResultId },
     include: {
       kpiDefinition: true,
-      employee: { include: { department: true } },
+      employee: {
+        select: {
+          fullName: true,
+          jobTitle: true,
+          departmentId: true,
+          department: { select: { name: true } },
+        },
+      },
       period: true,
     },
   });
@@ -279,6 +353,7 @@ export async function suggestKpiAdvisory(
       403
     );
   }
+  await assertAiQuota(actor);
 
   // Lịch sử cùng nhân sự, cùng chỉ tiêu, các kỳ trước
   const past = await prisma.kpiResult.findMany({

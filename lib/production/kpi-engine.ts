@@ -24,6 +24,17 @@ import {
  * Hàm trong file này THUẦN TÍNH TOÁN — không đọc, không ghi database. Nhờ vậy
  * bộ kiểm thử chạy thẳng vào công thức được, và ai đọc cũng kiểm tra lại được
  * bằng máy tính bỏ túi.
+ *
+ * THIẾU SỐ LIỆU KHÔNG BAO GIỜ ĐƯỢC ĐIỂM TUYỆT ĐỐI. Trước đây mẫu số bằng 0 bị
+ * coi như "không lỗi" nên cho 100 (công nhân 0 giờ công, ca sản lượng thô 0,
+ * lỗi mà không quy được khối lượng... đều được trọn điểm). Quy tắc hiện tại:
+ *   - Có lỗi/vi phạm mà mẫu số bằng 0 → 0 điểm (lỗi trên "không gì cả" là tệ nhất).
+ *   - Không có cả tử lẫn mẫu → thành phần "không có dữ liệu" (measured = false,
+ *     weight = 0): KHÔNG tính vào tổng, trọng số các thành phần còn lại được
+ *     chia lại cho đủ 100 (renormalize). Trọng số gốc giữ ở nominalWeight.
+ *   - Người không có giờ công (hoursWorked ≤ 0) → Tầng 1 = 0: không làm thì
+ *     không có gì để chấm, càng không thể trọn điểm.
+ *   - Sản lượng/định mức NVL không có chỉ tiêu → 0 như cũ.
  */
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -128,74 +139,150 @@ export function computeQualityLoss(
 
 /* ============================================================ TẦNG 2 */
 
+export type ScorePart = {
+  key: string;
+  label: string;
+  /** Trọng số thực dùng khi cộng tổng — 0 nếu thành phần không có dữ liệu. */
+  weight: number;
+  /** Trọng số gốc trong constants.ts. */
+  nominalWeight: number;
+  /** false = không có dữ liệu, không tính vào tổng (xem chú thích đầu file). */
+  measured: boolean;
+  rawValue: number | null;
+  componentScore: number;
+  note: string;
+};
+
 export type Tier2Breakdown = {
   score: number;
-  parts: {
-    key: string;
-    label: string;
-    weight: number;
-    rawValue: number | null;
-    componentScore: number;
-    note: string;
-  }[];
+  parts: ScorePart[];
 };
+
+/** Thành phần có dữ liệu. */
+function part(
+  key: string,
+  label: string,
+  weight: number,
+  rawValue: number | null,
+  componentScore: number,
+  note: string
+): ScorePart {
+  return {
+    key,
+    label,
+    weight,
+    nominalWeight: weight,
+    measured: true,
+    rawValue,
+    componentScore: round2(componentScore),
+    note,
+  };
+}
+
+/** Thành phần không có dữ liệu — bị loại khỏi tổng. */
+function unmeasured(key: string, label: string, weight: number, note: string): ScorePart {
+  return {
+    key,
+    label,
+    weight: 0,
+    nominalWeight: weight,
+    measured: false,
+    rawValue: null,
+    componentScore: 0,
+    note: `${note} — không tính, trọng số chia lại cho các phần còn lại`,
+  };
+}
+
+/**
+ * Tổng có trọng số, chia lại theo các thành phần CÓ dữ liệu. Không thành phần
+ * nào có dữ liệu → 0 (không bao giờ mặc định 100).
+ */
+function weightedTotal(parts: ScorePart[]): number {
+  const measured = parts.filter((p) => p.measured && p.weight > 0);
+  const wSum = measured.reduce((s, p) => s + p.weight, 0);
+  if (wSum <= 0) return 0;
+  const total = measured.reduce((s, p) => s + p.componentScore * p.weight, 0) / wSum;
+  return round2(clamp(total));
+}
 
 /**
  * TẦNG 2 — kết quả chung của cả ca (trọng số 40%).
  * Mọi người trong ca nhận cùng một điểm này.
  */
 export function computeTier2(m: ShiftMetrics, f: ShiftFacts): Tier2Breakdown {
-  const parts: Tier2Breakdown["parts"] = [];
+  const parts: ScorePart[] = [];
 
-  /* --- Sản lượng --- */
+  /* --- Sản lượng — không có chỉ tiêu thì 0 (không chấm được, không cho không) --- */
   const outputScore =
     m.outputAchievementPercent === null
       ? 0
       : clamp(m.outputAchievementPercent);
-  parts.push({
-    key: "OUTPUT",
-    label: "Đạt chỉ tiêu sản lượng",
-    weight: TIER2_COMPONENTS.OUTPUT,
-    rawValue: m.outputAchievementPercent,
-    componentScore: round2(outputScore),
-    note:
+  parts.push(
+    part(
+      "OUTPUT",
+      "Đạt chỉ tiêu sản lượng",
+      TIER2_COMPONENTS.OUTPUT,
+      m.outputAchievementPercent,
+      outputScore,
       m.outputAchievementPercent === null
-        ? "Chưa có chỉ tiêu sản lượng nên không chấm được"
-        : `Đạt ${m.outputAchievementPercent}% chỉ tiêu (${f.qcPassedKg} / ${f.targetOutputKg} kg)`,
-  });
+        ? "Chưa có chỉ tiêu sản lượng nên không chấm được — 0 điểm"
+        : `Đạt ${m.outputAchievementPercent}% chỉ tiêu (${f.qcPassedKg} / ${f.targetOutputKg} kg)`
+    )
+  );
 
-  /* --- Định mức nguyên liệu --- */
+  /* --- Định mức nguyên liệu — không có số NVL cấp vào thì 0 --- */
   const materialScore =
     m.materialEfficiencyPercent === null ? 0 : clamp(m.materialEfficiencyPercent);
-  parts.push({
-    key: "MATERIAL",
-    label: "Giữ định mức nguyên liệu",
-    weight: TIER2_COMPONENTS.MATERIAL,
-    rawValue: m.materialEfficiencyPercent,
-    componentScore: round2(materialScore),
-    note:
+  parts.push(
+    part(
+      "MATERIAL",
+      "Giữ định mức nguyên liệu",
+      TIER2_COMPONENTS.MATERIAL,
+      m.materialEfficiencyPercent,
+      materialScore,
       m.materialEfficiencyPercent === null
-        ? "Chưa có số nguyên liệu cấp vào"
+        ? "Chưa có số nguyên liệu cấp vào — 0 điểm"
         : m.materialOverrunKg > 0
           ? `Dùng vượt định mức ${m.materialOverrunKg} kg`
-          : `Tiết kiệm được ${Math.abs(m.materialOverrunKg)} kg so với định mức`,
-  });
-
-  /* --- Chất lượng ca --- */
-  const defect = m.defectRatePercent ?? 0;
-  const qualityScore = clamp(
-    100 - (defect / SHIFT_QUALITY_ZERO_AT_PERCENT) * 100,
-    0,
-    100
+          : `Tiết kiệm được ${Math.abs(m.materialOverrunKg)} kg so với định mức`
+    )
   );
-  parts.push({
-    key: "QUALITY",
-    label: "Phế phẩm và hàng làm lại",
-    weight: TIER2_COMPONENTS.QUALITY,
-    rawValue: m.defectRatePercent,
-    componentScore: round2(qualityScore),
-    note: `Phế ${f.scrapKg} kg, làm lại ${f.reworkKg} kg — quy ra ${defect}% sản lượng thô (mất hết điểm ở mức ${SHIFT_QUALITY_ZERO_AT_PERCENT}%)`,
-  });
+
+  /* --- Chất lượng ca ---
+     Sản lượng thô = 0: có phế/làm lại → 0 điểm; không có gì → không có dữ liệu.
+     (Trước đây rơi về defect = 0 → 100 điểm.) */
+  const weightedDefectKg = f.scrapKg + f.reworkKg * REWORK_LOSS_FACTOR;
+  if (m.defectRatePercent === null) {
+    parts.push(
+      weightedDefectKg > 0
+        ? part(
+            "QUALITY",
+            "Phế phẩm và hàng làm lại",
+            TIER2_COMPONENTS.QUALITY,
+            null,
+            0,
+            `Phế ${f.scrapKg} kg, làm lại ${f.reworkKg} kg nhưng sản lượng thô khai 0 kg — 0 điểm`
+          )
+        : unmeasured(
+            "QUALITY",
+            "Phế phẩm và hàng làm lại",
+            TIER2_COMPONENTS.QUALITY,
+            "Sản lượng thô 0 kg, không tính được tỷ lệ lỗi"
+          )
+    );
+  } else {
+    const defect = m.defectRatePercent;
+    parts.push(
+      part(
+        "QUALITY",
+        "Phế phẩm và hàng làm lại",
+        TIER2_COMPONENTS.QUALITY,
+        defect,
+        clamp(100 - (defect / SHIFT_QUALITY_ZERO_AT_PERCENT) * 100, 0, 100),
+        `Phế ${f.scrapKg} kg, làm lại ${f.reworkKg} kg — quy ra ${defect}% sản lượng thô (mất hết điểm ở mức ${SHIFT_QUALITY_ZERO_AT_PERCENT}%)`
+      )
+    );
+  }
 
   /* --- An toàn thực phẩm --- */
   const safetyScore = clamp(
@@ -203,24 +290,20 @@ export function computeTier2(m: ShiftMetrics, f: ShiftFacts): Tier2Breakdown {
     0,
     100
   );
-  parts.push({
-    key: "SAFETY",
-    label: "An toàn thực phẩm (HACCP)",
-    weight: TIER2_COMPONENTS.SAFETY,
-    rawValue: f.haccpViolationCount,
-    componentScore: round2(safetyScore),
-    note:
+  parts.push(
+    part(
+      "SAFETY",
+      "An toàn thực phẩm (HACCP)",
+      TIER2_COMPONENTS.SAFETY,
+      f.haccpViolationCount,
+      safetyScore,
       f.haccpViolationCount === 0
         ? "Không có vi phạm"
-        : `${f.haccpViolationCount} vi phạm, mỗi vi phạm trừ ${SAFETY_PENALTY_PER_VIOLATION} điểm`,
-  });
-
-  const total = parts.reduce(
-    (s, p) => s + (p.componentScore * p.weight) / 100,
-    0
+        : `${f.haccpViolationCount} vi phạm, mỗi vi phạm trừ ${SAFETY_PENALTY_PER_VIOLATION} điểm`
+    )
   );
 
-  return { score: round2(clamp(total)), parts };
+  return { score: weightedTotal(parts), parts };
 }
 
 /* ============================================================ TẦNG 1 */
@@ -256,48 +339,58 @@ export function computeTier1(
   totalHours: number,
   components: Tier1ComponentWeights = TIER1_COMPONENTS
 ): Tier1Breakdown {
-  const parts: Tier1Breakdown["parts"] = [];
+  const parts: ScorePart[] = [];
+
+  // Không có giờ công → không tham gia ca thực sự → Tầng 1 = 0.
+  // (Trước đây: không quy được kg → chất lượng 100, thiếu giờ đăng ký →
+  // chuyên cần 100, nên người 0 giờ công vẫn có thể được Tầng 1 = 100.)
+  if (!(p.hoursWorked > 0)) {
+    parts.push(
+      part("STAGE_QUALITY", "Chất lượng công đoạn", components.STAGE_QUALITY, null, 0,
+        "Không có giờ công trong ca — 0 điểm"),
+      part("ATTENDANCE", "Chuyên cần", components.ATTENDANCE,
+        safePercent(0, p.scheduledHours), 0,
+        p.scheduledHours > 0
+          ? `Làm 0 / ${p.scheduledHours} giờ đăng ký`
+          : "Không có giờ công — 0 điểm"),
+      part("DISCIPLINE", "Kỷ luật & an toàn cá nhân", components.DISCIPLINE,
+        p.violationCount, 0, "Không có giờ công trong ca — 0 điểm")
+    );
+    return { score: 0, parts };
+  }
 
   const shareRatio = safeDiv(p.hoursWorked, totalHours) ?? 0;
   const attributedKg = round2(f.qcPassedKg * shareRatio);
 
-  /* --- Chất lượng công đoạn --- */
+  /* --- Chất lượng công đoạn ---
+     Không quy được khối lượng (ca không có thành phẩm đạt): có lỗi → 0,
+     không lỗi → không có dữ liệu. */
   const defectPercent = safePercent(p.personalDefectKg, attributedKg);
-  const stageScore =
-    defectPercent === null
-      ? 100 // chưa quy được khối lượng thì không phạt oan
-      : clamp(
-          100 - (defectPercent / STAGE_DEFECT_ZERO_AT_PERCENT) * 100,
-          0,
-          100
-        );
-  parts.push({
-    key: "STAGE_QUALITY",
-    label: "Chất lượng công đoạn",
-    weight: components.STAGE_QUALITY,
-    rawValue: defectPercent,
-    componentScore: round2(stageScore),
-    note:
-      defectPercent === null
-        ? "Chưa quy được khối lượng cho người này nên tạm cho đủ điểm"
-        : `Lỗi ${p.personalDefectKg} kg trên ${attributedKg} kg quy cho công đoạn = ${defectPercent}%`,
-  });
+  if (defectPercent === null) {
+    parts.push(
+      p.personalDefectKg > 0
+        ? part("STAGE_QUALITY", "Chất lượng công đoạn", components.STAGE_QUALITY, null, 0,
+            `Lỗi ${p.personalDefectKg} kg nhưng không có thành phẩm đạt nào quy cho công đoạn — 0 điểm`)
+        : unmeasured("STAGE_QUALITY", "Chất lượng công đoạn", components.STAGE_QUALITY,
+            "Không quy được khối lượng thành phẩm cho người này")
+    );
+  } else {
+    parts.push(
+      part("STAGE_QUALITY", "Chất lượng công đoạn", components.STAGE_QUALITY, defectPercent,
+        clamp(100 - (defectPercent / STAGE_DEFECT_ZERO_AT_PERCENT) * 100, 0, 100),
+        `Lỗi ${p.personalDefectKg} kg trên ${attributedKg} kg quy cho công đoạn = ${defectPercent}%`)
+    );
+  }
 
-  /* --- Chuyên cần --- */
+  /* --- Chuyên cần — chưa khai giờ đăng ký thì không có dữ liệu (không cho 100) --- */
   const attendancePercent = safePercent(p.hoursWorked, p.scheduledHours);
-  const attendanceScore =
-    attendancePercent === null ? 100 : clamp(attendancePercent, 0, 100);
-  parts.push({
-    key: "ATTENDANCE",
-    label: "Chuyên cần",
-    weight: components.ATTENDANCE,
-    rawValue: attendancePercent,
-    componentScore: round2(attendanceScore),
-    note:
-      attendancePercent === null
-        ? "Chưa khai giờ công đăng ký"
-        : `Làm ${p.hoursWorked} / ${p.scheduledHours} giờ đăng ký`,
-  });
+  parts.push(
+    attendancePercent === null
+      ? unmeasured("ATTENDANCE", "Chuyên cần", components.ATTENDANCE, "Chưa khai giờ công đăng ký")
+      : part("ATTENDANCE", "Chuyên cần", components.ATTENDANCE, attendancePercent,
+          clamp(attendancePercent, 0, 100),
+          `Làm ${p.hoursWorked} / ${p.scheduledHours} giờ đăng ký`)
+  );
 
   /* --- Kỷ luật và an toàn cá nhân --- */
   const disciplineScore = clamp(
@@ -305,24 +398,15 @@ export function computeTier1(
     0,
     100
   );
-  parts.push({
-    key: "DISCIPLINE",
-    label: "Kỷ luật & an toàn cá nhân",
-    weight: components.DISCIPLINE,
-    rawValue: p.violationCount,
-    componentScore: round2(disciplineScore),
-    note:
+  parts.push(
+    part("DISCIPLINE", "Kỷ luật & an toàn cá nhân", components.DISCIPLINE, p.violationCount,
+      disciplineScore,
       p.violationCount === 0
         ? "Không vi phạm"
-        : `${p.violationCount} vi phạm, mỗi vi phạm trừ ${DISCIPLINE_PENALTY_PER_VIOLATION} điểm`,
-  });
-
-  const total = parts.reduce(
-    (s, x) => s + (x.componentScore * x.weight) / 100,
-    0
+        : `${p.violationCount} vi phạm, mỗi vi phạm trừ ${DISCIPLINE_PENALTY_PER_VIOLATION} điểm`)
   );
 
-  return { score: round2(clamp(total)), parts };
+  return { score: weightedTotal(parts), parts };
 }
 
 /* ==================================================== ĐIỂM CUỐI & THƯỞNG */
@@ -392,7 +476,17 @@ export function computeFinalScore(
   };
 }
 
+/**
+ * Hệ số thưởng theo bậc. BONUS_TIERS xếp giảm dần và bậc cuối minScore = 0
+ * nên mọi điểm hợp lệ (≥ 0) đều rơi vào đúng một bậc; NaN/âm → 0.
+ *
+ * LƯU Ý: điểm cuối tối đa thực tế = 0.6 × 100 (Tầng 1 trần 100) + 0.4 × 130
+ * (Tầng 2: Sản lượng & NVL trần 150, Chất lượng & An toàn trần 100) = 112;
+ * thử việc/thời vụ 0.8 × 100 + 0.2 × 130 = 106. Bậc 1.5× (≥ 120) hiện KHÔNG
+ * THỂ đạt, bậc 1.2× (≥ 110) chỉ người chính thức mới chạm được.
+ */
 export function bonusMultiplierFor(score: number) {
+  if (!Number.isFinite(score) || score < 0) return 0;
   for (const tier of BONUS_TIERS) {
     if (score >= tier.minScore) return tier.multiplier;
   }

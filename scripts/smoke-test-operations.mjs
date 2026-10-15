@@ -13,10 +13,12 @@
  * Phần đáng kiểm nhất ở đây là các đường VÒNG: đổi mật khẩu người khác, tạo
  * tài khoản quản trị bằng file Excel, nạp nửa vời rồi để lại đống dở dang.
  */
+import { assertLocalTarget } from "./lib/local-guard.mjs";
 import { PrismaClient } from "@prisma/client";
 import ExcelJS from "exceljs";
 import fs from "node:fs";
 import { runBackup } from "./backup.mjs";
+import { execFileSync } from "node:child_process";
 
 try {
   process.loadEnvFile(".env");
@@ -25,7 +27,8 @@ try {
 }
 
 const BASE = process.env.APP_URL || "http://localhost:3000";
-const PASSWORD = "Gani@2026";
+const PASSWORD = process.env.SMOKE_PASSWORD || "Gani@2026";
+assertLocalTarget({ appUrl: BASE });
 const prisma = new PrismaClient();
 
 let pass = 0;
@@ -575,23 +578,33 @@ async function main() {
   check("File sao lưu có thật trên đĩa", fs.existsSync(bkPath));
   check("File sao lưu không rỗng", (bk.sizeBytes ?? 0) > 10_000);
 
-  // Thứ đáng kiểm nhất: bản sao có MỞ ĐƯỢC và có ĐỦ dữ liệu không
-  const copy = new PrismaClient({
-    datasources: { db: { url: `file:${bkPath.replace(/\\/g, "/")}` } },
-  });
+  // Thứ đáng kiểm nhất: bản sao có ĐỌC ĐƯỢC và có ĐỦ dữ liệu không.
+  // Đọc thẳng file dump bằng pg_restore (không cần database đích): đếm số dòng
+  // dữ liệu của từng bảng trong khối COPY.
+  const PG_RESTORE = process.env.PG_RESTORE_BIN || "pg_restore";
+  const countRows = (table) => {
+    const out = execFileSync(
+      PG_RESTORE,
+      ["--data-only", `--table=${table}`, "--file=-", bkPath],
+      { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }
+    );
+    const lines = out.split("\n");
+    const from = lines.findIndex((l) => l.startsWith(`COPY public.${table} `));
+    if (from < 0) return 0;
+    const to = lines.indexOf("\\.", from);
+    return to - from - 1;
+  };
   let copyUsers = -1;
   let copyAudit = -1;
   let copyOpens = true;
   try {
-    copyUsers = await copy.user.count();
-    copyAudit = await copy.auditLog.count();
+    copyUsers = countRows("users");
+    copyAudit = countRows("audit_logs");
   } catch {
     copyOpens = false;
-  } finally {
-    await copy.$disconnect();
   }
 
-  check("Bản sao mở được như một database bình thường", copyOpens);
+  check("Bản sao đọc được bằng pg_restore", copyOpens);
   check(
     "Bản sao có đủ tài khoản, không thiếu ai",
     copyUsers === usersBefore,

@@ -1,3 +1,4 @@
+import { formatVnDateTime } from "../vn-time";
 import { prisma } from "../db";
 import { scoreTaskRisk } from "../risk";
 import { sendCeoAlert, notify } from "../telegram";
@@ -100,7 +101,7 @@ export async function runRiskScan(now = new Date()) {
       await notify({
         userId: t.assigneeId,
         title: `Việc của bạn đang có nguy cơ: ${t.title}`,
-        body: `${r.reason}. Hạn chót: ${new Date(t.dueDate).toLocaleString("vi-VN")}`,
+        body: `${r.reason}. Hạn chót: ${formatVnDateTime(t.dueDate)}`,
         level: r.score >= 80 ? "CRITICAL" : "WARNING",
         linkUrl: `/tasks/${t.id}`,
       });

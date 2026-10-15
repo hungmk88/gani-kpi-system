@@ -5,14 +5,31 @@ import { BusinessError } from "@/lib/rbac";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { notify } from "@/lib/telegram";
 import { ERR } from "@/lib/constants";
+import { formatVnDate, parseVnDate } from "@/lib/vn-time";
+import { assertLeaveQuota, lockLeaveOwner } from "@/lib/services/leave-service";
 
 const LEAVE_NOTICE_HOURS = 24;
 
+// Ngày nghỉ là NGÀY (không có giờ): nhận "YYYY-MM-DD"; vẫn nhận ISO đầy đủ
+// cho client cũ — cả hai đều quy về 00:00 giờ VN của ngày đó.
+const dateInput = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .or(z.string().datetime());
+
 const schema = z.object({
-  startDate: z.string().datetime(),
-  endDate: z.string().datetime(),
+  startDate: dateInput,
+  endDate: dateInput,
   reason: z.string().min(3).max(1000),
 });
+
+function toVnDay(input: string): Date {
+  try {
+    return parseVnDate(input);
+  } catch {
+    throw new BusinessError(ERR.VALIDATION_FAILED, "Ngày nghỉ không hợp lệ.", 400);
+  }
+}
 
 /**
  * Đơn xin nghỉ, luật báo trước 24 tiếng: KHÔNG chặn cứng khi gửi trễ hơn — ốm
@@ -25,16 +42,17 @@ export async function POST(req: Request) {
     const user = await requireUser();
     const body = schema.parse(await req.json());
 
-    const startDate = new Date(body.startDate);
-    const endDate = new Date(body.endDate);
+    const startDate = toVnDay(body.startDate);
+    const endDate = toVnDay(body.endDate);
     if (endDate < startDate) {
       throw new BusinessError(
         ERR.VALIDATION_FAILED,
-        "Ngày kết thúc phải sau ngày bắt đầu.",
+        "Ngày kết thúc không được trước ngày bắt đầu.",
         400
       );
     }
 
+    // Báo trước tính từ 00:00 giờ VN của ngày bắt đầu nghỉ.
     const noticeMs = startDate.getTime() - Date.now();
     const isUrgent = noticeMs < LEAVE_NOTICE_HOURS * 3600_000;
 
@@ -49,6 +67,7 @@ export async function POST(req: Request) {
               role: "MANAGER",
               isActive: true,
             },
+            select: { id: true },
           })
         : [];
 
@@ -58,18 +77,25 @@ export async function POST(req: Request) {
       !autoApprove &&
       (user.role === "MANAGER" || user.role === "ADMIN" || managers.length === 0);
 
-    const request = await prisma.leaveRequest.create({
-      data: {
-        employeeId: user.id,
-        departmentId: user.departmentId,
-        startDate,
-        endDate,
-        reason: body.reason,
-        isUrgent,
-        status: autoApprove ? "APPROVED" : "PENDING",
-        reviewedById: autoApprove ? user.id : null,
-        resolvedAt: autoApprove ? new Date() : null,
-      },
+    // Hạn mức: chặn ngay khi gửi nếu (đã DUYỆT + đơn này) vượt 12 ngày/năm
+    // hoặc 6 ngày/nửa năm — đơn đang chờ khác không tính, lúc duyệt kiểm lại.
+    // CEO tự duyệt cũng phải qua đúng bước này.
+    const request = await prisma.$transaction(async (tx) => {
+      await lockLeaveOwner(tx, user.id);
+      await assertLeaveQuota(tx, user.id, startDate, endDate);
+      return tx.leaveRequest.create({
+        data: {
+          employeeId: user.id,
+          departmentId: user.departmentId,
+          startDate,
+          endDate,
+          reason: body.reason,
+          isUrgent,
+          status: autoApprove ? "APPROVED" : "PENDING",
+          reviewedById: autoApprove ? user.id : null,
+          resolvedAt: autoApprove ? new Date() : null,
+        },
+      });
     });
 
     await writeAudit({
@@ -78,8 +104,8 @@ export async function POST(req: Request) {
       entityName: "leave_requests",
       entityId: request.id,
       after: {
-        startDate: body.startDate,
-        endDate: body.endDate,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
         isUrgent,
         autoApprove,
       },
@@ -89,16 +115,17 @@ export async function POST(req: Request) {
     if (!autoApprove) {
       const urgentTag = isUrgent ? "🔴 KHẨN CẤP (không đủ 24h báo trước) — " : "";
       const recipients = needsCeo
-        ? await prisma.user.findMany({ where: { role: "CEO", isActive: true } })
+        ? await prisma.user.findMany({
+            where: { role: "CEO", isActive: true },
+            select: { id: true },
+          })
         : managers;
 
       for (const r of recipients) {
         await notify({
           userId: r.id,
           title: `${urgentTag}Đơn nghỉ phép từ ${user.fullName}`,
-          body: `Từ ${startDate.toLocaleDateString("vi-VN")} đến ${endDate.toLocaleDateString(
-            "vi-VN"
-          )}. Lý do: ${body.reason}`,
+          body: `Từ ${formatVnDate(startDate)} đến ${formatVnDate(endDate)}. Lý do: ${body.reason}`,
           level: isUrgent ? "CRITICAL" : "WARNING",
           linkUrl: "/leave-requests",
         });
@@ -141,8 +168,16 @@ export async function GET() {
     const requests = await prisma.leaveRequest.findMany({
       where,
       include: {
-        employee: { include: { department: true } },
-        reviewedBy: true,
+        employee: {
+          select: {
+            id: true,
+            fullName: true,
+            role: true,
+            departmentId: true,
+            department: { select: { id: true, name: true, code: true } },
+          },
+        },
+        reviewedBy: { select: { id: true, fullName: true } },
       },
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     });

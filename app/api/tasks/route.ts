@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { handle, ok, requireUser } from "@/lib/api";
 import { taskScopeWhere } from "@/lib/rbac";
 import { clientMeta } from "@/lib/audit";
-import { createTask } from "@/lib/services/task-service";
+import { createTask, PUBLIC_USER_SELECT } from "@/lib/services/task-service";
 import { TASK_PRIORITIES, TASK_STATUSES } from "@/lib/constants";
 
 const createSchema = z.object({
@@ -16,7 +16,12 @@ const createSchema = z.object({
   startDate: z.string().datetime().nullable().optional(),
   dueDate: z.string().datetime("Hạn chót không hợp lệ."),
   priority: z.enum(TASK_PRIORITIES).default("MEDIUM"),
-  status: z.enum(TASK_STATUSES).default("TO_DO"),
+  // Việc mới chỉ được mở ở trạng thái chưa xong — không tạo thẳng DONE/CANCELLED.
+  status: z
+    .enum(["BACKLOG", "TO_DO", "IN_PROGRESS"], {
+      message: "Việc mới chỉ được tạo ở trạng thái Chờ xếp / Cần làm / Đang làm.",
+    })
+    .default("TO_DO"),
 });
 
 export async function GET(req: Request) {
@@ -32,8 +37,10 @@ export async function GET(req: Request) {
     const filter = url.searchParams.get("filter");
 
     const where: Record<string, unknown> = { ...taskScopeWhere(user) };
-    if (status) where.status = status;
-    if (priority) where.priority = priority;
+    if (status && (TASK_STATUSES as readonly string[]).includes(status))
+      where.status = status;
+    if (priority && (TASK_PRIORITIES as readonly string[]).includes(priority))
+      where.priority = priority;
     if (assigneeId) where.assigneeId = assigneeId;
     if (departmentId && (user.role === "CEO" || user.role === "ADMIN"))
       where.departmentId = departmentId;
@@ -45,7 +52,11 @@ export async function GET(req: Request) {
 
     const tasks = await prisma.task.findMany({
       where,
-      include: { assignee: true, department: true, project: true },
+      include: {
+        assignee: { select: PUBLIC_USER_SELECT },
+        department: true,
+        project: true,
+      },
       orderBy: [{ riskScore: "desc" }, { dueDate: "asc" }],
       take: 300,
     });

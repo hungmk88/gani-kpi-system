@@ -1,7 +1,7 @@
 import { prisma } from "../db";
 import { BusinessError } from "../rbac";
 import { DATA_MISMATCH_THRESHOLD_PERCENT, ERR } from "../constants";
-import { round2 } from "../kpi";
+import { spreadPercent } from "../kpi";
 import { writeAudit } from "../audit";
 import { notify, sendCeoAlert } from "../telegram";
 import { recalcResult } from "./kpi-service";
@@ -79,12 +79,31 @@ export async function collectSources(
   return out;
 }
 
+/** Dấu vân tay của bộ nguồn: chỉ mã + giá trị, sắp xếp ổn định. */
+export function sourcesFingerprint(sources: Pick<SourceValue, "code" | "value">[]) {
+  return JSON.stringify(
+    sources
+      .map(({ code, value }) => [code, value] as const)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+  );
+}
+
+function parseSources(json: string | null | undefined): SourceValue[] {
+  if (!json) return [];
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
 export function computeVariance(sources: SourceValue[]) {
   const values = sources.map((s) => s.value);
   const minValue = Math.min(...values);
   const maxValue = Math.max(...values);
-  const base = Math.max(Math.abs(maxValue), Math.abs(minValue), 1);
-  const variancePercent = round2(((maxValue - minValue) / base) * 100);
+  // Cùng một công thức với cờ Data Mismatch (lib/kpi.ts)
+  const variancePercent = spreadPercent(values);
   return { minValue, maxValue, variancePercent };
 }
 
@@ -151,10 +170,14 @@ export async function reconcileCell(kpiResultId: string) {
     },
   });
 
-  // Đã có người chốt tay rồi thì tôn trọng quyết định đó, trừ khi số nguồn đổi
+  // Đã có người chốt tay rồi thì tôn trọng quyết định đó, trừ khi SỐ của các
+  // nguồn đổi. So bằng "dấu vân tay" (mã nguồn + giá trị), bỏ qua thời điểm —
+  // thời điểm đổi ở mỗi lượt cron nên so cả chuỗi JSON thì quyết định tay bị
+  // xoá sau 2 tiếng.
   const alreadyResolved =
     existing?.status === "RESOLVED" &&
-    existing.sourcesJson === JSON.stringify(sources);
+    sourcesFingerprint(parseSources(existing.sourcesJson)) ===
+      sourcesFingerprint(sources);
 
   const record = await prisma.reconciliation.upsert({
     where: {
@@ -304,6 +327,47 @@ export async function resolveReconciliation(
       "Dòng này không thuộc phòng ban của bạn.",
       403
     );
+  }
+  // Không ai tự chốt số của chính mình — trưởng phòng lệch số thì Ban Giám
+  // đốc quyết.
+  if (rec.employeeId === actor.id) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Không thể tự chốt số liệu KPI của chính bạn. Ban Giám đốc sẽ quyết dòng này.",
+      403
+    );
+  }
+  if (rec.status !== "MISMATCH") {
+    throw new BusinessError(
+      "RECONCILIATION_NOT_PENDING",
+      "Dòng này không còn ở trạng thái lệch số (đã khớp hoặc đã có người chốt).",
+      409
+    );
+  }
+  // Trưởng phòng chỉ được chọn MỘT TRONG CÁC SỐ của nguồn. Nhập số thứ ba
+  // (MANUAL_OVERRIDE) là quyền riêng của Ban Giám đốc.
+  if (input.sourceCode === "MANUAL_OVERRIDE") {
+    if (actor.role !== "CEO") {
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Chỉ Ban Giám đốc được nhập số khác với các nguồn.",
+        403
+      );
+    }
+    if (!Number.isFinite(input.value)) {
+      throw new BusinessError(ERR.VALIDATION_FAILED, "Số chốt không hợp lệ.", 400);
+    }
+  } else {
+    const chosen = parseSources(rec.sourcesJson).find(
+      (s) => s.code === input.sourceCode
+    );
+    if (!chosen || chosen.value !== input.value) {
+      throw new BusinessError(
+        ERR.VALIDATION_FAILED,
+        "Số chốt phải lấy đúng từ một trong các nguồn đang đối soát.",
+        400
+      );
+    }
   }
 
   const kpiRow = await prisma.kpiResult.findUnique({

@@ -1,49 +1,24 @@
 // File: app/api/kpi/dashboard/summary/route.ts
 
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { getSession } from "@/lib/auth";
+import { NextRequest } from "next/server";
+import { handle, ok, requireUser } from "@/lib/api";
 import {
+  assertDashboardAccess,
   getDashboardSummary,
-  type DashboardPeriod,
+  normalizePeriod,
+  redactDashboardMoney,
 } from "@/lib/services/kpi-dashboard";
 
+export const runtime = "nodejs";
+
 export async function GET(request: NextRequest) {
-  try {
-    // Auth check
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+  return handle(async () => {
+    const user = await requireUser();
+    const { includeMoney } = await assertDashboardAccess(user);
 
-    // Permission check
-    const user = await prisma.user.findUnique({
-      where: { id: session.id },
-    });
+    const period = normalizePeriod(request.nextUrl.searchParams.get("period"));
+    const data = await getDashboardSummary(period);
 
-    if (!user || !["CEO", "ADMIN"].includes(user.role)) {
-      return NextResponse.json(
-        { error: "Forbidden" },
-        { status: 403 }
-      );
-    }
-
-    // Get period from query
-    const { period = "today" } = Object.fromEntries(
-      request.nextUrl.searchParams
-    );
-
-    const data = await getDashboardSummary(period as DashboardPeriod);
-
-    return NextResponse.json({ success: true, data });
-  } catch (error) {
-    console.error("Error fetching dashboard summary:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch summary" },
-      { status: 500 }
-    );
-  }
+    return ok({ success: true, includeMoney, data: includeMoney ? data : redactDashboardMoney(data) });
+  });
 }

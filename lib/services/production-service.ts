@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { BusinessError } from "../rbac";
 import { ERR } from "../constants";
@@ -15,7 +16,11 @@ import {
   type ShiftFacts,
 } from "../production/kpi-engine";
 import { runAntiGamingRules } from "../production/anti-gaming";
-import { BEHAVIOR_LABEL } from "../production/constants";
+import {
+  BASE_BONUS_PER_SHIFT_VND,
+  BEHAVIOR_LABEL,
+} from "../production/constants";
+import { formatVnDate, vnStartOfDay } from "../vn-time";
 import type { SessionUser } from "../auth";
 
 /**
@@ -35,6 +40,13 @@ import type { SessionUser } from "../auth";
  */
 
 type Meta = { ip?: string | null; userAgent?: string | null };
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Ca đã bị người khác chuyển trạng thái trước (bấm đúp, hai người cùng thao tác). */
+function shiftAlreadyHandled(message: string): never {
+  throw new BusinessError(ERR.VALIDATION_FAILED, message, 409);
+}
 
 /* ------------------------------------------------------------ PHÂN QUYỀN */
 
@@ -115,8 +127,9 @@ export async function submitShiftDraft(
     );
   }
 
-  const day = new Date(input.shiftDate);
-  day.setHours(0, 0, 0, 0);
+  // Ngày ca = 00:00 giờ VN của ngày đó. Không dùng setHours() — phụ thuộc
+  // múi giờ server (Vercel chạy UTC → ca bị lùi một ngày).
+  const day = vnStartOfDay(input.shiftDate);
 
   const dup = await prisma.productionShiftLog.findUnique({
     where: {
@@ -130,7 +143,7 @@ export async function submitShiftDraft(
   if (dup) {
     throw new BusinessError(
       ERR.VALIDATION_FAILED,
-      `Ca ${input.shiftType} ngày ${day.toLocaleDateString("vi-VN")} cho mã ${sku.skuCode} đã được khai rồi.`,
+      `Ca ${input.shiftType} ngày ${formatVnDate(day)} cho mã ${sku.skuCode} đã được khai rồi.`,
       409
     );
   }
@@ -144,7 +157,8 @@ export async function submitShiftDraft(
     );
   }
 
-  const log = await prisma.productionShiftLog.create({
+  const log = await prisma.productionShiftLog
+    .create({
     data: {
       shiftDate: day,
       shiftType: input.shiftType,
@@ -166,7 +180,17 @@ export async function submitShiftDraft(
       },
     },
     include: { sku: true, participants: true },
-  });
+  })
+    .catch((e: unknown) => {
+      // Hai người khai cùng ca cùng lúc: kiểm tra trùng ở trên đều lọt, ràng
+      // buộc unique của DB chặn người thứ hai — trả 409 thay vì lỗi 500.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        shiftAlreadyHandled(
+          `Ca ${input.shiftType} ngày ${formatVnDate(day)} cho mã ${sku.skuCode} đã được khai rồi.`
+        );
+      }
+      throw e;
+    });
 
   await writeAudit({
     actor,
@@ -174,7 +198,7 @@ export async function submitShiftDraft(
     entityName: "production_shift_logs",
     entityId: log.id,
     after: {
-      ca: `${input.shiftType} ${day.toLocaleDateString("vi-VN")}`,
+      ca: `${input.shiftType} ${formatVnDate(day)}`,
       sku: sku.skuCode,
       sanLuongTho: input.rawOutputKg,
       nvlCapVao: input.rawMaterialInputKg,
@@ -186,12 +210,13 @@ export async function submitShiftDraft(
   // Báo KCS vào xác nhận
   const qcOfficers = await prisma.user.findMany({
     where: { productionRole: "QC_OFFICER", isActive: true },
+    select: { id: true },
   });
   for (const qc of qcOfficers) {
     await notify({
       userId: qc.id,
       title: `Ca sản xuất chờ KCS xác nhận: ${sku.skuName}`,
-      body: `${actor.fullName} vừa khai ca ${input.shiftType} ngày ${day.toLocaleDateString("vi-VN")}, sản lượng thô ${input.rawOutputKg} kg.`,
+      body: `${actor.fullName} vừa khai ca ${input.shiftType} ngày ${formatVnDate(day)}, sản lượng thô ${input.rawOutputKg} kg.`,
       level: "INFO",
       linkUrl: `/production/${log.id}`,
     });
@@ -263,31 +288,42 @@ export async function approveByQc(
     );
   }
 
-  const updated = await prisma.productionShiftLog.update({
-    where: { id: logId },
-    data: {
-      qcPassedKg: input.qcPassedKg,
-      reworkKg: input.reworkKg,
-      scrapKg: input.scrapKg,
-      haccpViolationCount: input.haccpViolationCount,
-      qcNote: input.qcNote ?? null,
-      qcOfficerId: actor.id,
-      qcApprovedAt: new Date(),
-      status: "QC_APPROVED",
-    },
-    include: { sku: true },
-  });
-
-  for (const d of input.participantDefects ?? []) {
-    await prisma.productionShiftParticipant.updateMany({
-      where: { shiftLogId: logId, userId: d.userId },
+  // Chuyển trạng thái có điều kiện (status = DRAFT) — hai KCS bấm cùng lúc
+  // thì chỉ một người ghi được.
+  const updated = await prisma.$transaction(async (tx) => {
+    const res = await tx.productionShiftLog.updateMany({
+      where: { id: logId, status: "DRAFT" },
       data: {
-        personalDefectKg: d.personalDefectKg,
-        violationCount: d.violationCount,
-        note: d.note ?? null,
+        qcPassedKg: input.qcPassedKg,
+        reworkKg: input.reworkKg,
+        scrapKg: input.scrapKg,
+        haccpViolationCount: input.haccpViolationCount,
+        qcNote: input.qcNote ?? null,
+        qcOfficerId: actor.id,
+        qcApprovedAt: new Date(),
+        status: "QC_APPROVED",
       },
     });
-  }
+    if (res.count !== 1) {
+      shiftAlreadyHandled("Ca này vừa được người khác xác nhận KCS.");
+    }
+
+    for (const d of input.participantDefects ?? []) {
+      await tx.productionShiftParticipant.updateMany({
+        where: { shiftLogId: logId, userId: d.userId },
+        data: {
+          personalDefectKg: d.personalDefectKg,
+          violationCount: d.violationCount,
+          note: d.note ?? null,
+        },
+      });
+    }
+
+    return tx.productionShiftLog.findUniqueOrThrow({
+      where: { id: logId },
+      include: { sku: true },
+    });
+  });
 
   await writeAudit({
     actor,
@@ -309,7 +345,7 @@ export async function approveByQc(
   if (input.haccpViolationCount > 0) {
     await sendCeoAlert({
       title: `Vi phạm an toàn thực phẩm tại xưởng: ${input.haccpViolationCount} vụ`,
-      details: `Ca ${log.shiftType} ngày ${log.shiftDate.toLocaleDateString("vi-VN")}, mã ${log.sku.skuCode}. KCS ${actor.fullName} ghi nhận. ${input.qcNote ?? ""}`,
+      details: `Ca ${log.shiftType} ngày ${formatVnDate(log.shiftDate)}, mã ${log.sku.skuCode}. KCS ${actor.fullName} ghi nhận. ${input.qcNote ?? ""}`,
       actionPath: `/production/${logId}`,
     });
   }
@@ -317,6 +353,7 @@ export async function approveByQc(
   // Báo Ban Giám đốc vào khoá số
   const ceos = await prisma.user.findMany({
     where: { role: "CEO", isActive: true },
+    select: { id: true },
   });
   for (const c of ceos) {
     await notify({
@@ -356,7 +393,7 @@ export async function lockAndTriggerKpi(
 
   const log = await prisma.productionShiftLog.findUnique({
     where: { id: logId },
-    include: { sku: true, participants: { include: { user: true } } },
+    include: { sku: true },
   });
   if (!log) {
     throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy ca sản xuất.", 404);
@@ -417,24 +454,46 @@ export async function lockAndTriggerKpi(
 
   const loss = computeQualityLoss(facts, log.sku.unitPriceVnd);
 
-  const locked = await prisma.productionShiftLog.update({
-    where: { id: logId },
-    data: {
-      targetOutputKg: input.targetOutputKg,
-      rawMaterialInputKg,
+  /* --- Khoá NGUYÊN TỬ ---
+     Kiểm tra status ở trên chỉ là đọc trước. Bấm đúp hoặc hai người trong
+     BGĐ cùng khoá thì cả hai đều qua bước đọc — nếu không chặn ở đây, chấm
+     điểm và trừ kho chạy hai lần. updateMany có điều kiện status =
+     QC_APPROVED: chỉ đúng một lệnh ghi được, lệnh còn lại nhận 409. Trừ kho
+     nằm chung transaction để khoá và trừ kho cùng thành công hoặc cùng huỷ. */
+  const { locked, inventory } = await prisma.$transaction(async (tx) => {
+    const res = await tx.productionShiftLog.updateMany({
+      where: { id: logId, status: "QC_APPROVED" },
+      data: {
+        targetOutputKg: input.targetOutputKg,
+        rawMaterialInputKg,
+        stdMaterialNormKg,
+        qualityLossVnd: loss.qualityLossVnd,
+        targetOverrideReason: targetChanged
+          ? input.targetOverrideReason
+          : null,
+        materialOverrideReason: materialChanged
+          ? input.materialOverrideReason
+          : null,
+        ceoNote: input.ceoNote ?? null,
+        lockedById: actor.id,
+        lockedAt: new Date(),
+        status: "LOCKED",
+      },
+    });
+    if (res.count !== 1) {
+      shiftAlreadyHandled("Ca này vừa được khoá (hoặc đổi trạng thái) bởi người khác.");
+    }
+    const inventory = await deductRawMaterialForShift(
+      tx,
+      logId,
+      log.skuId,
       stdMaterialNormKg,
-      qualityLossVnd: loss.qualityLossVnd,
-      targetOverrideReason: targetChanged
-        ? input.targetOverrideReason
-        : null,
-      materialOverrideReason: materialChanged
-        ? input.materialOverrideReason
-        : null,
-      ceoNote: input.ceoNote ?? null,
-      lockedById: actor.id,
-      lockedAt: new Date(),
-      status: "LOCKED",
-    },
+      actor.id
+    );
+    const locked = await tx.productionShiftLog.findUniqueOrThrow({
+      where: { id: logId },
+    });
+    return { locked, inventory };
   });
 
   await writeAudit({
@@ -461,20 +520,9 @@ export async function lockAndTriggerKpi(
     ...meta,
   });
 
-  // Chấm điểm và quét chống chạy chỉ tiêu — chỉ chạy ở đây, không sớm hơn
+  // Chấm điểm và quét chống chạy chỉ tiêu — chỉ chạy ở đây, không sớm hơn.
+  // Chỉ người khoá thắng ở transaction trên mới tới được đây → chạy đúng 1 lần.
   const result = await executeCalculationAndAudit(logId);
-
-  // Trừ kho NVL lý thuyết theo định mức — không chặn việc khoá ca nếu lỗi,
-  // vì đây là phần phụ trợ, không phải nghiệp vụ chấm điểm/lương chính.
-  const inventory = await deductRawMaterialForShift(
-    logId,
-    log.skuId,
-    stdMaterialNormKg,
-    actor.id
-  ).catch((e) => {
-    console.error("[KHO NVL] Trừ kho lý thuyết thất bại:", e);
-    return null;
-  });
 
   return { log: locked, ...result, inventory };
 }
@@ -483,43 +531,52 @@ export async function lockAndTriggerKpi(
  * Trừ kho NVL lý thuyết theo ĐỊNH MỨC (không phải số thực tế đã dùng) khi một
  * ca khoá số — xem chú thích ở model RawMaterial trong schema.prisma.
  *
+ * Chạy TRONG transaction khoá ca. Trừ bằng `decrement` (nguyên tử ở DB) chứ
+ * không ghi đè số dư tính từ một lần đọc cũ — hai ca khoá cùng lúc trên cùng
+ * một NVL không làm mất lượt trừ của nhau. Số dư sau giao dịch đọc lại từ
+ * kết quả update.
+ *
  * Bỏ qua im lặng (trả `null`) nếu SKU chưa gán NVL nào — không phải lỗi, chỉ
  * là mã đó chưa bật theo dõi kho.
  */
 async function deductRawMaterialForShift(
+  tx: Prisma.TransactionClient,
   shiftLogId: string,
   skuId: string,
   stdMaterialNormKg: number,
   actorId: string
 ) {
-  const sku = await prisma.productSku.findUnique({ where: { id: skuId } });
+  if (!(stdMaterialNormKg > 0)) return null;
+  const sku = await tx.productSku.findUnique({
+    where: { id: skuId },
+    select: { rawMaterialId: true },
+  });
   if (!sku?.rawMaterialId) return null;
 
-  const material = await prisma.rawMaterial.findUnique({
+  const material = await tx.rawMaterial.findUnique({
     where: { id: sku.rawMaterialId },
+    select: { id: true, name: true, isActive: true },
   });
   if (!material || !material.isActive) return null;
 
-  const balanceAfter =
-    Math.round((material.currentStockKg - stdMaterialNormKg) * 100) / 100;
+  const after = await tx.rawMaterial.update({
+    where: { id: material.id },
+    data: { currentStockKg: { decrement: stdMaterialNormKg } },
+    select: { currentStockKg: true },
+  });
+  const balanceAfter = round2(after.currentStockKg);
 
-  await prisma.$transaction([
-    prisma.rawMaterial.update({
-      where: { id: material.id },
-      data: { currentStockKg: balanceAfter },
-    }),
-    prisma.rawMaterialTransaction.create({
-      data: {
-        rawMaterialId: material.id,
-        type: "SHIFT_DEDUCTION",
-        quantityKg: -stdMaterialNormKg,
-        balanceAfterKg: balanceAfter,
-        shiftLogId,
-        createdById: actorId,
-        note: "Trừ tự động theo định mức SKU khi khoá ca",
-      },
-    }),
-  ]);
+  await tx.rawMaterialTransaction.create({
+    data: {
+      rawMaterialId: material.id,
+      type: "SHIFT_DEDUCTION",
+      quantityKg: -stdMaterialNormKg,
+      balanceAfterKg: balanceAfter,
+      shiftLogId,
+      createdById: actorId,
+      note: "Trừ tự động theo định mức SKU khi khoá ca",
+    },
+  });
 
   return {
     materialId: material.id,
@@ -529,12 +586,62 @@ async function deductRawMaterialForShift(
   };
 }
 
+/**
+ * Hoàn lại kho NVL đã trừ cho một ca khi mở lại ca. Tính theo SỔ GIAO DỊCH
+ * của chính ca đó (tổng các dòng trừ + hoàn trước đây), nên mở/khoá nhiều lần
+ * vẫn đúng và không hoàn khống nếu lần khoá trước không trừ kho.
+ */
+async function reverseRawMaterialForShift(
+  tx: Prisma.TransactionClient,
+  shiftLogId: string,
+  actorId: string,
+  reason: string
+) {
+  const rows = await tx.rawMaterialTransaction.groupBy({
+    by: ["rawMaterialId"],
+    where: {
+      shiftLogId,
+      type: { in: ["SHIFT_DEDUCTION", "SHIFT_REVERSAL"] },
+    },
+    _sum: { quantityKg: true },
+  });
+
+  const reversed: { materialId: string; returnedKg: number; balanceAfterKg: number }[] = [];
+  for (const r of rows) {
+    const net = round2(r._sum.quantityKg ?? 0); // âm = ca đang giữ phần đã trừ
+    if (net >= 0) continue;
+    const returnKg = -net;
+    const after = await tx.rawMaterial.update({
+      where: { id: r.rawMaterialId },
+      data: { currentStockKg: { increment: returnKg } },
+      select: { currentStockKg: true },
+    });
+    const balanceAfter = round2(after.currentStockKg);
+    await tx.rawMaterialTransaction.create({
+      data: {
+        rawMaterialId: r.rawMaterialId,
+        type: "SHIFT_REVERSAL",
+        quantityKg: returnKg,
+        balanceAfterKg: balanceAfter,
+        shiftLogId,
+        createdById: actorId,
+        note: `Hoàn kho do mở lại ca đã khoá. Lý do: ${reason}`.slice(0, 500),
+      },
+    });
+    reversed.push({ materialId: r.rawMaterialId, returnedKg: returnKg, balanceAfterKg: balanceAfter });
+  }
+  return reversed;
+}
+
 /* ============================================ CHẤM ĐIỂM & QUÉT BẤT THƯỜNG */
 
 export async function executeCalculationAndAudit(logId: string) {
   const log = await prisma.productionShiftLog.findUnique({
     where: { id: logId },
-    include: { sku: true, participants: { include: { user: true } } },
+    include: {
+      sku: true,
+      participants: { include: { user: { select: { employmentType: true } } } },
+    },
   });
   if (!log) {
     throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy ca sản xuất.", 404);
@@ -570,20 +677,32 @@ export async function executeCalculationAndAudit(logId: string) {
   /* --- Quét chống chạy chỉ tiêu TRƯỚC, để biết có phải khoá thưởng không --- */
   const findings = runAntiGamingRules(facts, metrics);
 
-  // Xoá bản quét cũ chưa ai đụng tới, giữ lại bản đã có người giải trình
+  // Xoá bản quét cũ chưa ai đụng tới, giữ lại bản đã có người giải trình /
+  // BGĐ đã xử lý. Khi khoá lại sau lần mở lại ca, KHÔNG tạo lại cảnh báo cùng
+  // luật (behaviorType) đã có — nếu không, cảnh báo BGĐ đã chấp nhận sẽ mọc
+  // lại và khoá thưởng thêm lần nữa cho cùng một vấn đề.
   await prisma.antiGamingAudit.deleteMany({
     where: { shiftLogId: logId, status: "PENDING_EXPLANATION" },
   });
-  if (findings.length > 0) {
+  const handled = await prisma.antiGamingAudit.findMany({
+    where: { shiftLogId: logId },
+    select: { behaviorType: true },
+  });
+  const handledTypes = new Set(handled.map((a) => a.behaviorType));
+  const newFindings = findings.filter((f) => !handledTypes.has(f.behaviorType));
+  if (newFindings.length > 0) {
     await prisma.antiGamingAudit.createMany({
-      data: findings.map((f) => ({ ...f, shiftLogId: logId })),
+      data: newFindings.map((f) => ({ ...f, shiftLogId: logId })),
     });
   }
 
+  // Khoá thưởng khi còn cảnh báo treo HOẶC có cảnh báo BGĐ đã từ chối — cùng
+  // điều kiện với reviewAudit (trước đây chỗ này bỏ sót REJECTED, nên khoá
+  // lại ca từng bị từ chối thì thưởng tự mở).
   const stillOpen = await prisma.antiGamingAudit.count({
     where: {
       shiftLogId: logId,
-      status: { in: ["PENDING_EXPLANATION", "EXPLAINED"] },
+      status: { in: ["PENDING_EXPLANATION", "EXPLAINED", "REJECTED"] },
     },
   });
   const bonusLocked = stillOpen > 0;
@@ -636,7 +755,7 @@ export async function executeCalculationAndAudit(logId: string) {
 
     await notify({
       userId: p.userId,
-      title: `Điểm KPI ca ${log.shiftType} ngày ${log.shiftDate.toLocaleDateString("vi-VN")}`,
+      title: `Điểm KPI ca ${log.shiftType} ngày ${formatVnDate(log.shiftDate)}`,
       body: bonusLocked
         ? `Bạn được ${score.finalWeightedScore} điểm (cá nhân ${score.tier1Score}, toàn xưởng ${score.tier2Score}). Thưởng ca đang tạm khoá vì có cảnh báo cần giải trình.`
         : `Bạn được ${score.finalWeightedScore} điểm (cá nhân ${score.tier1Score}, toàn xưởng ${score.tier2Score}).`,
@@ -645,11 +764,11 @@ export async function executeCalculationAndAudit(logId: string) {
     });
   }
 
-  /* --- Báo Ban Giám đốc nếu có bất thường --- */
-  if (findings.length > 0) {
+  /* --- Báo Ban Giám đốc nếu có bất thường MỚI --- */
+  if (newFindings.length > 0) {
     await sendCeoAlert({
-      title: `Cảnh báo chạy chỉ tiêu: ${findings.length} dấu hiệu ở ca ${log.shiftType}`,
-      details: findings
+      title: `Cảnh báo chạy chỉ tiêu: ${newFindings.length} dấu hiệu ở ca ${log.shiftType}`,
+      details: newFindings
         .map((f) => `${BEHAVIOR_LABEL[f.behaviorType] ?? f.behaviorType}`)
         .join(" · ") + ` — đã tạm khoá thưởng của ${results.length} người, chờ quản đốc giải trình.`,
       actionPath: `/production/audits`,
@@ -660,12 +779,13 @@ export async function executeCalculationAndAudit(logId: string) {
         productionRole: { in: ["SUPERVISOR", "PRODUCTION_DIRECTOR"] },
         isActive: true,
       },
+      select: { id: true },
     });
     for (const s of supervisors) {
       await notify({
         userId: s.id,
-        title: `Cần giải trình ca ${log.shiftType} ngày ${log.shiftDate.toLocaleDateString("vi-VN")}`,
-        body: `Hệ thống phát hiện ${findings.length} dấu hiệu bất thường. Thưởng ca đang khoá cho tới khi Ban Giám đốc xem giải trình.`,
+        title: `Cần giải trình ca ${log.shiftType} ngày ${formatVnDate(log.shiftDate)}`,
+        body: `Hệ thống phát hiện ${newFindings.length} dấu hiệu bất thường. Thưởng ca đang khoá cho tới khi Ban Giám đốc xem giải trình.`,
         level: "WARNING",
         linkUrl: `/production/audits`,
       });
@@ -681,6 +801,7 @@ export async function executeCalculationAndAudit(logId: string) {
       diemToanXuong: tier2.score,
       soNguoiDuocCham: results.length,
       canhBao: findings.length,
+      canhBaoMoi: newFindings.length,
       khoaThuong: bonusLocked,
     },
   });
@@ -689,7 +810,7 @@ export async function executeCalculationAndAudit(logId: string) {
     metrics,
     tier2,
     results,
-    findings,
+    findings: newFindings,
     bonusLocked,
   };
 }
@@ -736,14 +857,20 @@ export async function submitExplanation(
     );
   }
 
-  const updated = await prisma.antiGamingAudit.update({
-    where: { id: auditId },
+  const res = await prisma.antiGamingAudit.updateMany({
+    where: { id: auditId, status: "PENDING_EXPLANATION" },
     data: {
       explanationText,
       explainedById: actor.id,
       explainedAt: new Date(),
       status: "EXPLAINED",
     },
+  });
+  if (res.count !== 1) {
+    shiftAlreadyHandled("Cảnh báo này vừa được người khác giải trình.");
+  }
+  const updated = await prisma.antiGamingAudit.findUniqueOrThrow({
+    where: { id: auditId },
   });
 
   await writeAudit({
@@ -800,14 +927,23 @@ export async function reviewAudit(
     );
   }
 
-  const updated = await prisma.antiGamingAudit.update({
-    where: { id: auditId },
+  const res = await prisma.antiGamingAudit.updateMany({
+    where: {
+      id: auditId,
+      status: { in: ["PENDING_EXPLANATION", "EXPLAINED"] },
+    },
     data: {
       status: input.approved ? "CEO_APPROVED" : "REJECTED",
       ceoReviewNote: input.reviewNote,
       reviewedById: actor.id,
       reviewedAt: new Date(),
     },
+  });
+  if (res.count !== 1) {
+    shiftAlreadyHandled("Cảnh báo này đã được xử lý rồi.");
+  }
+  const updated = await prisma.antiGamingAudit.findUniqueOrThrow({
+    where: { id: auditId },
   });
 
   // Chỉ mở khoá thưởng khi KHÔNG còn cảnh báo nào treo trên ca đó.
@@ -825,15 +961,19 @@ export async function reviewAudit(
   const unlock = stillOpen === 0 && anyRejected === 0;
 
   if (unlock) {
+    // Chỉ những dòng đang khoá. Lúc khoá thưởng, finalBonusVnd bị ghi 0 nên
+    // phải TÍNH LẠI theo đúng công thức lúc chấm (computeFinalScore):
+    // thưởng nền × hệ số bậc — trước đây cộng lại chính số 0 nên không bao
+    // giờ trả thưởng.
     const rows = await prisma.dailyKpiResult.findMany({
-      where: { shiftLogId: audit.shiftLogId },
+      where: { shiftLogId: audit.shiftLogId, isBonusLocked: true },
     });
     for (const r of rows) {
       await prisma.dailyKpiResult.update({
         where: { id: r.id },
         data: {
           isBonusLocked: false,
-          finalBonusVnd: r.bonusMultiplier * 0 + r.finalBonusVnd,
+          finalBonusVnd: round2(BASE_BONUS_PER_SHIFT_VND * r.bonusMultiplier),
         },
       });
       await notify({
@@ -903,10 +1043,25 @@ export async function reopenShift(
     );
   }
 
-  await prisma.dailyKpiResult.deleteMany({ where: { shiftLogId: logId } });
-  const updated = await prisma.productionShiftLog.update({
-    where: { id: logId },
-    data: { status: "QC_APPROVED", lockedAt: null, lockedById: null },
+  // Nguyên tử: chuyển trạng thái có điều kiện, xoá điểm và HOÀN KHO phần đã
+  // trừ khi khoá — cùng thành công hoặc cùng huỷ. Mở lại hai lần song song
+  // thì lần sau nhận 409, không hoàn kho hai lần.
+  const { updated, reversed } = await prisma.$transaction(async (tx) => {
+    const res = await tx.productionShiftLog.updateMany({
+      where: { id: logId, status: "LOCKED" },
+      data: { status: "QC_APPROVED", lockedAt: null, lockedById: null },
+    });
+    if (res.count !== 1) {
+      shiftAlreadyHandled("Ca này vừa được người khác mở lại.");
+    }
+    await tx.dailyKpiResult.deleteMany({ where: { shiftLogId: logId } });
+    // Điểm 6 KPI ca tính từ dữ liệu cũ cũng mất hiệu lực — khoá lại thì tính lại
+    await tx.shiftKpiScore.deleteMany({ where: { shiftLogId: logId } });
+    const reversed = await reverseRawMaterialForShift(tx, logId, actor.id, reason);
+    const updated = await tx.productionShiftLog.findUniqueOrThrow({
+      where: { id: logId },
+    });
+    return { updated, reversed };
   });
 
   await writeAudit({
@@ -915,7 +1070,7 @@ export async function reopenShift(
     entityName: "production_shift_logs",
     entityId: logId,
     before: { status: "LOCKED" },
-    after: { status: "QC_APPROVED", diemDaXoa: true },
+    after: { status: "QC_APPROVED", diemDaXoa: true, hoanKho: reversed },
     reason,
     ...meta,
   });

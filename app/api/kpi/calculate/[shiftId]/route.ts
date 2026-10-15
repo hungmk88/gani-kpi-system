@@ -1,31 +1,53 @@
 // File: app/api/kpi/calculate/[shiftId]/route.ts
 
-import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { getSession } from "@/lib/auth";
+import { handle, ok, requireUser } from "@/lib/api";
+import { BusinessError } from "@/lib/rbac";
+import { ERR } from "@/lib/constants";
+import { canManageProductionKpi, parseBreakdown } from "@/lib/kpi-calculator";
+import {
+  canSeeMoney,
+  withProductionRole,
+} from "@/lib/services/production-service";
+
+export const runtime = "nodejs";
+
+/** Vai trò trong xưởng được xem điểm mọi ca — khớp trang /production/[id]. */
+const WIDE_PRODUCTION_ROLES = ["SUPERVISOR", "QC_OFFICER", "PRODUCTION_DIRECTOR"];
 
 /**
- * GET /api/kpi/calculate/[shiftId]
- * Lấy kết quả tính điểm cho 1 ca
+ * GET /api/kpi/calculate/[shiftId] — kết quả điểm 6 chỉ tiêu của 1 ca.
+ * Người xem: Ban Giám đốc / quản trị / TP Sản xuất / quản lý xưởng, hoặc người
+ * khai, người tham gia ca. Tiền thưởng chỉ trả về cho người được xem tiền.
  */
 export async function GET(
-  request: NextRequest,
+  _req: Request,
   context: { params: Promise<{ shiftId: string }> }
 ) {
-  try {
-    // Auth check
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+  return handle(async () => {
+    const user = await withProductionRole(await requireUser());
+    const { shiftId } = await context.params;
+
+    const shift = await prisma.productionShiftLog.findUnique({
+      where: { id: shiftId },
+      select: {
+        createdById: true,
+        participants: { where: { userId: user.id }, select: { userId: true } },
+      },
+    });
+    if (!shift) {
+      throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy ca sản xuất.", 404);
     }
 
-    const params = await context.params;
-    const shiftId = params.shiftId;
+    const allowed =
+      WIDE_PRODUCTION_ROLES.includes(user.productionRole ?? "") ||
+      shift.createdById === user.id ||
+      shift.participants.length > 0 ||
+      (await canManageProductionKpi(user));
+    if (!allowed) {
+      throw new BusinessError(ERR.FORBIDDEN, "Bạn không có quyền xem điểm ca này.", 403);
+    }
 
-    // Get KPI score
     const score = await prisma.shiftKpiScore.findUnique({
       where: { shiftLogId: shiftId },
       include: {
@@ -33,15 +55,12 @@ export async function GET(
         approvedBy: { select: { id: true, fullName: true } },
       },
     });
-
     if (!score) {
-      return NextResponse.json(
-        { error: "KPI score not found" },
-        { status: 404 }
-      );
+      throw new BusinessError(ERR.NOT_FOUND, "Ca này chưa được tính điểm KPI.", 404);
     }
 
-    return NextResponse.json({
+    const money = canSeeMoney(user);
+    return ok({
       success: true,
       data: {
         id: score.id,
@@ -49,21 +68,14 @@ export async function GET(
         status: score.status,
         totalScore: score.totalScore,
         bonusMultiplier: score.bonusMultiplier,
-        bonusAmount: score.bonusAmount,
-        breakdown: score.breakdownJson
-          ? JSON.parse(score.breakdownJson)
-          : null,
+        bonusAmount: money ? score.bonusAmount : null,
+        baseSalary: money ? score.baseSalary : null,
+        breakdown: parseBreakdown(score.breakdownJson, money),
         calculatedAt: score.calculatedAt,
         calculatedBy: score.calculatedBy,
         approvedAt: score.approvedAt,
         approvedBy: score.approvedBy,
       },
     });
-  } catch (error) {
-    console.error("Error fetching KPI score:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch score" },
-      { status: 500 }
-    );
-  }
+  });
 }

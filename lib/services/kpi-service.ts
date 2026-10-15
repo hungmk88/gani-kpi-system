@@ -3,6 +3,7 @@ import { BusinessError } from "../rbac";
 import {
   ERR,
   KPI_SCORE_CAP,
+  KPI_STATUS_ORDER,
   SALES_DEPARTMENT_CODE,
   SALES_KPI_CAP,
   SALES_RETURN_RATE_GATEKEEPER,
@@ -15,6 +16,7 @@ import {
   round2,
 } from "../kpi";
 import { writeAudit } from "../audit";
+import { vnParts } from "../vn-time";
 import { notify, sendCeoAlert } from "../telegram";
 import type { SessionUser } from "../auth";
 
@@ -115,10 +117,20 @@ export async function submitSelfReview(
   if (r.status === "FINALIZED") {
     throw new BusinessError(ERR.KPI_FINALIZED, "KPI kỳ này đã chốt, không sửa được.", 409);
   }
+  // Trưởng phòng đã duyệt rồi thì nhân viên không khai đè được nữa — nếu
+  // không, dòng bị kéo lùi về SELF_REVIEWED mà số chốt của trưởng phòng vẫn
+  // thắng, số mới của nhân viên thành vô nghĩa.
+  if ((KPI_STATUS_ORDER[r.status] ?? 0) >= KPI_STATUS_ORDER.MANAGER_REVIEWED) {
+    throw new BusinessError(
+      ERR.SLA_LOCKED,
+      "Trưởng phòng đã duyệt dòng này. Cần sửa thì trao đổi với trưởng phòng.",
+      409
+    );
+  }
   if (!isSelfReviewOpen(r.period)) {
     throw new BusinessError(
       ERR.SLA_LOCKED,
-      `Đã quá hạn tự khai (23:59 ngày ${new Date(r.period.selfReviewDeadline).getDate()}). Liên hệ trưởng phòng nếu cần bổ sung.`,
+      `Đã quá hạn tự khai (23:59 ngày ${vnParts(r.period.selfReviewDeadline).day}). Liên hệ trưởng phòng nếu cần bổ sung.`,
       400
     );
   }
@@ -191,6 +203,14 @@ export async function managerReview(
     throw new BusinessError(ERR.KPI_FINALIZED, "KPI đã chốt. Chỉ Ban Giám đốc mới mở lại được.", 409);
   }
   if (actor.role === "MANAGER") {
+    // KPI của chính trưởng phòng do Ban Giám đốc duyệt, không tự duyệt mình
+    if (r.employeeId === actor.id) {
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Không thể tự duyệt KPI của chính bạn — Ban Giám đốc sẽ duyệt.",
+        403
+      );
+    }
     if (r.employee.departmentId !== actor.departmentId) {
       throw new BusinessError(
         ERR.FORBIDDEN,
@@ -201,7 +221,7 @@ export async function managerReview(
     if (!isManagerReviewOpen(r.period)) {
       throw new BusinessError(
         ERR.SLA_LOCKED,
-        `Đã quá hạn duyệt của trưởng phòng (23:59 ngày ${new Date(r.period.managerReviewDeadline).getDate()}).`,
+        `Đã quá hạn duyệt của trưởng phòng (23:59 ngày ${vnParts(r.period.managerReviewDeadline).day}).`,
         400
       );
     }
@@ -291,12 +311,21 @@ export async function ceoApprove(
   });
 
   const finalized: string[] = [];
+  const skipped: { id: string; reason: string }[] = [];
 
   for (const r of results) {
     if (r.status === "FINALIZED") continue;
+    // Đúng thứ tự 3 cấp: chỉ chốt dòng đã qua trưởng phòng (duyệt tay hoặc
+    // tự khoá ngày 4). Dòng còn ở bước nhân viên thì bỏ qua và báo lại.
+    if (r.status !== "MANAGER_REVIEWED") {
+      skipped.push({ id: r.id, reason: "Chưa qua bước trưởng phòng duyệt" });
+      continue;
+    }
 
-    // Chưa có số chốt thì lấy số nhân viên khai / số hệ thống làm số chốt
-    const actualFinal = r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? 0;
+    // Chưa có số chốt thì lấy số nhân viên khai / số hệ thống. Không có số
+    // nào thì để TRỐNG (chấm 0 điểm) — tuyệt đối không quy về 0, vì với chỉ
+    // tiêu "càng thấp càng tốt" số 0 là điểm tối đa.
+    const actualFinal = r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null;
 
     await prisma.kpiResult.update({
       where: { id: r.id },
@@ -338,7 +367,10 @@ export async function ceoApprove(
   }
 
   // Báo cho từng nhân viên có KPI vừa được chốt
-  const employees = [...new Set(results.map((r) => r.employeeId))];
+  const finalizedSet = new Set(finalized);
+  const employees = [
+    ...new Set(results.filter((r) => finalizedSet.has(r.id)).map((r) => r.employeeId)),
+  ];
   for (const empId of employees) {
     await notify({
       userId: empId,
@@ -349,7 +381,7 @@ export async function ceoApprove(
     });
   }
 
-  return { finalized: finalized.length };
+  return { finalized: finalized.length, skipped };
 }
 
 /**
@@ -382,6 +414,14 @@ export async function editAfterLock(
     include: { kpiDefinition: true },
   });
   if (!r) throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy dòng KPI.", 404);
+  // Đường này chỉ dành cho dòng ĐÃ CHỐT. Dòng chưa chốt đi đúng luồng duyệt.
+  if (r.status !== "FINALIZED") {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      "Dòng KPI này chưa chốt — sửa qua luồng duyệt bình thường.",
+      400
+    );
+  }
 
   await prisma.kpiResult.update({
     where: { id: resultId },
@@ -495,7 +535,8 @@ export async function runKpiLockCycle(now = new Date()) {
         await prisma.kpiResult.update({
           where: { id: r.id },
           data: {
-            actualFinal: r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? 0,
+            // Không có số nào thì để trống (0 điểm), không quy về 0
+            actualFinal: r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null,
             status: "MANAGER_REVIEWED",
             managerReviewedAt: now,
           },
@@ -511,7 +552,7 @@ export async function runKpiLockCycle(now = new Date()) {
       );
       await sendCeoAlert({
         title: `KPI ${p.name} đã sẵn sàng để Ban Giám đốc duyệt`,
-        details: `${pending.length} dòng trưởng phòng chưa xử lý kịp đã tự động chuyển lên. Hạn duyệt của BGĐ là ngày ${new Date(fresh.ceoApprovalDeadline).getDate()}.`,
+        details: `${pending.length} dòng trưởng phòng chưa xử lý kịp đã tự động chuyển lên. Hạn duyệt của BGĐ là ngày ${vnParts(fresh.ceoApprovalDeadline).day}.`,
         actionPath: `/kpi/${p.id}`,
       });
     }

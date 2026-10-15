@@ -4,12 +4,19 @@
  * Chạy:  npm run db:seed
  * Chạy lại từ đầu (xoá sạch):  npm run db:reset
  *
- * Mật khẩu mặc định của MỌI tài khoản mẫu: Gani@2026
+ * Mật khẩu tài khoản mẫu: lấy từ biến SEED_PASSWORD, không có thì sinh ngẫu
+ * nhiên và in ra MỘT LẦN. Mọi tài khoản mới tạo đều bị buộc đổi mật khẩu ở lần
+ * đăng nhập đầu tiên.
+ *
+ * Chặn chạy nhầm vào production: NODE_ENV=production thì phải đặt thêm
+ * ALLOW_PROD_SEED=1 mới chạy.
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { seedHistory } from "./seed-history.mjs";
+import { seedProductionKpi } from "./seed-production-kpi.mjs";
+import { vnAt, vnDate, vnParts } from "./vn-date.mjs";
 
 try {
   process.loadEnvFile(".env");
@@ -17,9 +24,17 @@ try {
   // Node cũ hoặc chưa có .env - dựa vào biến môi trường sẵn có
 }
 
+if (process.env.NODE_ENV === "production" && process.env.ALLOW_PROD_SEED !== "1") {
+  console.error(
+    "❌ NODE_ENV=production — từ chối nạp dữ liệu mẫu. Chắc chắn muốn chạy thì đặt ALLOW_PROD_SEED=1."
+  );
+  process.exit(1);
+}
+
 const prisma = new PrismaClient();
 
-const DEFAULT_PASSWORD = "Gani@2026";
+const DEFAULT_PASSWORD =
+  process.env.SEED_PASSWORD || `Gani-${crypto.randomBytes(9).toString("base64url")}`;
 
 // ---------------------------------------------------------------- PHÒNG BAN
 const DEPARTMENTS = [
@@ -195,12 +210,7 @@ const SKUS = [
 ];
 
 // ---------------------------------------------------------------- CÔNG VIỆC MẪU
-const d = (offsetDays, hour = 17) => {
-  const x = new Date();
-  x.setDate(x.getDate() + offsetDays);
-  x.setHours(hour, 0, 0, 0);
-  return x;
-};
+const d = (offsetDays, hour = 17) => vnAt(offsetDays, hour);
 
 const TASKS = [
   { title: "Chốt đơn hàng chả ức gà viên cho chuỗi 12 cửa hàng Q.Tân Bình", dept: "SALES", assignee: "nv.sales1@ganifoody.vn", creator: "tp.sales@ganifoody.vn", due: d(3), start: d(-4), priority: "HIGH", status: "IN_PROGRESS", progress: 60 },
@@ -278,6 +288,8 @@ async function main() {
         jobTitle: u.jobTitle,
         role: u.role,
         departmentId: deptMap[u.dept],
+        // Mật khẩu mẫu ai cũng biết -> bắt tự đặt mật khẩu riêng ngay lần đầu
+        mustChangePassword: true,
       },
     });
     userMap[u.email] = row;
@@ -289,7 +301,7 @@ async function main() {
       data: { productionRole: prole },
     });
   }
-  console.log(`  ✓ ${USERS.length} tài khoản (mật khẩu chung: ${DEFAULT_PASSWORD})`);
+  console.log(`  ✓ ${USERS.length} tài khoản (tài khoản mới: mật khẩu tạm ${DEFAULT_PASSWORD}, bắt buộc đổi khi đăng nhập)`);
   console.log(
     `  ✓ ${Object.keys(PRODUCTION_ROLES).length} người được gán vai trò trong xưởng`
   );
@@ -391,13 +403,10 @@ async function main() {
   // rơi vào tháng sau nên còn hạn, anh vào là khai và duyệt được ngay.
   // Nếu lấy tháng trước, hạn đã trôi qua và hệ thống sẽ khoá đúng luật,
   // không bấm thử được luồng nào.
-  const now = new Date();
-  const month = now.getMonth() + 1;
-  const year = now.getFullYear();
+  const { month, year } = vnParts();
 
-  const nextMonth = month === 12 ? 1 : month + 1;
-  const nextYear = month === 12 ? year + 1 : year;
-  const at = (day) => new Date(nextYear, nextMonth - 1, day, 23, 59, 59);
+  // Hạn 23:59:59 giờ VN ngày 2/4/5 tháng sau — cùng công thức computeDeadlines
+  const at = (day) => vnDate(year, month + 1, day, 23, 59, 59);
 
   const period = await prisma.kpiPeriod.upsert({
     where: { month_year: { month, year } },
@@ -486,9 +495,8 @@ async function main() {
 
   const existingShifts = await prisma.productionShiftLog.count();
   if (existingShifts === 0 && skuMap["XX-VB-500G"]) {
-    const shiftDay = new Date();
-    shiftDay.setDate(shiftDay.getDate() - 1);
-    shiftDay.setHours(0, 0, 0, 0);
+    // Ngày ca = 00:00 giờ VN của hôm qua (chuẩn của production-service)
+    const shiftDay = vnAt(-1, 0);
 
     const crew = [
       { email: "nv.prod1@ganifoody.vn", stage: "TAO_HINH", hours: 10 },
@@ -522,6 +530,10 @@ async function main() {
     });
     console.log("  ✓ 1 ca sản xuất mẫu đang chờ KCS xác nhận");
   }
+
+  // 8c'. Cấu hình 6 KPI ca sản xuất + bậc thưởng (trước đây nằm ở seed.ts
+  // nhưng không script nào gọi).
+  await seedProductionKpi(prisma);
 
   // 8d. Lịch sử cho phần Phân tích & Dự báo (Phase 4).
   // Không có quá khứ thì ba engine của Phase 4 mở lên chỉ báo "chưa đủ dữ liệu".
@@ -572,7 +584,7 @@ async function main() {
   console.log("   Quản trị     : admin@ganifoody.vn");
   console.log("   KCS (xưởng)  : nv.qc1@ganifoody.vn");
   console.log("   Quản đốc     : tp.prod@ganifoody.vn");
-  console.log(`   Mật khẩu chung: ${DEFAULT_PASSWORD}\n`);
+  console.log(`   Mật khẩu tạm (chỉ tài khoản mới tạo lần này): ${DEFAULT_PASSWORD}\n`);
 }
 
 function round2(n) {

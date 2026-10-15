@@ -1,14 +1,16 @@
 import { redirect } from "next/navigation";
 import Image from "next/image";
 import { Check } from "lucide-react";
-import { getSession } from "@/lib/auth";
+import { getSession, loadActiveUser } from "@/lib/auth";
 import LoginForm from "./login-form";
 
 export const metadata = { title: "Đăng nhập — GANI FOODY KPI" };
 
 export default async function LoginPage() {
-  const session = await getSession();
-  if (session) redirect("/dashboard");
+  // Đối chiếu DB: token còn chữ ký nhưng đã bị thu hồi thì vẫn cho đăng nhập
+  // lại, không redirect vòng /login <-> /dashboard.
+  const active = await loadActiveUser(await getSession());
+  if (active) redirect("/dashboard");
 
   return (
     <main className="grid min-h-screen lg:grid-cols-2">

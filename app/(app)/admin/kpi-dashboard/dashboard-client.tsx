@@ -26,11 +26,12 @@ import {
   Cell,
 } from "recharts";
 
+/** Trường tiền = null khi người xem không được xem tiền (server đã ẩn). */
 interface SummaryData {
   totalShifts: number;
   avgScore: number;
-  totalBonus: number;
-  avgBonus: number;
+  totalBonus: number | null;
+  avgBonus: number | null;
   percentApproved: number;
 }
 
@@ -52,12 +53,12 @@ interface TrendsData {
     date: string;
     displayDate: string;
     avgScore: number | null;
-    movingAvg: number;
+    movingAvg: number | null;
   }>;
   statistics: {
     totalShifts: number;
     avgDailyScore: number;
-    totalBonusDistributed: number;
+    totalBonusDistributed: number | null;
   };
 }
 
@@ -75,33 +76,33 @@ export default function DashboardClient() {
     fetchData();
   }, [period]);
 
+  /** Lỗi theo chuẩn { errorCode, message } của handle()/fail(); bản cũ dùng .error. */
+  const readJson = async (res: Response) => {
+    if (res.status === 401) {
+      window.location.href = "/login";
+      throw new Error("Phiên đăng nhập đã hết hạn.");
+    }
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(body?.message || body?.error || "Không tải được dữ liệu Dashboard.");
+    }
+    return body;
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
       setError("");
 
-      // Fetch summary
-      const summaryRes = await fetch(
-        `/api/kpi/dashboard/summary?period=${period}`
-      );
-      if (summaryRes.ok) {
-        const data = await summaryRes.json();
-        setSummary(data.data.summary);
-      }
+      const [summaryBody, distBody, trendsBody] = await Promise.all([
+        fetch(`/api/kpi/dashboard/summary?period=${period}`).then(readJson),
+        fetch(`/api/kpi/dashboard/distribution`).then(readJson),
+        fetch(`/api/kpi/dashboard/trends?days=7`).then(readJson),
+      ]);
 
-      // Fetch distribution
-      const distRes = await fetch(`/api/kpi/dashboard/distribution`);
-      if (distRes.ok) {
-        const data = await distRes.json();
-        setDistribution(data.data);
-      }
-
-      // Fetch trends
-      const trendsRes = await fetch(`/api/kpi/dashboard/trends?days=7`);
-      if (trendsRes.ok) {
-        const data = await trendsRes.json();
-        setTrends(data.data);
-      }
+      setSummary(summaryBody.data.summary);
+      setDistribution(distBody.data);
+      setTrends(trendsBody.data);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Lỗi khi tải dữ liệu"
@@ -202,7 +203,7 @@ export default function DashboardClient() {
             <p className="text-3xl font-bold text-brand-600">
               {summary.avgScore.toFixed(1)}
             </p>
-            <p className="text-xs text-ink-500 mt-1">/ 100 điểm</p>
+            <p className="text-xs text-ink-500 mt-1">100 = đạt · trần 150</p>
           </div>
 
           <div className="card p-4">
@@ -210,7 +211,9 @@ export default function DashboardClient() {
               Tổng Thưởng
             </p>
             <p className="text-3xl font-bold text-green-600">
-              {(summary.totalBonus / 1000000).toFixed(1)}M
+              {summary.totalBonus === null
+                ? "—"
+                : `${(summary.totalBonus / 1000000).toFixed(1)}M`}
             </p>
             <p className="text-xs text-ink-500 mt-1">VND</p>
           </div>
@@ -220,7 +223,9 @@ export default function DashboardClient() {
               Trung Bình/Ca
             </p>
             <p className="text-3xl font-bold text-violet-600">
-              {(summary.avgBonus / 1000).toFixed(0)}K
+              {summary.avgBonus === null
+                ? "—"
+                : `${(summary.avgBonus / 1000).toFixed(0)}K`}
             </p>
             <p className="text-xs text-ink-500 mt-1">VND</p>
           </div>
@@ -302,6 +307,7 @@ export default function DashboardClient() {
                   stroke="#3b82f6"
                   name="MA 3D"
                   strokeDasharray="5 5"
+                  connectNulls
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -315,7 +321,9 @@ export default function DashboardClient() {
               <div>
                 <p className="text-ink-600">Tổng Thưởng</p>
                 <p className="text-lg font-bold">
-                  {(trends.statistics.totalBonusDistributed / 1000).toFixed(0)}K
+                  {trends.statistics.totalBonusDistributed === null
+                    ? "—"
+                    : `${(trends.statistics.totalBonusDistributed / 1000).toFixed(0)}K`}
                 </p>
               </div>
             </div>

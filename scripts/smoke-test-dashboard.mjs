@@ -14,6 +14,7 @@
  *   5. Cảnh báo Phase 4   — có mặt, và ghi rõ nền dữ liệu
  *   6. Không link chết    — mỗi vai trò chỉ được trỏ tới nơi mình vào được
  */
+import { assertLocalTarget } from "./lib/local-guard.mjs";
 import { PrismaClient } from "@prisma/client";
 
 try {
@@ -23,7 +24,8 @@ try {
 }
 
 const BASE = process.env.APP_URL || "http://localhost:3000";
-const PASSWORD = "Gani@2026";
+const PASSWORD = process.env.SMOKE_PASSWORD || "Gani@2026";
+assertLocalTarget({ appUrl: BASE });
 const prisma = new PrismaClient();
 
 let pass = 0;
@@ -394,10 +396,15 @@ async function main() {
 
     const cleared = await getDash(emp);
     const formsAfter = countForms(cleared.html);
+    // Bảng điều hành chỉ hiện tối đa 4 ô (dashboard-service take: 4) — còn
+    // nhiều hơn thì giải trình một ô sẽ có ô kế tiếp lấp vào.
+    const openLeft = await prisma.kpiAnomaly.count({
+      where: { periodId: myAnomaly.periodId, employeeId: hong.id, status: "OPEN" },
+    });
     check(
       "Giải trình xong thì đúng ô đó biến mất, các ô khác giữ nguyên",
-      formsAfter === formsBefore - 1,
-      `trước ${formsBefore} ô, sau ${formsAfter} ô`
+      formsAfter === Math.min(4, openLeft) && !cleared.html.includes(myAnomaly.id),
+      `trước ${formsBefore} ô, sau ${formsAfter} ô, còn ${openLeft} cảnh báo mở`
     );
     check(
       "Còn chỉ tiêu chưa giải trình thì khối vẫn ở lại",

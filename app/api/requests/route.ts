@@ -4,6 +4,8 @@ import { handle, ok, requireUser } from "@/lib/api";
 import { BusinessError } from "@/lib/rbac";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { notify } from "@/lib/telegram";
+import { PUBLIC_USER_SELECT } from "@/lib/services/task-service";
+import { formatVnDateTime } from "@/lib/vn-time";
 import { ERR, TASK_PRIORITIES } from "@/lib/constants";
 
 const schema = z.object({
@@ -71,14 +73,13 @@ export async function POST(req: Request) {
         role: "MANAGER",
         isActive: true,
       },
+      select: { id: true },
     });
     for (const m of managers) {
       await notify({
         userId: m.id,
         title: `Yêu cầu công việc từ phòng ${user.departmentName ?? "khác"}`,
-        body: `${user.fullName} nhờ phòng bạn: ${body.title}. Hạn ${new Date(
-          body.dueDate
-        ).toLocaleString("vi-VN")}`,
+        body: `${user.fullName} nhờ phòng bạn: ${body.title}. Hạn ${formatVnDateTime(body.dueDate)}`,
         level: body.priority === "CRITICAL" ? "CRITICAL" : "WARNING",
         linkUrl: "/requests",
       });
@@ -114,7 +115,11 @@ export async function GET() {
 
     const requests = await prisma.crossDeptRequest.findMany({
       where,
-      include: { requester: true, targetDept: true, approver: true },
+      include: {
+        requester: { select: PUBLIC_USER_SELECT },
+        targetDept: true,
+        approver: { select: PUBLIC_USER_SELECT },
+      },
       orderBy: { createdAt: "desc" },
     });
     return ok({ requests });

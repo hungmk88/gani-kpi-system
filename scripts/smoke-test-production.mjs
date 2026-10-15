@@ -11,6 +11,7 @@
  *   5. Bảo mật trường  — công nhân không xem được số tiền
  *   6. Cầu nối KPI tháng— số ca đã khoá chảy sang cột Số hệ thống của KPI tháng
  */
+import { assertLocalTarget } from "./lib/local-guard.mjs";
 import { PrismaClient } from "@prisma/client";
 
 try {
@@ -20,7 +21,8 @@ try {
 }
 
 const BASE = process.env.APP_URL || "http://localhost:3000";
-const PASSWORD = "Gani@2026";
+const PASSWORD = process.env.SMOKE_PASSWORD || "Gani@2026";
+assertLocalTarget({ appUrl: BASE });
 const prisma = new PrismaClient();
 
 let pass = 0;

@@ -13,7 +13,7 @@ export const metadata = { title: "Đổi mật khẩu — GANI FOODY KPI" };
  * này cũng nằm trong (app) thì nó tự đá chính nó, thành vòng lặp vô tận.
  */
 export default async function ChangePasswordPage() {
-  const session = await requireSession();
+  const session = await requireSession({ allowMustChange: true });
   if (!session) redirect("/login");
 
   const me = await prisma.user.findUnique({

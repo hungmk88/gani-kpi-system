@@ -27,6 +27,7 @@ import {
 } from "@/components/ui";
 import ShiftActions from "./shift-actions";
 import KpiScoreCalculator from "./kpi-score-calculator";
+import { canManageProductionKpi, parseBreakdown } from "@/lib/kpi-calculator";
 import KpiScoreDisplay from "./kpi-score-display";
 
 export const dynamic = "force-dynamic";
@@ -51,8 +52,8 @@ export default async function ShiftDetailPage({
       kpiResults: { include: { user: true } },
       kpiScore: {
         include: {
-          calculatedBy: true,
-          approvedBy: true,
+          calculatedBy: { select: { id: true, fullName: true } },
+          approvedBy: { select: { id: true, fullName: true } },
         },
       },
       audits: {
@@ -88,6 +89,9 @@ export default async function ShiftDetailPage({
   }
 
   const showMoney = canSeeMoney(user);
+  // Nút tính điểm 6 KPI chỉ hiện cho đúng người API cho phép (CEO, ADMIN,
+  // Trưởng phòng Sản xuất) — hiện cho người khác thì bấm vào chỉ nhận 403.
+  const canCalcShiftKpi = await canManageProductionKpi(user);
   const metrics = computeShiftMetrics({
     rawOutputKg: log.rawOutputKg,
     qcPassedKg: log.qcPassedKg,
@@ -361,7 +365,7 @@ export default async function ShiftDetailPage({
           )}
 
           {/* ---- Tính Điểm KPI 6 chỉ tiêu (PHASE 2) ---- */}
-          {log.status === "LOCKED" && isWide && (
+          {log.status === "LOCKED" && canCalcShiftKpi && (
             <KpiScoreCalculator shiftLogId={log.id} />
           )}
 
@@ -376,8 +380,15 @@ export default async function ShiftDetailPage({
                 status={log.kpiScore.status}
                 totalScore={log.kpiScore.totalScore}
                 bonusMultiplier={log.kpiScore.bonusMultiplier}
-                bonusAmount={log.kpiScore.bonusAmount}
-                breakdownJson={log.kpiScore.breakdownJson}
+                bonusAmount={showMoney ? log.kpiScore.bonusAmount : null}
+                breakdownJson={
+                  showMoney
+                    ? log.kpiScore.breakdownJson
+                    : (() => {
+                        const b = parseBreakdown(log.kpiScore.breakdownJson, false);
+                        return b ? JSON.stringify(b) : null;
+                      })()
+                }
                 calculatedBy={log.kpiScore.calculatedBy}
                 calculatedAt={log.kpiScore.calculatedAt}
                 approvedBy={log.kpiScore.approvedBy}

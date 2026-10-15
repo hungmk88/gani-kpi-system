@@ -4,7 +4,10 @@ import { handle, ok, requireUser } from "@/lib/api";
 import { BusinessError } from "@/lib/rbac";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { ERR } from "@/lib/constants";
-import { withProductionRole } from "@/lib/services/production-service";
+import {
+  canSeeMoney,
+  withProductionRole,
+} from "@/lib/services/production-service";
 
 export const runtime = "nodejs";
 
@@ -43,11 +46,20 @@ async function assertManager(user: Awaited<ReturnType<typeof requireUser>>) {
 
 export async function GET() {
   return handle(async () => {
-    await requireUser();
-    const skus = await prisma.productSku.findMany({
+    const user = await withProductionRole(await requireUser());
+    // Đơn giá (unitPriceVnd) là số tiền — chỉ CEO / Giám đốc SX được thấy.
+    const money = canSeeMoney(user);
+    const rows = await prisma.productSku.findMany({
       orderBy: [{ isActive: "desc" }, { skuCode: "asc" }],
     });
-    return ok({ skus });
+    const skus = money
+      ? rows
+      : rows.map((r) => {
+          const { unitPriceVnd: _hidden, ...rest } = r;
+          void _hidden;
+          return rest;
+        });
+    return ok({ skus, includeMoney: money });
   });
 }
 

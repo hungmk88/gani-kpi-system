@@ -4,6 +4,7 @@ import { handle, ok, requireUser } from "@/lib/api";
 import { assertPermission, BusinessError } from "@/lib/rbac";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { computeDeadlines } from "@/lib/kpi";
+import { formatVnDate } from "@/lib/vn-time";
 import { periodName } from "@/lib/codes";
 import { notify } from "@/lib/telegram";
 import { ERR } from "@/lib/constants";
@@ -78,8 +79,8 @@ export async function POST(req: Request) {
         await notify({
           userId: s.id,
           title: `Đã mở kỳ KPI ${period.name}`,
-          body: `Hạn tự khai của bạn: ${deadlines.selfReviewDeadline.toLocaleDateString(
-            "vi-VN"
+          body: `Hạn tự khai của bạn: 23:59 ngày ${formatVnDate(
+            deadlines.selfReviewDeadline
           )}. Quá hạn hệ thống tự khoá.`,
           level: "INFO",
           linkUrl: `/kpi/${period.id}`,

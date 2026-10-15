@@ -1,4 +1,5 @@
 import { prisma } from "../db";
+import { formatVnDate, vnDayDiff, vnParts, vnStartOfDay } from "../vn-time";
 import { notify } from "../notify";
 import { sendCeoAlert } from "../telegram";
 import { sendKpiApprovalRequest } from "../telegram-bot";
@@ -11,12 +12,9 @@ import { sendKpiApprovalRequest } from "../telegram-bot";
  * người chỉ nhận đúng một lần mỗi loại mỗi ngày, dù bộ máy chạy bao nhiêu lượt.
  */
 
-const DAY = 86400_000;
-
-/** Đã nhắc loại này cho người này trong hôm nay chưa. */
+/** Đã nhắc loại này cho người này trong hôm nay (ngày VN) chưa. */
 async function alreadyRemindedToday(userId: string, marker: string) {
-  const since = new Date();
-  since.setHours(0, 0, 0, 0);
+  const since = vnStartOfDay();
   const found = await prisma.notification.findFirst({
     where: {
       userId,
@@ -28,12 +26,9 @@ async function alreadyRemindedToday(userId: string, marker: string) {
   return !!found;
 }
 
+/** Còn bao nhiêu ngày lịch VN tới hạn (0 = hôm nay là ngày hạn). */
 function daysUntil(d: Date, now: Date) {
-  const a = new Date(d);
-  a.setHours(0, 0, 0, 0);
-  const b = new Date(now);
-  b.setHours(0, 0, 0, 0);
-  return Math.round((a.getTime() - b.getTime()) / DAY);
+  return vnDayDiff(now, d);
 }
 
 export async function runDeadlineReminders(now = new Date()) {
@@ -69,13 +64,13 @@ export async function runDeadlineReminders(now = new Date()) {
               left === 0
                 ? `HÔM NAY là hạn cuối tự khai KPI ${p.name}`
                 : `Ngày mai hết hạn tự khai KPI ${p.name}`,
-            body: `Bạn còn ${row._count._all} chỉ tiêu chưa khai. Quá 23:59 ngày ${p.selfReviewDeadline.getDate()} hệ thống tự khoá, không mở lại được.`,
+            body: `Bạn còn ${row._count._all} chỉ tiêu chưa khai. Quá 23:59 ngày ${vnParts(p.selfReviewDeadline).day} hệ thống tự khoá, không mở lại được.`,
             level: left === 0 ? "CRITICAL" : "WARNING",
             linkUrl: `/kpi/${p.id}`,
             zaloKind: "KPI_REMINDER",
             zaloData: {
               period_name: p.name,
-              deadline_date: p.selfReviewDeadline.toLocaleDateString("vi-VN"),
+              deadline_date: formatVnDate(p.selfReviewDeadline),
               pending_count: String(row._count._all),
             },
           });
@@ -111,13 +106,13 @@ export async function runDeadlineReminders(now = new Date()) {
               left === 0
                 ? `HÔM NAY là hạn cuối duyệt KPI ${p.name}`
                 : `Ngày mai hết hạn duyệt KPI ${p.name}`,
-            body: `Phòng bạn còn ${pending} dòng chưa xử lý. Quá 23:59 ngày ${p.managerReviewDeadline.getDate()} hệ thống tự đẩy hết lên Ban Giám đốc.`,
+            body: `Phòng bạn còn ${pending} dòng chưa xử lý. Quá 23:59 ngày ${vnParts(p.managerReviewDeadline).day} hệ thống tự đẩy hết lên Ban Giám đốc.`,
             level: left === 0 ? "CRITICAL" : "WARNING",
             linkUrl: `/kpi/${p.id}`,
             zaloKind: "KPI_REMINDER",
             zaloData: {
               period_name: p.name,
-              deadline_date: p.managerReviewDeadline.toLocaleDateString("vi-VN"),
+              deadline_date: formatVnDate(p.managerReviewDeadline),
               pending_count: String(pending),
             },
           });
@@ -144,7 +139,7 @@ export async function runDeadlineReminders(now = new Date()) {
             await notify({
               userId: c.id,
               title: `Cần chốt kỳ KPI ${p.name}`,
-              body: `Còn ${pending} dòng chờ bạn duyệt. Hạn chốt là ngày ${p.ceoApprovalDeadline.getDate()}.`,
+              body: `Còn ${pending} dòng chờ bạn duyệt. Hạn chốt là ngày ${vnParts(p.ceoApprovalDeadline).day}.`,
               level: left <= 0 ? "CRITICAL" : "WARNING",
               linkUrl: `/kpi/${p.id}`,
             });
@@ -191,11 +186,27 @@ export async function remindStaleMismatches(now = new Date(), staleHours = 48) {
 
   if (stale === 0) return { stale: 0, alerted: false };
 
+  // Cron chạy 12 lượt/ngày — chỉ báo Ban Giám đốc tối đa 1 lần mỗi ngày.
+  const alertedToday = await prisma.auditLog.findFirst({
+    where: { action: "STALE_MISMATCH_ALERT", createdAt: { gte: vnStartOfDay(now) } },
+    select: { id: true },
+  });
+  if (alertedToday) return { stale, alerted: false, reason: "Đã báo hôm nay" };
+
   const res = await sendCeoAlert({
     title: `${stale} ô KPI treo vì lệch số quá ${staleHours} giờ`,
     details:
       "Hệ thống không tự chọn số khi các nguồn đá nhau. Chưa ai quyết thì mấy ô này không có số để chấm điểm.",
     actionPath: "/reconciliation",
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      action: "STALE_MISMATCH_ALERT",
+      entityName: "reconciliations",
+      entityId: "system",
+      afterPayload: JSON.stringify({ stale, sent: res.sent === true }),
+    },
   });
 
   return { stale, alerted: res.sent === true };

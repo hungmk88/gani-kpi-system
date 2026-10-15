@@ -11,6 +11,7 @@ import { notify } from "./notify";
 import { ceoApprove } from "./services/kpi-service";
 import { classifyScore, summarizeResults } from "./kpi";
 import { ROLE_LABEL, TASK_STATUS_LABEL, type Role } from "./constants";
+import { formatVnDate, formatVnDateTime, vnDayRange } from "./vn-time";
 import type { SessionUser } from "./auth";
 
 /**
@@ -31,6 +32,12 @@ import type { SessionUser } from "./auth";
  *      nhắn bot thì bot chỉ chào, không làm gì.
  *   3. Mọi thao tác vẫn đi qua đúng hàm nghiệp vụ như trên web (ceoApprove...),
  *      nên vẫn bị chặn quyền và vẫn ghi nhật ký đầy đủ.
+ *   4. Bot CHỈ làm việc trong chat riêng (chat.type === "private"). Nối tài
+ *      khoản trong nhóm thì cả nhóm dùng chung tài khoản người đó — nên chặn.
+ *      Người dùng luôn được nhận diện theo `from.id` (người gõ/bấm), không
+ *      theo `chat.id`.
+ *   5. Mã nối 6 số: tối đa 5 lần nhập sai mỗi chat trong 15 phút (đếm trên
+ *      nhật ký audit), cộng một trần chung toàn hệ thống chống dò mã hàng loạt.
  * ---------------------------------------------------------------------------
  */
 
@@ -130,19 +137,26 @@ export async function sendKpiApprovalRequest(kpiResultId: string) {
 
 /* ------------------------------------------------------ XỬ LÝ CẬP NHẬT */
 
+type TgChat = { id: number; type?: string };
+
 type TgUpdate = {
   message?: {
-    chat?: { id: number };
-    from?: { id: number; first_name?: string };
+    chat?: TgChat;
+    from?: { id: number; first_name?: string; is_bot?: boolean };
     text?: string;
   };
   callback_query?: {
     id: string;
     data?: string;
     from: { id: number; first_name?: string };
-    message?: { chat: { id: number }; message_id: number; text?: string };
+    message?: { chat: TgChat; message_id: number; text?: string };
   };
 };
+
+/** Chỉ nhận lệnh/nút bấm trong chat riêng giữa người dùng và bot. */
+function isPrivateChat(chat: TgChat | undefined) {
+  return chat?.type === "private";
+}
 
 export async function handleTelegramUpdate(update: TgUpdate, ip?: string | null) {
   if (update.callback_query) {
@@ -167,6 +181,12 @@ async function handleCallback(
       show_alert: alert,
     });
   };
+
+  // Nút bấm nằm trong tin nhắn ở nhóm → không xử lý (chỉ chat riêng)
+  if (cb.message && !isPrivateChat(cb.message.chat)) {
+    await answer("Bot chỉ nhận thao tác trong chat riêng với bot.");
+    return { handled: true, denied: true };
+  }
 
   const actor = await resolveActor(cb.from.id);
   if (!actor) {
@@ -217,19 +237,26 @@ async function handleCallback(
     }
 
     // Đi qua đúng hàm nghiệp vụ trên web: có ghi nhật ký, có báo nhân viên
-    await ceoApprove(
+    const result = await ceoApprove(
       actor,
       [targetId],
       { ceoNote: "Duyệt qua Telegram" },
       meta
     );
+    if (result.finalized === 0) {
+      const reason =
+        result.skipped.find((x) => x.id === targetId)?.reason ??
+        "Dòng này chưa qua bước trưởng phòng duyệt";
+      await answer(`⚠️ Chưa chốt được: ${reason}.`);
+      return { handled: true, approved: false };
+    }
 
     await answer(
       `✅ Đã duyệt và khoá KPI "${row.kpiDefinition?.name ?? "—"}" của ${row.employee.fullName}.`
     );
     await editOriginal(
       cb,
-      `✅ ĐÃ DUYỆT & KHOÁ bởi ${actor.fullName} lúc ${new Date().toLocaleString("vi-VN")}`
+      `✅ ĐÃ DUYỆT & KHOÁ bởi ${actor.fullName} lúc ${formatVnDateTime(new Date())}`
     );
     return { handled: true, approved: true };
   }
@@ -275,7 +302,7 @@ async function handleCallback(
       data: {
         ceoNote:
           actor.role === "CEO"
-            ? `Ban Giám đốc yêu cầu giải trình (${new Date().toLocaleString("vi-VN")})`
+            ? `Ban Giám đốc yêu cầu giải trình (${formatVnDateTime(new Date())})`
             : row.ceoNote,
       },
     });
@@ -300,7 +327,7 @@ async function handleCallback(
     await answer(`💬 Đã gửi yêu cầu giải trình tới ${row.employee.fullName}.`);
     await editOriginal(
       cb,
-      `💬 ĐÃ YÊU CẦU GIẢI TRÌNH — ${actor.fullName}, ${new Date().toLocaleString("vi-VN")}`
+      `💬 ĐÃ YÊU CẦU GIẢI TRÌNH — ${actor.fullName}, ${formatVnDateTime(new Date())}`
     );
     return { handled: true };
   }
@@ -368,22 +395,38 @@ async function handleCommand(
   msg: NonNullable<TgUpdate["message"]>,
   ip?: string | null
 ) {
-  const chatId = String(msg.chat?.id ?? msg.from?.id ?? "");
   const text = (msg.text ?? "").trim();
-  if (!chatId) return { handled: false };
+  if (!msg.chat || !msg.from || msg.from.is_bot) return { handled: false };
 
   const [rawCmd, ...args] = text.split(/\s+/);
   const cmd = rawCmd.toLowerCase().replace(/@.*$/, "");
+
+  // Trong nhóm: không nối, không trả dữ liệu — chỉ nhắc chuyển sang chat riêng
+  // khi có người gõ lệnh, còn tin nhắn thường thì im lặng.
+  if (!isPrivateChat(msg.chat)) {
+    if (cmd.startsWith("/")) {
+      await sendMessage(
+        String(msg.chat.id),
+        "🔒 Vì lý do bảo mật, bot chỉ nhận lệnh trong chat riêng. Hãy nhắn trực tiếp cho bot."
+      );
+    }
+    return { handled: true, denied: true, reason: "NOT_PRIVATE_CHAT" };
+  }
+
+  // Chat riêng: chat.id trùng from.id. Vẫn nhận diện theo from.id (người gõ)
+  // và trả lời vào đúng chat đó.
+  const chatId = String(msg.chat.id);
+  const fromId = String(msg.from.id);
 
   /* --- /start: nối tài khoản --- */
   if (cmd === "/start") {
     const code = args[0];
     if (code) {
-      const res = await linkAccount(code, chatId, ip);
+      const res = await linkAccount(code, fromId, ip);
       await sendMessage(chatId, res.message);
       return { handled: true, linked: res.ok };
     }
-    const existing = await resolveActor(chatId);
+    const existing = await resolveActor(fromId);
     if (existing) {
       await sendMessage(
         chatId,
@@ -412,7 +455,7 @@ async function handleCommand(
     return { handled: true };
   }
 
-  const actor = await resolveActor(chatId);
+  const actor = await resolveActor(fromId);
   if (!actor) {
     await sendMessage(
       chatId,
@@ -440,13 +483,13 @@ async function handleCommand(
 
   /* --- /homnay --- */
   if (cmd === "/homnay") {
-    const endOfToday = new Date();
-    endOfToday.setHours(23, 59, 59, 999);
+    // Hết ngày hôm nay theo giờ VN (không theo giờ server)
+    const endOfToday = vnDayRange().lt;
     const tasks = await prisma.task.findMany({
       where: {
         assigneeId: actor.id,
         status: { notIn: ["DONE", "CANCELLED"] },
-        dueDate: { lte: endOfToday },
+        dueDate: { lt: endOfToday },
       },
       orderBy: [{ riskScore: "desc" }, { dueDate: "asc" }],
       take: 10,
@@ -463,7 +506,7 @@ async function handleCommand(
       const late = t.dueDate < new Date();
       lines.push(
         `${late ? "🔴" : "•"} <b>${escapeHtml(t.title)}</b>`,
-        `   ${TASK_STATUS_LABEL[t.status]} · hạn ${t.dueDate.toLocaleDateString("vi-VN")}${late ? " (ĐÃ TRỄ)" : ""}`
+        `   ${TASK_STATUS_LABEL[t.status]} · hạn ${formatVnDate(t.dueDate)}${late ? " (ĐÃ TRỄ)" : ""}`
       );
     }
     lines.push("", `<a href="${appUrl("/tasks")}">Mở danh sách đầy đủ</a>`);
@@ -522,7 +565,7 @@ async function handleCommand(
     if (draft > 0) {
       lines.push(
         "",
-        `⚠️ Còn <b>${draft}</b> chỉ tiêu bạn chưa tự khai. Hạn ${period.selfReviewDeadline.toLocaleDateString("vi-VN")}.`
+        `⚠️ Còn <b>${draft}</b> chỉ tiêu bạn chưa tự khai. Hạn ${formatVnDate(period.selfReviewDeadline)}.`
       );
     }
     lines.push("", `<a href="${appUrl("/kpi")}">Mở bảng KPI</a>`);
@@ -556,7 +599,14 @@ async function handleCommand(
           dueDate: { lt: new Date() },
         },
       }),
-      prisma.reconciliation.count({ where: { status: "MISMATCH" } }),
+      prisma.reconciliation.count({
+        where: {
+          status: "MISMATCH",
+          ...(actor.role === "MANAGER"
+            ? { employee: { departmentId: actor.departmentId ?? "__none__" } }
+            : {}),
+        },
+      }),
     ]);
 
     const lines = [
@@ -636,22 +686,81 @@ async function handleCommand(
 
 /* ------------------------------------------------------- NỐI TÀI KHOẢN */
 
+/** Số lần nhập sai mã tối đa của một tài khoản Telegram trong cửa sổ thời gian. */
+const LINK_MAX_FAILS_PER_CHAT = 5;
+/** Trần chung toàn hệ thống — chặn dò mã bằng nhiều tài khoản Telegram. */
+const LINK_MAX_FAILS_GLOBAL = 100;
+const LINK_FAIL_WINDOW_MS = 15 * 60_000;
+
+async function recordLinkFailure(
+  chatId: string,
+  reason: string,
+  ip?: string | null
+) {
+  await writeAudit({
+    actor: null,
+    action: "TELEGRAM_LINK_FAILED",
+    entityName: "telegram_chats",
+    entityId: chatId,
+    reason,
+    ip: ip ?? null,
+    userAgent: "telegram-bot",
+  });
+}
+
 async function linkAccount(code: string, chatId: string, ip?: string | null) {
+  const since = new Date(Date.now() - LINK_FAIL_WINDOW_MS);
+  const [failsThisChat, failsGlobal] = await Promise.all([
+    prisma.auditLog.count({
+      where: {
+        action: "TELEGRAM_LINK_FAILED",
+        entityId: chatId,
+        createdAt: { gte: since },
+      },
+    }),
+    prisma.auditLog.count({
+      where: { action: "TELEGRAM_LINK_FAILED", createdAt: { gte: since } },
+    }),
+  ]);
+  if (failsThisChat >= LINK_MAX_FAILS_PER_CHAT) {
+    return {
+      ok: false,
+      message:
+        "⛔ Bạn đã nhập sai mã quá nhiều lần. Vui lòng chờ 15 phút rồi lấy mã mới trên hệ thống.",
+    };
+  }
+  if (failsGlobal >= LINK_MAX_FAILS_GLOBAL) {
+    console.warn("[TELEGRAM] Quá nhiều lượt nhập sai mã nối — tạm khoá nối tài khoản.");
+    return {
+      ok: false,
+      message:
+        "⛔ Chức năng nối tài khoản đang tạm khoá do có quá nhiều lượt nhập sai. Vui lòng thử lại sau ít phút.",
+    };
+  }
+
+  if (!/^\d{6}$/.test(code)) {
+    await recordLinkFailure(chatId, "Sai định dạng mã", ip);
+    return { ok: false, message: "❌ Mã nối phải gồm đúng 6 chữ số." };
+  }
+
   const link = await prisma.telegramLink.findUnique({
     where: { code },
     include: { user: { include: { department: true } } },
   });
 
   if (!link) {
+    await recordLinkFailure(chatId, "Mã không tồn tại", ip);
     return { ok: false, message: "❌ Mã không đúng. Kiểm tra lại trong hệ thống." };
   }
   if (link.usedAt) {
+    await recordLinkFailure(chatId, "Mã đã dùng", ip);
     return {
       ok: false,
       message: "❌ Mã này đã dùng rồi. Vào hệ thống lấy mã mới.",
     };
   }
-  if (link.expiresAt < new Date()) {
+  if (link.expiresAt.getTime() <= Date.now()) {
+    await recordLinkFailure(chatId, "Mã hết hạn", ip);
     return {
       ok: false,
       message: "❌ Mã đã hết hạn (mã chỉ sống 10 phút). Vào hệ thống lấy mã mới.",
@@ -659,6 +768,19 @@ async function linkAccount(code: string, chatId: string, ip?: string | null) {
   }
   if (!link.user.isActive) {
     return { ok: false, message: "❌ Tài khoản này đã bị khoá." };
+  }
+
+  // Đánh dấu đã dùng NGUYÊN TỬ — hai tin /start cùng mã gửi sát nhau thì chỉ
+  // một tin thắng.
+  const claimed = await prisma.telegramLink.updateMany({
+    where: { id: link.id, usedAt: null, expiresAt: { gt: new Date() } },
+    data: { usedAt: new Date(), chatId },
+  });
+  if (claimed.count === 0) {
+    return {
+      ok: false,
+      message: "❌ Mã này đã dùng rồi. Vào hệ thống lấy mã mới.",
+    };
   }
 
   // Một chat Telegram chỉ nối được với một tài khoản
@@ -670,10 +792,6 @@ async function linkAccount(code: string, chatId: string, ip?: string | null) {
   await prisma.user.update({
     where: { id: link.userId },
     data: { telegramChatId: chatId },
-  });
-  await prisma.telegramLink.update({
-    where: { id: link.id },
-    data: { usedAt: new Date(), chatId },
   });
 
   await writeAudit({

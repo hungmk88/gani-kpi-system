@@ -1,12 +1,33 @@
 import { prisma } from "../db";
 import { assertCanAssignTask, BusinessError } from "../rbac";
 import { ERR, type TaskPriority, type TaskStatus } from "../constants";
-import { nextTaskCode } from "../codes";
+import { nextTaskCode, retryOnCodeClash } from "../codes";
 import { writeAudit } from "../audit";
 import { notify, sendCeoAlert } from "../telegram";
 import { scoreTaskRisk } from "../risk";
 import { riskContextFor } from "./risk-service";
 import type { SessionUser } from "../auth";
+import { formatVnDateTime } from "../vn-time";
+
+/**
+ * Trường của User được phép trả ra API khi kèm theo task/bình luận/yêu cầu.
+ * KHÔNG dùng `include: { assignee: true }` — sẽ lộ số điện thoại,
+ * telegramChatId... của người khác.
+ */
+export const PUBLIC_USER_SELECT = {
+  id: true,
+  fullName: true,
+  email: true,
+  departmentId: true,
+  jobTitle: true,
+} as const;
+
+/** Trạng thái được phép khi mới tạo việc — không tạo thẳng việc đã xong/đã huỷ. */
+const INITIAL_STATUSES: readonly TaskStatus[] = [
+  "BACKLOG",
+  "TO_DO",
+  "IN_PROGRESS",
+];
 
 export type CreateTaskInput = {
   title: string;
@@ -42,6 +63,7 @@ export async function createTask(
   if (input.assigneeId) {
     const assignee = await prisma.user.findUnique({
       where: { id: input.assigneeId },
+      select: { isActive: true, departmentId: true },
     });
     if (!assignee || !assignee.isActive) {
       throw new BusinessError(
@@ -58,7 +80,12 @@ export async function createTask(
 
   const dueDate = new Date(input.dueDate);
   const startDate = input.startDate ? new Date(input.startDate) : new Date();
-  const status = input.status ?? "TO_DO";
+  // Việc mới tạo luôn bắt đầu ở trạng thái "đang mở" — chặn tạo thẳng DONE
+  // (né khâu nghiệm thu) hoặc CANCELLED.
+  const status: TaskStatus =
+    input.status && INITIAL_STATUSES.includes(input.status)
+      ? input.status
+      : "TO_DO";
 
   const ctx = await riskContextFor(null, input.assigneeId ?? null);
   const risk = scoreTaskRisk({
@@ -72,7 +99,8 @@ export async function createTask(
     ...ctx,
   });
 
-  const task = await prisma.task.create({
+  const task = await retryOnCodeClash(async () =>
+    prisma.task.create({
     data: {
       code: await nextTaskCode(),
       title: input.title,
@@ -92,8 +120,11 @@ export async function createTask(
       isAiGenerated: input.isAiGenerated ?? false,
       aiConfidence: input.aiConfidence ?? null,
     },
-    include: { assignee: true, department: true },
-  });
+    include: {
+      assignee: { select: PUBLIC_USER_SELECT },
+      department: true,
+    },
+  }));
 
   await writeAudit({
     actor,
@@ -113,9 +144,7 @@ export async function createTask(
     await notify({
       userId: task.assigneeId,
       title: `Bạn được giao việc mới: ${task.title}`,
-      body: `Người giao: ${actor.fullName} · Hạn chót: ${dueDate.toLocaleString(
-        "vi-VN"
-      )} · Mức ưu tiên: ${input.priority}`,
+      body: `Người giao: ${actor.fullName} · Hạn chót: ${formatVnDateTime(dueDate)} · Mức ưu tiên: ${input.priority}`,
       level: input.priority === "CRITICAL" ? "CRITICAL" : "INFO",
       linkUrl: `/tasks/${task.id}`,
     });
@@ -126,7 +155,7 @@ export async function createTask(
       title: `Việc khẩn cấp vừa được tạo: ${task.title}`,
       details: `Phòng ${task.department.name} · Giao cho ${
         task.assignee?.fullName ?? "CHƯA GIAO"
-      } · Hạn ${dueDate.toLocaleString("vi-VN")} · Người tạo ${actor.fullName}`,
+      } · Hạn ${formatVnDateTime(dueDate)} · Người tạo ${actor.fullName}`,
       actionPath: `/tasks/${task.id}`,
     });
   }

@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { ROLES } from "./constants";
+import { assertSheetRowLimit, loadWorkbook } from "./excel";
 
 /**
  * FILE MẪU + BỘ ĐỌC DANH SÁCH NHÂN SỰ.
@@ -115,11 +116,11 @@ export async function parseUserFile(buffer: ArrayBuffer): Promise<{
   rows: UserImportRow[];
   errors: string[];
 }> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
+  const wb = await loadWorkbook(buffer);
 
   const ws = wb.getWorksheet("NHAN_SU") ?? wb.worksheets[0];
   if (!ws) return { rows: [], errors: ["File không có sheet dữ liệu nào."] };
+  assertSheetRowLimit(ws);
 
   const rows: UserImportRow[] = [];
   const errors: string[] = [];

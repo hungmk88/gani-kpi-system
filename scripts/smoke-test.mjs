@@ -10,6 +10,7 @@
  *   4. Data Rec.   — số hệ thống lệch số tự khai > 5% → phải bật cờ lệch số
  *   5. Audit Log   — Ban Giám đốc sửa điểm đã chốt → phải sinh bản ghi audit
  */
+import { assertLocalTarget } from "./lib/local-guard.mjs";
 import { PrismaClient } from "@prisma/client";
 
 try {
@@ -19,7 +20,8 @@ try {
 }
 
 const BASE = process.env.APP_URL || "http://localhost:3000";
-const PASSWORD = "Gani@2026";
+const PASSWORD = process.env.SMOKE_PASSWORD || "Gani@2026";
+assertLocalTarget({ appUrl: BASE });
 const prisma = new PrismaClient();
 
 let pass = 0;
@@ -174,8 +176,10 @@ async function main() {
   });
   const capRow = await prisma.kpiResult.findFirst({
     where: { periodId: period.id, employeeId: salesEmpUser.id },
-    include: { kpiDefinition: true },
+    include: { kpiDefinition: { include: { department: true } } },
   });
+  // Trần chung 150%, riêng Sales 120% (chốt 10/09/2026 — lib/constants.ts)
+  const CAP = capRow.kpiDefinition?.department?.code === "SALES" ? 120 : 150;
 
   // Đặt chỉ tiêu 100, thực tế 200 → đạt 200% nhưng phải cắt còn 150%
   //
@@ -207,13 +211,13 @@ async function main() {
   });
   const capped = await prisma.kpiResult.findUnique({ where: { id: capRow.id } });
   check(
-    "Đạt 200% chỉ tiêu nhưng mức đạt bị cắt còn đúng 150%",
-    capped.achievementPercent === 150 && capped.isCapped === true,
+    `Đạt 200% chỉ tiêu nhưng mức đạt bị cắt còn đúng trần ${CAP}%`,
+    capped.achievementPercent === CAP && capped.isCapped === true,
     `achievement=${capped.achievementPercent}, isCapped=${capped.isCapped}, http=${capRes.status}`
   );
-  const expectedScore = Math.round(150 * capped.weightPercent) / 100;
+  const expectedScore = Math.round(CAP * capped.weightPercent) / 100;
   check(
-    `Điểm có trọng số tính đúng: 150% × ${capped.weightPercent}% = ${expectedScore}`,
+    `Điểm có trọng số tính đúng: ${CAP}% × ${capped.weightPercent}% = ${expectedScore}`,
     Math.abs(capped.weightedScore - expectedScore) < 0.01,
     `weightedScore=${capped.weightedScore}`
   );
@@ -320,6 +324,21 @@ async function main() {
   /* ---------------------------------------------------------------- TEST 5 */
   console.log("\nTEST 5 — Nhật ký: Ban Giám đốc sửa điểm KPI đã chốt");
 
+  // Đúng thứ tự 3 cấp: CEO chỉ chốt được dòng đã qua trưởng phòng
+  const earlyApprove = await ceo("/api/kpi/approve", {
+    method: "POST",
+    body: JSON.stringify({ resultIds: [mmRow.id] }),
+  });
+  const notYet = await prisma.kpiResult.findUnique({ where: { id: mmRow.id } });
+  check(
+    "Ban Giám đốc không chốt được dòng chưa qua trưởng phòng",
+    notYet.status !== "FINALIZED" && earlyApprove.body?.skipped?.length === 1,
+    `status=${notYet.status}, skipped=${JSON.stringify(earlyApprove.body?.skipped)}`
+  );
+  await salesMgr(`/api/kpi/results/${mmRow.id}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "MANAGER_REVIEW", actualFinal: 470 }),
+  });
   await ceo("/api/kpi/approve", {
     method: "POST",
     body: JSON.stringify({ resultIds: [mmRow.id] }),

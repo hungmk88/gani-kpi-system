@@ -10,6 +10,7 @@
  *   4. AI KPI Advisory— đề xuất không bao giờ vượt 150, không ghi vào bảng điểm
  *   5. Gantt          — chặn vòng lặp phụ thuộc
  */
+import { assertLocalTarget } from "./lib/local-guard.mjs";
 import { PrismaClient } from "@prisma/client";
 
 try {
@@ -19,7 +20,9 @@ try {
 }
 
 const BASE = process.env.APP_URL || "http://localhost:3000";
-const PASSWORD = "Gani@2026";
+const PASSWORD = process.env.SMOKE_PASSWORD || "Gani@2026";
+assertLocalTarget({ appUrl: BASE });
+const TEST_STARTED_AT = new Date();
 const prisma = new PrismaClient();
 
 let pass = 0;
@@ -116,14 +119,16 @@ async function main() {
     `nhận được: ${full.body?.draft?.assigneeName} (${full.body?.draft?.assigneeId})`
   );
   const due = full.body?.draft?.dueDate ? new Date(full.body.draft.dueDate) : null;
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  // So theo GIỜ VIỆT NAM, không theo múi giờ của máy chạy kiểm thử
+  const vn = (d) => {
+    const v = new Date(d.getTime() + 7 * 3600_000);
+    return { day: v.getUTCDate(), hour: v.getUTCHours() };
+  };
+  const tomorrowVn = vn(new Date(Date.now() + 86_400_000));
   check(
-    "Hiểu 'trước 5h chiều mai' thành ngày mai lúc 17:00",
-    due &&
-      due.getDate() === tomorrow.getDate() &&
-      due.getHours() === 17,
-    `nhận được: ${due?.toLocaleString("vi-VN")}`
+    "Hiểu 'trước 5h chiều mai' thành ngày mai lúc 17:00 (giờ VN)",
+    due && vn(due).day === tomorrowVn.day && vn(due).hour === 17,
+    `nhận được: ${due?.toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`
   );
   check(
     "Nhận ra chữ 'gấp' là mức ưu tiên cao",
@@ -515,7 +520,8 @@ async function main() {
   await prisma.task.deleteMany({
     where: { title: { startsWith: "Kiểm thử P2" } },
   });
-  await prisma.aiSuggestion.deleteMany({});
+  // Chỉ xoá đề xuất sinh ra TRONG lượt kiểm thử này, không xoá lịch sử AI thật
+  await prisma.aiSuggestion.deleteMany({ where: { createdAt: { gte: TEST_STARTED_AT } } });
   console.log("  · đã xoá công việc và đề xuất do bài kiểm thử tạo ra");
 
   console.log(`\n${"─".repeat(56)}`);

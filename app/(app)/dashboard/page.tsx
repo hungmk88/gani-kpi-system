@@ -1,3 +1,4 @@
+import { formatVnDate, formatVnTime, VN_TZ } from "@/lib/vn-time";
 import Link from "next/link";
 import { PartyPopper, Target } from "lucide-react";
 import { requireSession } from "@/lib/auth";
@@ -55,14 +56,12 @@ export default async function DashboardPage() {
         subtitle={`${ROLE_LABEL[user.role]}${
           user.departmentName ? ` · Phòng ${user.departmentName}` : ""
         } · ${now.toLocaleDateString("vi-VN", {
+          timeZone: VN_TZ,
           weekday: "long",
           day: "2-digit",
           month: "2-digit",
           year: "numeric",
-        })} · ${now.toLocaleTimeString("vi-VN", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })}`}
+        })} · ${formatVnTime(now)}`}
       />
 
       {/* 1 ── Nhịp kỳ KPI. Quản trị không có KPI nên không thấy khối này. */}
@@ -235,7 +234,7 @@ export default async function DashboardPage() {
                       <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                         Còn <b>{d.myKpi.draftCount}</b> chỉ tiêu chưa tự khai.
                         Hạn chót{" "}
-                        {d.myKpi.selfReviewDeadline.toLocaleDateString("vi-VN")}.
+                        23:59 ngày {formatVnDate(d.myKpi.selfReviewDeadline)}.
                       </div>
                     )}
 

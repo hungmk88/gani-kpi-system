@@ -12,6 +12,7 @@
  *   5. Bot Telegram    — sai khoá webhook bị chặn, sai vai trò không duyệt được
  *   6. Nối tài khoản   — mã dùng một lần, hết hạn thì thôi
  */
+import { assertLocalTarget } from "./lib/local-guard.mjs";
 import crypto from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 
@@ -22,7 +23,9 @@ try {
 }
 
 const BASE = process.env.APP_URL || "http://localhost:3000";
-const PASSWORD = "Gani@2026";
+const PASSWORD = process.env.SMOKE_PASSWORD || "Gani@2026";
+assertLocalTarget({ appUrl: BASE });
+const TEST_STARTED_AT = new Date();
 const prisma = new PrismaClient();
 
 let pass = 0;
@@ -568,7 +571,7 @@ async function main() {
         id: "cb1",
         data: `KPI_APPROVE:${approvalRow.id}`,
         from: { id: 777777777, first_name: "Người lạ" },
-        message: { chat: { id: 777777777 }, message_id: 1, text: "x" },
+        message: { chat: { id: 777777777, type: "private" }, message_id: 1, text: "x" },
       },
     },
     webhookSecret
@@ -589,7 +592,7 @@ async function main() {
         id: "cb2",
         data: `KPI_APPROVE:${approvalRow.id}`,
         from: { id: Number(FAKE_EMP_CHAT), first_name: "Hồng" },
-        message: { chat: { id: Number(FAKE_EMP_CHAT) }, message_id: 2, text: "x" },
+        message: { chat: { id: Number(FAKE_EMP_CHAT), type: "private" }, message_id: 2, text: "x" },
       },
     },
     webhookSecret
@@ -620,7 +623,7 @@ async function main() {
         id: "cb3",
         data: `KPI_APPROVE:${approvalRow.id}`,
         from: { id: Number(FAKE_CEO_CHAT), first_name: "Gia" },
-        message: { chat: { id: Number(FAKE_CEO_CHAT) }, message_id: 3, text: "x" },
+        message: { chat: { id: Number(FAKE_CEO_CHAT), type: "private" }, message_id: 3, text: "x" },
       },
     },
     webhookSecret
@@ -650,7 +653,7 @@ async function main() {
         id: "cb4",
         data: `KPI_APPROVE:${approvalRow.id}`,
         from: { id: Number(FAKE_CEO_CHAT), first_name: "Gia" },
-        message: { chat: { id: Number(FAKE_CEO_CHAT) }, message_id: 4, text: "x" },
+        message: { chat: { id: Number(FAKE_CEO_CHAT), type: "private" }, message_id: 4, text: "x" },
       },
     },
     webhookSecret
@@ -683,7 +686,7 @@ async function main() {
   const wrongCode = await postTelegram(
     {
       message: {
-        chat: { id: 900000003 },
+        chat: { id: 900000003, type: "private" },
         from: { id: 900000003 },
         text: "/start 000000",
       },
@@ -700,7 +703,7 @@ async function main() {
   const linkOk = await postTelegram(
     {
       message: {
-        chat: { id: 900000004 },
+        chat: { id: 900000004, type: "private" },
         from: { id: 900000004 },
         text: `/start ${linkCode}`,
       },
@@ -717,7 +720,7 @@ async function main() {
   const reuse = await postTelegram(
     {
       message: {
-        chat: { id: 900000005 },
+        chat: { id: 900000005, type: "private" },
         from: { id: 900000005 },
         text: `/start ${linkCode}`,
       },
@@ -742,7 +745,7 @@ async function main() {
   const expired = await postTelegram(
     {
       message: {
-        chat: { id: 900000006 },
+        chat: { id: 900000006, type: "private" },
         from: { id: 900000006 },
         text: `/start ${expiredCode}`,
       },
@@ -766,7 +769,7 @@ async function main() {
   await prisma.kpiActualFeed.deleteMany({
     where: { sourceCode: { in: ["test-ipos", "test-crm"] } },
   });
-  await prisma.telegramLink.deleteMany({});
+  await prisma.telegramLink.deleteMany({ where: { createdAt: { gte: TEST_STARTED_AT } } });
   for (const id of new Set(CLEANUP.userIds)) {
     await prisma.user.update({
       where: { id },

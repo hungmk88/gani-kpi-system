@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { handle, ok, requireUser } from "@/lib/api";
 import { clientMeta } from "@/lib/audit";
@@ -7,11 +8,18 @@ import {
   withProductionRole,
 } from "@/lib/services/production-service";
 import { PRODUCTION_STAGES, SHIFT_TYPES } from "@/lib/production/constants";
+import { BusinessError } from "@/lib/rbac";
+import { ERR } from "@/lib/constants";
+import { parseVnDate } from "@/lib/vn-time";
 
 export const runtime = "nodejs";
 
 const schema = z.object({
-  shiftDate: z.string().datetime("Ngày ca không hợp lệ."),
+  // Ngày ca là NGÀY: nhận "YYYY-MM-DD", vẫn nhận ISO đầy đủ cho client cũ.
+  shiftDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày ca không hợp lệ.")
+    .or(z.string().datetime("Ngày ca không hợp lệ.")),
   shiftType: z.enum(SHIFT_TYPES),
   skuId: z.string().min(1),
   rawOutputKg: z.number().min(0),
@@ -37,7 +45,7 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const status = url.searchParams.get("status");
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.ProductionShiftLogWhereInput = {};
     if (status) where.status = status;
 
     // Công nhân chỉ thấy ca mình có tham gia hoặc ca mình khai.
@@ -59,10 +67,16 @@ export async function GET(req: Request) {
       where,
       include: {
         sku: true,
-        createdBy: true,
-        qcOfficer: true,
-        lockedBy: true,
-        participants: { include: { user: true } },
+        createdBy: { select: { id: true, fullName: true } },
+        qcOfficer: { select: { id: true, fullName: true } },
+        lockedBy: { select: { id: true, fullName: true } },
+        participants: {
+          include: {
+            user: {
+              select: { id: true, fullName: true, productionRole: true, employmentType: true },
+            },
+          },
+        },
         _count: { select: { audits: true } },
       },
       orderBy: [{ shiftDate: "desc" }, { shiftType: "asc" }],
@@ -79,9 +93,16 @@ export async function POST(req: Request) {
     const user = await withProductionRole(await requireUser());
     const body = schema.parse(await req.json());
 
+    let shiftDate: Date;
+    try {
+      shiftDate = parseVnDate(body.shiftDate);
+    } catch {
+      throw new BusinessError(ERR.VALIDATION_FAILED, "Ngày ca không hợp lệ.", 400);
+    }
+
     const log = await submitShiftDraft(
       user,
-      { ...body, shiftDate: new Date(body.shiftDate) },
+      { ...body, shiftDate },
       clientMeta(req)
     );
 

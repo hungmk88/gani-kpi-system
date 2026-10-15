@@ -1,9 +1,81 @@
+import { SHIFT_TYPES, SHIFT_TYPE_LABEL } from "./production/constants";
 import ExcelJS from "exceljs";
 import type {
   DashboardSummaryResult,
   DashboardDistributionResult,
   DashboardTrendsResult,
 } from "./services/kpi-dashboard";
+import { BusinessError } from "./rbac";
+import { ERR } from "./constants";
+import { formatVnDate, formatVnDateTime, vnParts } from "./vn-time";
+
+/* ------------------------------------------------- GIỚI HẠN FILE NHẬP */
+
+/** File nhập tối đa 5 MB — đủ cho vài chục nghìn dòng, chặn file rác làm treo máy. */
+export const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
+/** Tối đa 5000 dòng dữ liệu mỗi file (không tính dòng tiêu đề). */
+export const MAX_IMPORT_ROWS = 5000;
+
+/**
+ * Chặn sớm theo header Content-Length, TRƯỚC khi đọc cả form vào bộ nhớ.
+ * Cho dư 1 MB cho phần vỏ multipart.
+ */
+export function assertImportRequestSize(req: Request) {
+  const len = Number(req.headers.get("content-length") ?? 0);
+  if (Number.isFinite(len) && len > MAX_IMPORT_FILE_BYTES + 1024 * 1024) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      "File quá lớn. Dung lượng tối đa 5 MB — hãy chia nhỏ file rồi nạp từng phần.",
+      413
+    );
+  }
+}
+
+/** Kiểm tra file người dùng gửi lên: có file, không rỗng, không quá 5 MB. */
+export function assertImportFile(file: FormDataEntryValue | null): File {
+  if (!(file instanceof File)) {
+    throw new BusinessError(ERR.VALIDATION_FAILED, "Chưa chọn file Excel.", 400);
+  }
+  if (file.size === 0) {
+    throw new BusinessError(ERR.VALIDATION_FAILED, "File rỗng.", 400);
+  }
+  if (file.size > MAX_IMPORT_FILE_BYTES) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      `File quá lớn (${(file.size / 1024 / 1024).toFixed(1)} MB). Dung lượng tối đa 5 MB — hãy chia nhỏ file rồi nạp từng phần.`,
+      413
+    );
+  }
+  return file;
+}
+
+/** Mở workbook; file hỏng / không phải .xlsx thì báo lỗi rõ ràng thay vì lỗi 500. */
+export async function loadWorkbook(buffer: ArrayBuffer): Promise<ExcelJS.Workbook> {
+  const wb = new ExcelJS.Workbook();
+  try {
+    await wb.xlsx.load(buffer);
+  } catch {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      "Không đọc được file. Hãy dùng đúng file Excel (.xlsx) tải từ file mẫu.",
+      400
+    );
+  }
+  return wb;
+}
+
+/** Chặn sheet quá nhiều dòng trước khi duyệt từng dòng. */
+export function assertSheetRowLimit(ws: ExcelJS.Worksheet) {
+  // actualRowCount = số dòng có dữ liệu, gồm cả dòng tiêu đề
+  const dataRows = Math.max(0, ws.actualRowCount - 1);
+  if (dataRows > MAX_IMPORT_ROWS) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      `File có ${dataRows} dòng dữ liệu, vượt giới hạn ${MAX_IMPORT_ROWS} dòng mỗi lần nạp. Hãy chia nhỏ file.`,
+      413
+    );
+  }
+}
 
 const BRAND = "FF1B6EF5";
 const HEADER_TEXT = "FFFFFFFF";
@@ -32,9 +104,10 @@ export async function buildImportTemplate(
   ];
   styleHeader(ws.getRow(1));
 
-  const now = new Date();
-  const m = now.getMonth() === 0 ? 12 : now.getMonth();
-  const y = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+  // Dòng ví dụ: tháng trước theo lịch VN
+  const nowVn = vnParts();
+  const m = nowVn.month === 1 ? 12 : nowVn.month - 1;
+  const y = nowVn.month === 1 ? nowVn.year - 1 : nowVn.year;
   if (kpiDefs[0] && users[0]) {
     ws.addRow({
       code: kpiDefs[0].code,
@@ -99,11 +172,11 @@ export async function parseImportFile(buffer: ArrayBuffer): Promise<{
   rows: ImportRow[];
   errors: string[];
 }> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
+  const wb = await loadWorkbook(buffer);
 
   const ws = wb.getWorksheet("DU_LIEU") ?? wb.worksheets[0];
   if (!ws) return { rows: [], errors: ["File không có sheet dữ liệu nào."] };
+  assertSheetRowLimit(ws);
 
   const rows: ImportRow[] = [];
   const errors: string[] = [];
@@ -268,11 +341,11 @@ const PERIOD_LABEL_VI: Record<string, string> = {
   month: "Tháng này",
 };
 
-const SHIFT_LABEL_VI: Record<string, string> = {
-  MORNING: "Sáng",
-  AFTERNOON: "Chiều",
-  NIGHT: "Tối",
-};
+const SHIFT_LABEL_VI = SHIFT_TYPE_LABEL;
+
+/** Tiền bị ẩn (người xem không có quyền) thì để ô trống, không ghi 0. */
+const money = (v: number | null | undefined) =>
+  v === null || v === undefined ? "" : Math.round(v);
 
 /**
  * Xuất Excel cho Dashboard KPI sản xuất (/admin/kpi-dashboard). Ba khối dữ liệu
@@ -300,7 +373,7 @@ export async function buildDashboardReport(input: {
   }`;
   sum.getCell("A1").font = { bold: true, size: 14 };
   sum.getCell("A1").alignment = { horizontal: "center" };
-  sum.getCell("A2").value = `Xuất lúc: ${new Date().toLocaleString("vi-VN")}`;
+  sum.getCell("A2").value = `Xuất lúc: ${formatVnDateTime(new Date())}`;
   sum.getCell("A2").font = { italic: true, size: 10, color: { argb: "FF666666" } };
   sum.addRow([]);
 
@@ -309,7 +382,7 @@ export async function buildDashboardReport(input: {
     "Tổng ca tính",
     summary.summary.totalShifts,
     "Trung bình/ca (₫)",
-    summary.summary.avgBonus,
+    money(summary.summary.avgBonus),
   ]);
   sum.addRow([
     "Điểm trung bình",
@@ -317,28 +390,27 @@ export async function buildDashboardReport(input: {
     "% đã duyệt",
     summary.summary.percentApproved,
   ]);
-  sum.addRow(["Tổng thưởng (₫)", summary.summary.totalBonus, "", ""]);
+  sum.addRow(["Tổng thưởng (₫)", money(summary.summary.totalBonus), "", ""]);
   sum.addRow([]);
 
   styleHeader(sum.addRow(["Theo trạng thái", "Số ca", "Theo ca", "Số ca"]));
-  sum.addRow([
-    "Đã tính (CALCULATED)",
-    summary.statusCounts.CALCULATED,
-    "Sáng",
-    summary.shiftTypes.MORNING,
-  ]);
-  sum.addRow([
-    "Đã duyệt (APPROVED)",
-    summary.statusCounts.APPROVED,
-    "Chiều",
-    summary.shiftTypes.AFTERNOON,
-  ]);
-  sum.addRow([
-    "Nháp (DRAFT)",
-    summary.statusCounts.DRAFT,
-    "Tối",
-    summary.shiftTypes.NIGHT,
-  ]);
+  // Ca thật trong hệ thống là CA_1/CA_2/CA_3 (lib/production/constants.ts)
+  const statusRows: [string, number][] = [
+    ["Đã tính (CALCULATED)", summary.statusCounts.CALCULATED],
+    ["Đã duyệt (APPROVED)", summary.statusCounts.APPROVED],
+    ["Nháp (DRAFT)", summary.statusCounts.DRAFT],
+  ];
+  const rowCount = Math.max(statusRows.length, SHIFT_TYPES.length);
+  for (let i = 0; i < rowCount; i++) {
+    const st = statusRows[i];
+    const sh = SHIFT_TYPES[i];
+    sum.addRow([
+      st?.[0] ?? "",
+      st?.[1] ?? "",
+      sh ? SHIFT_TYPE_LABEL[sh] ?? sh : "",
+      sh ? summary.shiftTypes[sh] ?? 0 : "",
+    ]);
+  }
 
   if (summary.topScores.length > 0) {
     sum.addRow([]);
@@ -346,10 +418,10 @@ export async function buildDashboardReport(input: {
     styleHeader(sum.addRow(["Ngày", "Ca", "Điểm", "Thưởng (₫)"]));
     summary.topScores.forEach((s) => {
       sum.addRow([
-        new Date(s.shiftDate).toLocaleDateString("vi-VN"),
+        formatVnDate(s.shiftDate),
         SHIFT_LABEL_VI[s.shiftType] ?? s.shiftType,
         Number(s.totalScore.toFixed(2)),
-        Math.round(s.bonusAmount),
+        money(s.bonusAmount),
       ]);
     });
   }
@@ -393,7 +465,7 @@ export async function buildDashboardReport(input: {
       avgOutput: d.avgOutput ?? "",
       avgWaste: d.avgWaste ?? "",
       movingAvg: d.movingAvg,
-      totalBonus: Math.round(d.totalBonus),
+      totalBonus: money(d.totalBonus),
     });
   });
   trend.addRow([]);
@@ -404,7 +476,7 @@ export async function buildDashboardReport(input: {
     "Điểm TB/ngày",
     Number(trends.statistics.avgDailyScore.toFixed(2)),
   ]);
-  trend.addRow(["Tổng thưởng (₫)", trends.statistics.totalBonusDistributed]);
+  trend.addRow(["Tổng thưởng (₫)", money(trends.statistics.totalBonusDistributed)]);
 
   return wb.xlsx.writeBuffer();
 }

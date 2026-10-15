@@ -6,6 +6,7 @@ import { hashPassword } from "@/lib/auth";
 import { checkPasswordStrength } from "@/lib/password";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { ERR, ROLES } from "@/lib/constants";
+import { alertCeos } from "@/lib/services/user-security";
 
 const schema = z.object({
   email: z.string().email(),
@@ -67,6 +68,13 @@ export async function POST(req: Request) {
       ...clientMeta(req),
     });
 
-    return ok({ user: { ...user, passwordHash: undefined } }, 201);
+    if (body.role === "CEO") {
+      await alertCeos(
+        `Vừa tạo tài khoản Ban Giám đốc mới: ${email}`,
+        `Người thực hiện: ${actor.email}. Nếu không phải chủ ý của Ban Giám đốc, khoá tài khoản này ngay.`
+      );
+    }
+
+    return ok({ user }, 201);
   });
 }

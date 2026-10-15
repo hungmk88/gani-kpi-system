@@ -6,6 +6,7 @@ import {
   sanitizeInput,
 } from "./provider";
 import { TASK_PRIORITIES } from "../constants";
+import { formatVnDateTime, vnDate, vnParts } from "../vn-time";
 
 /**
  * BỘ ĐỌC CÂU LỆNH THÀNH CÔNG VIỆC.
@@ -132,7 +133,7 @@ async function parseWithGemini(
   ].join("\n");
 
   const prompt = [
-    `THỜI ĐIỂM HIỆN TẠI: ${now.toISOString()} (giờ Việt Nam: ${now.toLocaleString("vi-VN")})`,
+    `THỜI ĐIỂM HIỆN TẠI: ${now.toISOString()} (giờ Việt Nam: ${formatVnDateTime(now)})`,
     "",
     "DANH SÁCH NHÂN SỰ HỢP LỆ (chỉ được chọn trong đây):",
     JSON.stringify(roster, null, 0),
@@ -275,7 +276,7 @@ export function parseWithRules(
   /* --- hạn chót --- */
   const due = extractDueDate(lower, now);
   if (due) {
-    notes.push(`hiểu "${due.matched}" là ${due.date.toLocaleString("vi-VN")}`);
+    notes.push(`hiểu "${due.matched}" là ${formatVnDateTime(due.date)}`);
   } else {
     missing.push("Chưa rõ hạn chót");
   }
@@ -417,16 +418,12 @@ export function extractDueDate(
   lower: string,
   now: Date
 ): { date: Date; matched: string } | null {
-  const at = (d: Date, h = 17, m = 0) => {
-    const x = new Date(d);
-    x.setHours(h, m, 0, 0);
-    return x;
-  };
-  const addDays = (n: number) => {
-    const x = new Date(now);
-    x.setDate(x.getDate() + n);
-    return x;
-  };
+  // Mọi phép tính ngày/giờ theo lịch Việt Nam — server (Vercel) chạy UTC,
+  // dùng setHours()/getDate() là "5h chiều" bị hiểu thành 0h sáng hôm sau.
+  const p = vnParts(now);
+  /** Ngày VN cách hôm nay `offset` ngày, lúc h:m giờ VN. */
+  const at = (offset: number, h = 17, m = 0) =>
+    vnDate(p.year, p.month, p.day + offset, h, m);
 
   // Giờ cụ thể: "5h chiều", "17h30", "9 giờ sáng"
   let hour: number | null = null;
@@ -461,13 +458,13 @@ export function extractDueDate(
   if (dmy) {
     const d = parseInt(dmy[1], 10);
     const mo = parseInt(dmy[2], 10);
-    let y = dmy[3] ? parseInt(dmy[3], 10) : now.getFullYear();
+    let y = dmy[3] ? parseInt(dmy[3], 10) : p.year;
     if (y < 100) y += 2000;
     if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) {
-      let date = new Date(y, mo - 1, d, H, minute, 0, 0);
+      let date = vnDate(y, mo, d, H, minute);
       // Không ghi năm mà ngày đã trôi qua thì hiểu là năm sau
       if (!dmy[3] && date.getTime() < now.getTime()) {
-        date = new Date(y + 1, mo - 1, d, H, minute, 0, 0);
+        date = vnDate(y + 1, mo, d, H, minute);
       }
       return { date, matched: dmy[0] };
     }
@@ -477,9 +474,9 @@ export function extractDueDate(
   if (dayOnly) {
     const d = parseInt(dayOnly[1], 10);
     if (d >= 1 && d <= 31) {
-      let date = new Date(now.getFullYear(), now.getMonth(), d, H, minute, 0, 0);
+      let date = vnDate(p.year, p.month, d, H, minute);
       if (date.getTime() < now.getTime()) {
-        date = new Date(now.getFullYear(), now.getMonth() + 1, d, H, minute, 0, 0);
+        date = vnDate(p.year, p.month + 1, d, H, minute);
       }
       return { date, matched: dayOnly[0] };
     }
@@ -487,35 +484,38 @@ export function extractDueDate(
 
   // Cách nói tương đối
   if (/\b(hôm nay|trong ngày|nội trong ngày|cuối ngày)\b/.test(lower)) {
-    return { date: at(now, H, minute), matched: "hôm nay" };
+    return { date: at(0, H, minute), matched: "hôm nay" };
   }
   if (/\bngày mai\b|\bmai\b/.test(lower)) {
-    return { date: at(addDays(1), H, minute), matched: "ngày mai" };
+    return { date: at(1, H, minute), matched: "ngày mai" };
   }
   if (/\bngày mốt\b|\bngày kia\b/.test(lower)) {
-    return { date: at(addDays(2), H, minute), matched: "ngày mốt" };
+    return { date: at(2, H, minute), matched: "ngày mốt" };
   }
   const inDays = lower.match(/\btrong\s+(\d{1,2})\s+ngày\b/);
   if (inDays) {
     const n = parseInt(inDays[1], 10);
-    return { date: at(addDays(n), H, minute), matched: inDays[0] };
+    return { date: at(n, H, minute), matched: inDays[0] };
   }
   const inWeeks = lower.match(/\btrong\s+(\d{1,2})\s+tuần\b/);
   if (inWeeks) {
     const n = parseInt(inWeeks[1], 10) * 7;
-    return { date: at(addDays(n), H, minute), matched: inWeeks[0] };
+    return { date: at(n, H, minute), matched: inWeeks[0] };
   }
   if (/\bcuối tuần\b/.test(lower)) {
-    const dow = now.getDay();
+    const dow = p.weekday;
     const toSat = (6 - dow + 7) % 7 || 7;
-    return { date: at(addDays(toSat), H, minute), matched: "cuối tuần" };
+    return { date: at(toSat, H, minute), matched: "cuối tuần" };
   }
   if (/\btuần sau\b|\btuần tới\b/.test(lower)) {
-    return { date: at(addDays(7), H, minute), matched: "tuần sau" };
+    return { date: at(7, H, minute), matched: "tuần sau" };
   }
   if (/\bcuối tháng\b/.test(lower)) {
-    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    return { date: at(last, H, minute), matched: "cuối tháng" };
+    // Ngày 0 của tháng sau = ngày cuối của tháng này
+    return {
+      date: vnDate(p.year, p.month + 1, 0, H, minute),
+      matched: "cuối tháng",
+    };
   }
 
   // Thứ trong tuần
@@ -523,20 +523,20 @@ export function extractDueDate(
     const re = new RegExp(`\\b${word}\\b`);
     if (re.test(lower)) {
       const nextWeek = /\btuần sau\b|\btuần tới\b/.test(lower);
-      let diff = (target - now.getDay() + 7) % 7;
+      let diff = (target - p.weekday + 7) % 7;
       if (diff === 0) diff = 7;
       if (nextWeek) diff += 7;
-      return { date: at(addDays(diff), H, minute), matched: word };
+      return { date: at(diff, H, minute), matched: word };
     }
   }
 
   // Chỉ nói giờ, không nói ngày -> hiểu là hôm nay, hoặc mai nếu đã qua giờ đó
   if (hour !== null) {
-    const today = at(now, H, minute);
+    const today = at(0, H, minute);
     return today.getTime() > now.getTime()
       ? { date: today, matched: hourMatch?.[0] ?? "giờ trong ngày" }
       : {
-          date: at(addDays(1), H, minute),
+          date: at(1, H, minute),
           matched: `${hourMatch?.[0] ?? "giờ"} (đã qua giờ nên hiểu là ngày mai)`,
         };
   }

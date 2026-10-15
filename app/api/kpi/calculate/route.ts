@@ -1,136 +1,57 @@
 // File: app/api/kpi/calculate/route.ts
 
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { calculateShiftKpiScore } from "@/lib/kpi-calculator";
-import { getSession } from "@/lib/auth";
-import { PRODUCTION_DEPARTMENT_CODE } from "@/lib/constants";
+import { z } from "zod";
+import { handle, ok, requireUser } from "@/lib/api";
+import { clientMeta } from "@/lib/audit";
+import {
+  assertCanManageProductionKpi,
+  calculateShiftKpiScore,
+  parseBreakdown,
+} from "@/lib/kpi-calculator";
+import {
+  canSeeMoney,
+  withProductionRole,
+} from "@/lib/services/production-service";
+
+export const runtime = "nodejs";
 
 /**
- * POST /api/kpi/calculate
- * Tính điểm KPI cho 1 ca
- *
- * Request body:
- * {
- *   shiftLogId: string,
- *   periodTargetId: string,
- *   kpiResults: {
- *     output_actual?: number,
- *     waste_actual?: number,
- *     quality_actual?: number,
- *     spec_actual?: number,
- *     safety_actual?: number,
- *     deadline_actual?: number,
- *   }
- * }
+ * Chỉ nhận mã ca. Số thực tế, kỳ KPI, mục tiêu — server tự lấy từ ca đã khoá.
+ * Các trường khác client gửi kèm (periodTargetId, kpiResults... của bản cũ)
+ * bị zod bỏ qua, KHÔNG BAO GIỜ được dùng để chấm điểm.
  */
-export async function POST(request: NextRequest) {
-  try {
-    // Auth check
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+const bodySchema = z.object({
+  shiftLogId: z.string().trim().min(1).max(64),
+});
 
-    // Get user
-    const user = await prisma.user.findUnique({
-      where: { id: session.id },
-      include: { department: true },
-    });
-
-    if (!user || !user.isActive) {
-      return NextResponse.json(
-        { error: "User not found or inactive" },
-        { status: 404 }
-      );
-    }
-
-    // Permission: CEO hoặc Giám Đốc SX
-    const hasPermission =
-      user.role === "CEO" ||
-      user.role === "ADMIN" ||
-      (user.role === "MANAGER" && user.department?.code === PRODUCTION_DEPARTMENT_CODE);
-
-    if (!hasPermission) {
-      return NextResponse.json(
-        { error: "Bạn không có quyền tính điểm KPI" },
-        { status: 403 }
-      );
-    }
-
-    // Parse request
-    const body = await request.json();
-    const { shiftLogId, periodTargetId, kpiResults } = body;
-
-    // Validate
-    if (!shiftLogId || !periodTargetId) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
-      );
-    }
-
-    // Verify shiftLog exists
-    const shiftLog = await prisma.productionShiftLog.findUnique({
-      where: { id: shiftLogId },
-    });
-
-    if (!shiftLog) {
-      return NextResponse.json(
-        { error: "Shift log not found" },
-        { status: 404 }
-      );
-    }
-
-    // Verify periodTarget exists
-    const periodTarget = await prisma.kpiPeriodTarget.findUnique({
-      where: { id: periodTargetId },
-    });
-
-    if (!periodTarget) {
-      return NextResponse.json(
-        { error: "Period target not found" },
-        { status: 404 }
-      );
-    }
-
-    // Calculate
-    console.log(`🔄 Calculating KPI for shift: ${shiftLogId}`);
-    const shiftKpiScore = await calculateShiftKpiScore(
-      shiftLogId,
-      periodTargetId,
-      kpiResults || {}
+/**
+ * POST /api/kpi/calculate — tính (lại) điểm 6 chỉ tiêu cho 1 ca đã khoá.
+ * Quyền: CEO, ADMIN, Trưởng phòng Sản xuất.
+ */
+export async function POST(req: Request) {
+  return handle(async () => {
+    const user = await requireUser();
+    await assertCanManageProductionKpi(
+      user,
+      "Bạn không có quyền tính điểm KPI ca sản xuất."
     );
+    const { shiftLogId } = bodySchema.parse(await req.json());
 
-    console.log(`✅ Calculated score: ${shiftKpiScore.totalScore}`);
+    const score = await calculateShiftKpiScore(user, shiftLogId, clientMeta(req));
+    const money = canSeeMoney(await withProductionRole(user));
 
-    // Response
-    return NextResponse.json({
+    return ok({
       success: true,
       data: {
-        id: shiftKpiScore.id,
-        shiftLogId: shiftKpiScore.shiftLogId,
-        totalScore: shiftKpiScore.totalScore,
-        bonusMultiplier: shiftKpiScore.bonusMultiplier,
-        bonusAmount: shiftKpiScore.bonusAmount,
-        status: shiftKpiScore.status,
-        breakdown: shiftKpiScore.breakdownJson
-          ? JSON.parse(shiftKpiScore.breakdownJson)
-          : null,
+        id: score.id,
+        shiftLogId: score.shiftLogId,
+        totalScore: score.totalScore,
+        bonusMultiplier: score.bonusMultiplier,
+        bonusAmount: money ? score.bonusAmount : null,
+        status: score.status,
+        breakdown: parseBreakdown(score.breakdownJson, money),
       },
-      message: "✅ Tính điểm KPI thành công",
+      message: "Tính điểm KPI thành công.",
     });
-  } catch (error) {
-    console.error("Error calculating KPI:", error);
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Failed to calculate",
-      },
-      { status: 500 }
-    );
-  }
+  });
 }
-

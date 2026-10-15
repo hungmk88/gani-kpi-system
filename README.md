@@ -17,7 +17,7 @@ Bản triển khai **Phase 1 (MVP Core)**, **Phase 2 (AI Engine & Advanced Views
 > project production — đừng trỏ máy local vào thẳng database đang phục vụ
 > `gani-kpi-system.vercel.app`.
 
-Mở PowerShell tại thư mục `E:\GANI BRAINSTORM\kpi-system`:
+Mở terminal tại thư mục dự án:
 
 ```bash
 npm install
@@ -33,20 +33,20 @@ npm run dev
 
 Mở trình duyệt vào **http://localhost:3000**.
 
-| Vai trò | Email | Mật khẩu |
-| --- | --- | --- |
-| Ban Giám đốc | `ceo@ganifoody.vn` | `Gani@2026` |
-| Trưởng phòng Kinh doanh | `tp.sales@ganifoody.vn` | `Gani@2026` |
-| Nhân viên Kinh doanh | `nv.sales1@ganifoody.vn` | `Gani@2026` |
-| Quản trị hệ thống | `admin@ganifoody.vn` | `Gani@2026` |
+| Vai trò | Email |
+| --- | --- |
+| Ban Giám đốc | `ceo@ganifoody.vn` |
+| Trưởng phòng Kinh doanh | `tp.sales@ganifoody.vn` |
+| Nhân viên Kinh doanh | `nv.sales1@ganifoody.vn` |
+| Quản trị hệ thống | `admin@ganifoody.vn` |
 
-Có sẵn 19 tài khoản của 8 phòng ban, tất cả dùng chung mật khẩu mẫu ở trên.
+Có sẵn 19 tài khoản của 8 phòng ban. **Mật khẩu tạm** lấy từ biến
+`SEED_PASSWORD` trong `.env`; không đặt thì `npm run setup` tự sinh ngẫu nhiên và
+in ra màn hình **một lần**. Mọi tài khoản mới tạo đều bị chặn ở trang đổi mật
+khẩu ngay lần đăng nhập đầu tiên, phải tự đặt mật khẩu riêng.
 
-**Trước khi phát tài khoản cho nhân viên:** vào Quản trị → Tài khoản → *Đặt lại
-MK* cho từng người. Đặt lại xong, người đó bị chặn ở trang đổi mật khẩu ngay lần
-đăng nhập đầu tiên và phải tự đặt mật khẩu riêng — nên anh không cần nghĩ ra mật
-khẩu hay, chỉ cần khác nhau. Hệ thống cũng từ chối đặt lại đúng chuỗi `Gani@2026`
-vì nó nằm trong tài liệu này, coi như ai cũng biết.
+Seed từ chối chạy khi `NODE_ENV=production` (trừ khi đặt `ALLOW_PROD_SEED=1`), và
+`npm run db:reset` chỉ chạy được với database trên máy local.
 
 Muốn chạy bản production (nhanh hơn, nhẹ máy hơn):
 
@@ -57,6 +57,46 @@ npm run build
 ```bash
 npm start
 ```
+
+---
+
+## 0. Bản sửa sau review 10/2026 — việc PHẢI làm khi deploy
+
+Bản này vá các lỗ bảo mật và lỗi nghiệp vụ tìm thấy khi review toàn bộ dự án.
+Làm đúng thứ tự:
+
+1. **Đổi `JWT_SECRET` trên Vercel** (`openssl rand -hex 48`). Secret cũ từng nằm
+   trong `scripts/create-test-token.mjs` trong lịch sử git — coi như đã lộ. Hệ
+   thống giờ từ chối chạy nếu secret ngắn hơn 32 ký tự hoặc còn chuỗi mẫu.
+   Đổi xong mọi người phải đăng nhập lại.
+2. **Đổi `CRON_SECRET`, `IPOS_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_SECRET`** nếu
+   còn là chuỗi mẫu trong `.env.example` — chuỗi mẫu giờ bị từ chối.
+3. **cron-job.org:** bắt buộc `POST` và secret trong header `x-cron-secret`.
+   `GET` và `?secret=` trên URL không còn được nhận.
+4. **Chạy migration** (máy có `DIRECT_URL` của production):
+   `npx prisma migrate deploy` — thêm bảng `job_locks` và các index.
+5. **Sửa dữ liệu ngày giờ cũ** — sao lưu trước, chạy thử, xem kỹ rồi mới sửa thật:
+   `npm run fix:dates` rồi `npm run fix:dates -- --apply`.
+   Sửa hạn chốt 2-4-5 của các kỳ chưa chốt (trước lệch 7–14 tiếng) và ngày ca
+   sản xuất bị lùi một ngày do server chạy giờ UTC.
+6. **Đổi mật khẩu `ceo@` và `admin@`** nếu vẫn là `Gani@2026`. Kiểm tra và khoá
+   tài khoản `test-ceo@example.com` nếu có.
+7. **Sao lưu tự động:** thêm secret `BACKUP_DATABASE_URL` (DIRECT_URL) và
+   `BACKUP_PASSPHRASE` vào GitHub → Settings → Secrets → Actions. Workflow
+   `.github/workflows/backup.yml` chạy mỗi đêm, bản sao được mã hoá.
+
+Thay đổi hành vi người dùng sẽ thấy:
+
+- Ban Giám đốc chỉ chốt được dòng KPI đã qua bước trưởng phòng (duyệt tay hoặc tự
+  khoá ngày 4). Dòng không có số liệu được 0 điểm, không còn tự lấy số 0.
+- Trưởng phòng không tự duyệt / tự đặt mục tiêu / tự chốt đối soát cho chính mình.
+  Nhập số khác với các nguồn khi đối soát là quyền riêng của Ban Giám đốc.
+- Nghỉ phép: đơn 1 ngày tính 1 ngày (trước tính 0). Trần 12 ngày/năm và 6
+  ngày/nửa năm được kiểm tra thật khi gửi và khi duyệt.
+- Đăng nhập sai 5 lần trong 15 phút thì tạm khoá 15 phút.
+- Bot Telegram chỉ làm việc trong chat riêng.
+- Tính điểm 6 KPI ca: server tự lấy số từ ca đã khoá, chỉ tiêu kỳ phải được Ban
+  Giám đốc duyệt trước.
 
 ---
 
@@ -116,8 +156,9 @@ Mỗi lượt chạy làm đủ 7 việc, theo đúng thứ tự này vì việc
    việc đang mở, quét bất thường khai báo KPI
 7. Nhắc hạn cho ai còn việc chưa làm
 
-Lịch: khoá KPI 23:59 ngày 2 và ngày 4, nhắc Ban Giám đốc 08:00 ngày 5, nhắc hạn
-08:00 hàng ngày, đối soát và quét rủi ro mỗi 2 tiếng.
+Lịch: khoá KPI 00:05 ngày 3 và ngày 5 (ngay sau hạn 23:59:59 ngày 2 và 4), nhắc
+hạn 08:10 hàng ngày, đối soát và quét rủi ro mỗi 2 tiếng. Hai lượt chạy trùng
+nhau thì lượt sau nhận 409 (có khoá chống chạy chồng), không làm hỏng dữ liệu.
 
 Nếu không muốn mở cửa sổ thứ hai, Ban Giám đốc có thể bấm **Quét lại rủi ro ngay**
 trên Bảng điều hành bất cứ lúc nào — hai đường cùng chạy một logic. Lời nhắc có
@@ -505,7 +546,18 @@ hình thì hệ thống bỏ qua kênh này, không báo lỗi.
 
 ## 7. Kiểm thử
 
-Server đang chạy, mở cửa sổ khác:
+Unit test (không cần server, không cần database) — CI chạy cả hai múi giờ:
+
+```bash
+npm test
+npm run test:tz
+```
+
+Smoke test (cần server đang chạy và database **local**; script tự từ chối chạy
+nếu `APP_URL`/`DATABASE_URL` không phải localhost, trừ khi đặt
+`ALLOW_REMOTE_TARGET=1`). Tài khoản seed phải đã đổi được mật khẩu hoặc tắt cờ
+`mustChangePassword`; mật khẩu dùng để đăng nhập lấy từ `SMOKE_PASSWORD`
+(mặc định `Gani@2026`):
 
 ```bash
 npm run test:all
@@ -621,32 +673,27 @@ nhiều người xem được.
 
 ### Sao lưu
 
+**Production:** GitHub Actions (`.github/workflows/backup.yml`) chạy `pg_dump`
+mỗi đêm, mã hoá bằng `BACKUP_PASSPHRASE` rồi lưu thành artifact 30 ngày. Xem mục
+0 bước 7 để bật. Muốn giữ lâu hơn thì định kỳ tải bản đầu tháng về cất riêng.
+
+**Chạy tay** (cần PostgreSQL client cùng phiên bản lớn với server):
+
 ```bash
 npm run backup
 ```
 
-Bộ máy chạy nền (`npm run scheduler`) tự chạy việc này **00:30 hàng ngày**.
+Bản sao ra thư mục `backups/` dạng `pg_dump --format=custom`, đọc từ `DIRECT_URL`
+(cổng 5432 — pooler 6543 không chạy được pg_dump). Quy tắc giữ: **14 bản gần nhất
++ bản đầu tiên của mỗi tháng**.
 
-Bản sao ra thư mục `backups/`, tên theo ngày giờ. **Không phải copy file `dev.db`**
-— SQLite đang chạy thì file đó có thể đang dở một giao dịch, và còn hai file phụ
-`-wal`/`-shm` giữ thay đổi chưa gộp vào. Copy thẳng lúc server đang ghi thì được
-một bản sao có khả năng hỏng, mà chỉ phát hiện ra đúng lúc cần khôi phục. Ở đây
-dùng `VACUUM INTO` — lệnh của chính SQLite, tự chốt một ảnh nhất quán kể cả khi
-server đang chạy.
+**Khôi phục** vào một database TRỐNG (đừng đè thẳng production):
 
-Quy tắc giữ: **14 bản gần nhất + bản đầu tiên của mỗi tháng**. Bản đầu tháng giữ
-vĩnh viễn, vì hỏng dữ liệu thường phát hiện muộn — sau khi 14 bản gần nhất đã cuốn
-qua và chép cả cái hỏng vào.
+```bash
+pg_restore --no-owner --no-privileges -d "<url database đích>" backups/kpi-YYYYMMDD-HHmm.dump
+```
 
-**Khôi phục:** dừng server, chép đè file trong `backups/` thành `prisma/dev.db`,
-xoá `dev.db-wal` và `dev.db-shm` nếu có, rồi bật lại.
-
-Chỉnh bằng biến môi trường: `BACKUP_DIR` (mặc định `backups`), `BACKUP_KEEP_DAILY`
-(mặc định 14). Khi lên PostgreSQL thì script tự bỏ qua và nói rõ — lúc đó dùng bộ
-sao lưu của nhà cung cấp.
-
-> Thư mục `backups/` nằm cùng ổ với database. Ổ hỏng là mất cả hai — chép định kỳ
-> sang ổ khác hoặc lên đám mây.
+Bản từ GitHub Actions phải giải mã trước: `gpg --decrypt file.dump.gpg > file.dump`.
 
 ---
 
@@ -1137,20 +1184,10 @@ không tự sửa điểm KPI thật, để tránh sai lương thật. Có nút 
 hợp theo tháng (`/api/leave-requests/export`, dùng `buildLeaveReport()` ở
 `lib/excel.ts`).
 
-**🐛 Lỗi tìm thấy, CHƯA VÁ (14/09/2026) — toàn hệ thống hiển thị giờ theo UTC
-chứ không phải giờ Việt Nam:** Vercel chạy server ở múi UTC, nhưng không có
-chỗ nào trong code chỉ định `timeZone: "Asia/Ho_Chi_Minh"` khi format ngày
-giờ (`toLocaleDateString("vi-VN")`, `toLocaleTimeString("vi-VN")` ở
-`app/(app)/dashboard/page.tsx` và nhiều nơi khác) hay khi tính hạn kỳ KPI
-(`computeDeadlines()` ở `lib/kpi.ts`, dùng `new Date(y, m, d, 23, 59, 59)` —
-constructor này chạy theo múi giờ của server). Hậu quả: lệch **7 tiếng**
-so với giờ Việt Nam thật — phát hiện được vì trang chủ hiện "20:13 14/09"
-trong khi giờ Việt Nam thật là "03:13 15/09". Nghiêm trọng hơn: lịch chốt
-KPI "khoá lúc 23:59 ngày 2" đang khoá lúc **23:59 UTC = 06:59 sáng hôm sau
-giờ Việt Nam** — nhân viên đang có dư gần 7 tiếng so với hạn công bố, từ lúc
-dựng hệ thống tới giờ. **Cách sửa đúng nhất**: đặt biến môi trường
-`TZ=Asia/Ho_Chi_Minh` trên Vercel (Project Settings → Environment Variables)
-rồi redeploy — sửa một chỗ, mọi `new Date()`/giờ hiển thị/hạn chốt trong cả
-app tự động đúng theo giờ Việt Nam, không cần vá từng file. **Anh đã chọn
-để sau, chưa đổi trên production** — kỳ KPI đang mở tiếp tục trễ 7 tiếng so
-với hạn công bố cho tới khi anh quyết đổi.
+**✅ Đã vá (10/2026) — lệch múi giờ UTC/Việt Nam:** mọi phép tính và hiển thị
+ngày giờ đi qua `lib/vn-time.ts` với giờ Việt Nam cố định (+7), không phụ thuộc
+múi giờ của server. Đặt `TZ` trên Vercel KHÔNG có tác dụng (biến dành riêng của
+Vercel), còn `experimental.instrumentationHook` từng thêm vào `next.config.ts`
+làm hỏng build — mọi bản sửa múi giờ sau commit đó chưa từng lên production.
+Dữ liệu cũ sửa bằng `npm run fix:dates` (xem mục 0). Unit test chạy cả
+`TZ=UTC` lẫn `TZ=Asia/Ho_Chi_Minh` để không tái phát.

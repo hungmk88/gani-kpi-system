@@ -13,14 +13,16 @@ const schema = z.discriminatedUnion("action", [
     action: z.literal("EXPLAIN"),
     explanationText: z
       .string()
-      .min(20, "Giải trình phải nói rõ nguyên nhân, tối thiểu 20 ký tự."),
+      .min(20, "Giải trình phải nói rõ nguyên nhân, tối thiểu 20 ký tự.")
+      .max(2000, "Giải trình tối đa 2000 ký tự."),
   }),
   z.object({
     action: z.literal("REVIEW"),
     accepted: z.boolean(),
     reviewNote: z
       .string()
-      .min(10, "Ghi rõ kết luận của bạn, tối thiểu 10 ký tự."),
+      .min(10, "Ghi rõ kết luận của bạn, tối thiểu 10 ký tự.")
+      .max(2000, "Kết luận tối đa 2000 ký tự."),
   }),
 ]);
 

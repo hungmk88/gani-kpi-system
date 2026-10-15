@@ -1,3 +1,4 @@
+import { vnDate, vnDateKey, vnParts } from "@/lib/vn-time";
 import Link from "next/link";
 import { Flame } from "lucide-react";
 import { requireSession } from "@/lib/auth";
@@ -18,27 +19,25 @@ export default async function CalendarPage({
   const user = (await requireSession())!;
   const sp = await searchParams;
 
+  // Mọi mốc ngày theo lịch Việt Nam (server chạy UTC)
   const today = new Date();
-  const month = sp.m ? parseInt(sp.m, 10) : today.getMonth() + 1;
-  const year = sp.y ? parseInt(sp.y, 10) : today.getFullYear();
+  const nowVn = vnParts(today);
+  const month = sp.m ? parseInt(sp.m, 10) : nowVn.month;
+  const year = sp.y ? parseInt(sp.y, 10) : nowVn.year;
 
-  const monthStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
-  const monthEnd = new Date(year, month, 0, 23, 59, 59, 999);
+  const monthStart = vnDate(year, month, 1);
+  const monthEnd = vnDate(year, month + 1, 1); // mốc loại trừ
 
   // Lưới lịch bắt đầu từ thứ Hai của tuần chứa ngày 1
-  const gridStart = new Date(monthStart);
-  const shift = (monthStart.getDay() + 6) % 7; // thứ Hai = 0
-  gridStart.setDate(gridStart.getDate() - shift);
-
-  const gridEnd = new Date(gridStart);
-  gridEnd.setDate(gridEnd.getDate() + 41);
-  gridEnd.setHours(23, 59, 59, 999);
+  const shift = (vnParts(monthStart).weekday + 6) % 7; // thứ Hai = 0
+  const gridStart = vnDate(year, month, 1 - shift);
+  const gridEnd = vnDate(year, month, 1 - shift + 42); // mốc loại trừ
 
   const tasks = await prisma.task.findMany({
     where: {
       ...taskScopeWhere(user),
       status: { not: "CANCELLED" },
-      dueDate: { gte: gridStart, lte: gridEnd },
+      dueDate: { gte: gridStart, lt: gridEnd },
     },
     include: { assignee: true, department: true },
     orderBy: [{ dueDate: "asc" }, { riskScore: "desc" }],
@@ -55,9 +54,7 @@ export default async function CalendarPage({
 
   const days: Date[] = [];
   for (let i = 0; i < 42; i++) {
-    const d = new Date(gridStart);
-    d.setDate(d.getDate() + i);
-    days.push(d);
+    days.push(vnDate(year, month, 1 - shift + i));
   }
 
   const prev = month === 1 ? { m: 12, y: year - 1 } : { m: month - 1, y: year };
@@ -65,7 +62,7 @@ export default async function CalendarPage({
   const todayKey = dayKey(today);
 
   const inMonth = tasks.filter(
-    (t) => t.dueDate >= monthStart && t.dueDate <= monthEnd
+    (t) => t.dueDate >= monthStart && t.dueDate < monthEnd
   );
   const overdue = inMonth.filter(
     (t) => t.dueDate < today && t.status !== "DONE"
@@ -132,9 +129,10 @@ export default async function CalendarPage({
             {days.map((d) => {
               const k = dayKey(d);
               const list = byDay.get(k) ?? [];
-              const isOtherMonth = d.getMonth() !== month - 1;
+              const dp = vnParts(d);
+              const isOtherMonth = dp.month !== month;
               const isToday = k === todayKey;
-              const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+              const isWeekend = dp.weekday === 0 || dp.weekday === 6;
 
               return (
                 <div
@@ -157,7 +155,7 @@ export default async function CalendarPage({
                             : "text-ink-600"
                       }`}
                     >
-                      {d.getDate()}
+                      {dp.day}
                     </span>
                     {list.length > 2 && (
                       <span className="text-[10px] text-ink-400">
@@ -219,5 +217,5 @@ export default async function CalendarPage({
 }
 
 function dayKey(d: Date) {
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  return vnDateKey(d);
 }

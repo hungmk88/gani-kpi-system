@@ -1,3 +1,4 @@
+import { safeEqual } from "../secrets";
 import { z } from "zod";
 import { prisma } from "../db";
 import { verifyWebhookSignature } from "../integrations/signature";
@@ -94,8 +95,10 @@ export async function ingestFromSource(opts: {
 
   const source = await prisma.integrationSource.findUnique({ where: { code } });
 
+  // Nguồn lạ: trả 404 nhưng KHÔNG ghi webhook_logs — nếu không, ai cũng spam
+  // được bảng log bằng request rác mà chẳng cần khoá gì.
   if (!source && !opts.legacySecret) {
-    return log({
+    return {
       httpStatus: 404,
       signatureOk: false,
       received: 0,
@@ -104,7 +107,7 @@ export async function ingestFromSource(opts: {
       mismatches: 0,
       errors: [],
       message: `Chưa đăng ký nguồn tích hợp có mã "${code}". Vào Quản trị → Tích hợp để tạo.`,
-    });
+    };
   }
 
   if (source && !source.isActive) {
@@ -140,10 +143,11 @@ export async function ingestFromSource(opts: {
   }
 
   // Đường cũ: khoá dùng chung trong header, không có chống phát lại.
-  // Yếu hơn HMAC nhưng vẫn phải đúng khoá mới qua được.
-  if (!signatureOk && opts.legacySecret) {
+  // Chỉ dùng khi CHƯA đăng ký nguồn HMAC — đã có HMAC thì bắt buộc HMAC,
+  // không để đường yếu hơn làm cửa sau.
+  if (!signatureOk && !source && opts.legacySecret) {
     const provided = opts.headers.get("x-webhook-secret");
-    if (provided && provided === opts.legacySecret) {
+    if (safeEqual(provided, opts.legacySecret)) {
       signatureOk = true;
       authError = "";
     } else if (!authError) {

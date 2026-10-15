@@ -21,10 +21,13 @@ export default function ResolvePanel({
   reconciliationId,
   sources,
   unit,
+  allowCustom = false,
 }: {
   reconciliationId: string;
   sources: SourceRow[];
   unit: string;
+  /** Nhập số khác với các nguồn — chỉ Ban Giám đốc. */
+  allowCustom?: boolean;
 }) {
   const router = useRouter();
   const [picked, setPicked] = useState<string>("");
@@ -118,6 +121,7 @@ export default function ResolvePanel({
           );
         })}
 
+        {allowCustom && (
         <button
           onClick={() => setPicked("__custom__")}
           className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
@@ -137,6 +141,7 @@ export default function ResolvePanel({
             Không nguồn nào đúng — tôi nhập số khác
           </span>
         </button>
+        )}
 
         {isCustom && (
           <input

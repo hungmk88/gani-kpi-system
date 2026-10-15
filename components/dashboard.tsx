@@ -1,3 +1,4 @@
+import { formatVnDate, formatVnTime } from "@/lib/vn-time";
 import Link from "next/link";
 import { Check } from "lucide-react";
 import AnomalyActions from "@/components/anomaly-actions";
@@ -150,9 +151,7 @@ export function ProductionStatRow({ summary }: { summary: ProductionSummary }) {
  * hẳn với dd/mm/yyyy dùng ở mọi chỗ khác trong hệ thống.
  */
 function formatDayMonth(d: Date) {
-  const dt = new Date(d);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(dt.getDate())}/${p(dt.getMonth() + 1)}`;
+  return formatVnDate(d).slice(0, 5);
 }
 
 /* ==================================================================== */
@@ -268,10 +267,7 @@ export function LeanTaskList({
           >
             {t.lateDays
               ? `trễ ${t.lateDays} ngày`
-              : new Date(t.dueDate).toLocaleTimeString("vi-VN", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
+              : formatVnTime(t.dueDate)}
           </span>
         </Link>
       ))}

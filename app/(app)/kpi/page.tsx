@@ -1,3 +1,4 @@
+import { PRODUCTION_DEPARTMENT_CODE } from "@/lib/constants";
 import Link from "next/link";
 import { CalendarDays, LineChart } from "lucide-react";
 import { requireSession } from "@/lib/auth";
@@ -35,7 +36,7 @@ export default async function KpiHomePage() {
     ? await prisma.department.findUnique({ where: { id: user.departmentId } })
     : null;
   const isProductionManager =
-    user.role === "MANAGER" && myDept?.code === "PRODUCTION";
+    user.role === "MANAGER" && myDept?.code === PRODUCTION_DEPARTMENT_CODE;
 
   const myResults = current
     ? await prisma.kpiResult.findMany({

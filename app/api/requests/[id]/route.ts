@@ -4,9 +4,10 @@ import { handle, ok, requireUser } from "@/lib/api";
 import { BusinessError } from "@/lib/rbac";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { notify } from "@/lib/telegram";
-import { nextTaskCode } from "@/lib/codes";
+import { nextTaskCode, retryOnCodeClash } from "@/lib/codes";
 import { scoreTaskRisk } from "@/lib/risk";
 import { riskContextFor } from "@/lib/services/risk-service";
+import { formatVnDateTime } from "@/lib/vn-time";
 import { ERR } from "@/lib/constants";
 
 const schema = z.object({
@@ -26,7 +27,10 @@ export async function PATCH(
 
     const request = await prisma.crossDeptRequest.findUnique({
       where: { id },
-      include: { requester: true, targetDept: true },
+      include: {
+        requester: { select: { id: true, fullName: true } },
+        targetDept: true,
+      },
     });
     if (!request) {
       throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy yêu cầu.", 404);
@@ -58,8 +62,9 @@ export async function PATCH(
           400
         );
       }
-      await prisma.crossDeptRequest.update({
-        where: { id },
+      // Chỉ chuyển trạng thái nếu vẫn còn PENDING — chặn hai người bấm cùng lúc
+      const claimed = await prisma.crossDeptRequest.updateMany({
+        where: { id, status: "PENDING" },
         data: {
           status: "REJECTED",
           approverId: user.id,
@@ -67,6 +72,13 @@ export async function PATCH(
           resolvedAt: new Date(),
         },
       });
+      if (claimed.count === 0) {
+        throw new BusinessError(
+          ERR.VALIDATION_FAILED,
+          "Yêu cầu này đã được xử lý rồi.",
+          409
+        );
+      }
       await writeAudit({
         actor: user,
         action: "CROSS_DEPT_REQUEST_REJECT",
@@ -89,8 +101,13 @@ export async function PATCH(
     if (body.assigneeId) {
       const assignee = await prisma.user.findUnique({
         where: { id: body.assigneeId },
+        select: { isActive: true, departmentId: true },
       });
-      if (!assignee || assignee.departmentId !== request.targetDeptId) {
+      if (
+        !assignee ||
+        !assignee.isActive ||
+        assignee.departmentId !== request.targetDeptId
+      ) {
         throw new BusinessError(
           ERR.CROSS_DEPT_ASSIGNMENT_FORBIDDEN,
           "Người được phân công phải thuộc phòng ban tiếp nhận yêu cầu.",
@@ -111,35 +128,49 @@ export async function PATCH(
       ...riskCtx,
     });
 
-    const task = await prisma.task.create({
-      data: {
-        code: await nextTaskCode(),
-        title: request.title,
-        description: `[Yêu cầu từ ${request.requester.fullName}] ${
-          request.description ?? ""
-        }`.trim(),
-        departmentId: request.targetDeptId,
-        assigneeId: body.assigneeId ?? null,
-        creatorId: user.id,
-        startDate: new Date(),
-        dueDate: request.dueDate,
-        priority: request.priority,
-        status: "TO_DO",
-        riskScore: risk.score,
-        riskReason: risk.reason || null,
-        riskScannedAt: new Date(),
-      },
-    });
-
-    await prisma.crossDeptRequest.update({
-      where: { id },
-      data: {
-        status: "ACCEPTED",
-        approverId: user.id,
-        createdTaskId: task.id,
-        resolvedAt: new Date(),
-      },
-    });
+    const task = await retryOnCodeClash(() => prisma.$transaction(async (tx) => {
+      const code = await nextTaskCode();
+      // Giành quyền xử lý trước — chỉ một lượt tiếp nhận thắng, tránh đẻ 2 task
+      const claimed = await tx.crossDeptRequest.updateMany({
+        where: { id, status: "PENDING" },
+        data: {
+          status: "ACCEPTED",
+          approverId: user.id,
+          resolvedAt: new Date(),
+        },
+      });
+      if (claimed.count === 0) {
+        throw new BusinessError(
+          ERR.VALIDATION_FAILED,
+          "Yêu cầu này đã được xử lý rồi.",
+          409
+        );
+      }
+      const created = await tx.task.create({
+        data: {
+          code,
+          title: request.title,
+          description: `[Yêu cầu từ ${request.requester.fullName}] ${
+            request.description ?? ""
+          }`.trim(),
+          departmentId: request.targetDeptId,
+          assigneeId: body.assigneeId ?? null,
+          creatorId: user.id,
+          startDate: new Date(),
+          dueDate: request.dueDate,
+          priority: request.priority,
+          status: "TO_DO",
+          riskScore: risk.score,
+          riskReason: risk.reason || null,
+          riskScannedAt: new Date(),
+        },
+      });
+      await tx.crossDeptRequest.update({
+        where: { id },
+        data: { createdTaskId: created.id },
+      });
+      return created;
+    }));
 
     await writeAudit({
       actor: user,
@@ -162,9 +193,7 @@ export async function PATCH(
       await notify({
         userId: body.assigneeId,
         title: `Bạn được giao việc mới: ${task.title}`,
-        body: `Việc đến từ yêu cầu của phòng khác. Hạn ${new Date(
-          task.dueDate
-        ).toLocaleString("vi-VN")}`,
+        body: `Việc đến từ yêu cầu của phòng khác. Hạn ${formatVnDateTime(task.dueDate)}`,
         level: "INFO",
         linkUrl: `/tasks/${task.id}`,
       });

@@ -22,6 +22,7 @@ import {
 } from "../analytics/constants";
 import { buildExecutiveBriefing, type BriefingFacts } from "../ai/executive-advisor";
 import { round2, summarizeResults } from "../kpi";
+import { vnDateKey, vnStartOfDay } from "../vn-time";
 import type { SessionUser } from "../auth";
 
 /**
@@ -169,8 +170,7 @@ export async function runPredictiveScan(opts: {
     /* Lưu lại để sau này chấm xem dự báo có đúng không.
        Mỗi việc chỉ lưu một bản mỗi ngày, tránh phình bảng khi cron chạy 12 lượt. */
     if (opts.persist) {
-      const startOfDay = new Date(now);
-      startOfDay.setHours(0, 0, 0, 0);
+      const startOfDay = vnStartOfDay(now);
       const existing = await prisma.predictionLog.findFirst({
         where: { taskId: t.id, predictedAt: { gte: startOfDay } },
       });
@@ -400,34 +400,65 @@ export async function runAnomalyScan(periodId?: string, now = new Date()) {
       actualSelf: { not: null },
     },
     include: {
-      employee: true,
+      employee: { select: { fullName: true } },
       kpiDefinition: true,
     },
   });
+
+  // Lịch sử các kỳ trước: gom MỘT lần cho cả kỳ rồi chia theo
+  // (nhân viên, chỉ tiêu) trong bộ nhớ — trước đây mỗi dòng KPI một query.
+  const employeeIds = [...new Set(rows.map((r) => r.employeeId))];
+  const kpiDefIds = [
+    ...new Set(
+      rows.map((r) => r.kpiDefinitionId).filter((x): x is string => !!x)
+    ),
+  ];
+  const allHistory =
+    employeeIds.length && kpiDefIds.length
+      ? await prisma.kpiResult.findMany({
+          where: {
+            employeeId: { in: employeeIds },
+            kpiDefinitionId: { in: kpiDefIds },
+            periodId: { not: period.id },
+            actualFinal: { not: null },
+          },
+          select: {
+            employeeId: true,
+            kpiDefinitionId: true,
+            actualFinal: true,
+          },
+          orderBy: [{ period: { year: "desc" } }, { period: { month: "desc" } }],
+        })
+      : [];
+  const historyByKey = new Map<string, number[]>();
+  for (const h of allHistory) {
+    const key = `${h.employeeId}|${h.kpiDefinitionId}`;
+    const list = historyByKey.get(key) ?? [];
+    // Đã sắp mới → cũ, chỉ giữ 12 kỳ gần nhất như trước
+    if (list.length < 12) list.push(h.actualFinal!);
+    historyByKey.set(key, list);
+  }
+
+  // Cảnh báo đã có của kỳ này — cũng lấy một lần
+  const existingAnomalies = await prisma.kpiAnomaly.findMany({
+    where: { kpiResultId: { in: rows.map((r) => r.id) } },
+    select: { kpiResultId: true, status: true },
+  });
+  const existingByResult = new Map(
+    existingAnomalies.map((a) => [a.kpiResultId, a])
+  );
 
   let checked = 0;
   let flagged = 0;
   let thin = 0;
 
   for (const r of rows) {
-    // Lịch sử của CHÍNH người này với CHÍNH chỉ tiêu này, các kỳ trước
-    const history = await prisma.kpiResult.findMany({
-      where: {
-        employeeId: r.employeeId,
-        kpiDefinitionId: r.kpiDefinitionId,
-        periodId: { not: period.id },
-        actualFinal: { not: null },
-      },
-      include: { period: true },
-      orderBy: [{ period: { year: "desc" } }, { period: { month: "desc" } }],
-      take: 12,
-    });
-
-    const values = history
-      .map((h) => h.actualFinal!)
-      .filter((v) => Number.isFinite(v));
-
     if (!r.kpiDefinitionId || !r.kpiDefinition) continue;
+
+    // Lịch sử của CHÍNH người này với CHÍNH chỉ tiêu này, các kỳ trước
+    const values = (
+      historyByKey.get(`${r.employeeId}|${r.kpiDefinitionId}`) ?? []
+    ).filter((v) => Number.isFinite(v));
 
     const res = detectAnomaly(r.actualSelf!, values);
     checked++;
@@ -448,9 +479,7 @@ export async function runAnomalyScan(periodId?: string, now = new Date()) {
       continue;
     }
 
-    const existing = await prisma.kpiAnomaly.findUnique({
-      where: { kpiResultId: r.id },
-    });
+    const existing = existingByResult.get(r.id) ?? null;
 
     // Đã có người giải trình hoặc BGĐ đã xử lý thì không ghi đè
     if (existing && existing.status !== "OPEN") continue;
@@ -515,14 +544,26 @@ export async function explainAnomaly(
   text: string,
   meta: Meta = {}
 ) {
-  const a = await prisma.kpiAnomaly.findUnique({ where: { id: anomalyId } });
+  const a = await prisma.kpiAnomaly.findUnique({
+    where: { id: anomalyId },
+    include: { employee: { select: { departmentId: true } } },
+  });
   if (!a) {
     throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy cảnh báo.", 404);
   }
-  if (a.employeeId !== actor.id && actor.role === "EMPLOYEE") {
+  // Người bị nêu tên tự giải trình; trưởng phòng chỉ giải trình hộ người
+  // trong phòng mình; Ban Giám đốc thì toàn công ty.
+  const isSelf = a.employeeId === actor.id;
+  const isDeptManager =
+    actor.role === "MANAGER" &&
+    !!actor.departmentId &&
+    a.employee.departmentId === actor.departmentId;
+  if (!isSelf && !isDeptManager && actor.role !== "CEO") {
     throw new BusinessError(
       ERR.FORBIDDEN,
-      "Bạn chỉ giải trình được cảnh báo về số liệu của chính mình.",
+      actor.role === "MANAGER"
+        ? "Cảnh báo này không thuộc phòng ban của bạn."
+        : "Bạn chỉ giải trình được cảnh báo về số liệu của chính mình.",
       403
     );
   }
@@ -586,7 +627,10 @@ export async function reviewAnomaly(
 
   const a = await prisma.kpiAnomaly.findUnique({
     where: { id: anomalyId },
-    include: { employee: true, kpiDefinition: true },
+    include: {
+      employee: { select: { departmentId: true } },
+      kpiDefinition: { select: { name: true } },
+    },
   });
   if (!a) {
     throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy cảnh báo.", 404);
@@ -595,6 +639,14 @@ export async function reviewAnomaly(
     throw new BusinessError(
       ERR.FORBIDDEN,
       "Cảnh báo này không thuộc phòng ban của bạn.",
+      403
+    );
+  }
+  // Không tự kết luận cảnh báo về số liệu của chính mình
+  if (actor.role === "MANAGER" && a.employeeId === actor.id) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Cảnh báo về số liệu của chính bạn phải do Ban Giám đốc kết luận.",
       403
     );
   }
@@ -774,12 +826,9 @@ export async function gatherExecutiveBriefingFacts(now = new Date()) {
   return { health: snapshot.health as HealthResult, facts, period, accuracy };
 }
 
+/** Cùng một ngày theo lịch Việt Nam (không phụ thuộc múi giờ server). */
 function isSameCalendarDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+  return vnDateKey(a) === vnDateKey(b);
 }
 
 /**
@@ -801,8 +850,7 @@ export async function runMonthlyExecutiveBriefingIfDue(now = new Date()) {
     return { sent: false, reason: "NOT_DUE_TODAY" };
   }
 
-  const since = new Date(now);
-  since.setHours(0, 0, 0, 0);
+  const since = vnStartOfDay(now);
   const already = await prisma.aiSuggestion.findFirst({
     where: { kind: "EXEC_BRIEFING", createdAt: { gte: since } },
     select: { id: true },

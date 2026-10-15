@@ -1,8 +1,8 @@
 import { handle, ok, requireUser } from "@/lib/api";
-import { assertPermission, BusinessError } from "@/lib/rbac";
+import { assertPermission } from "@/lib/rbac";
 import { clientMeta } from "@/lib/audit";
 import { importUsersFromFile } from "@/lib/services/user-import-service";
-import { ERR } from "@/lib/constants";
+import { assertImportFile, assertImportRequestSize } from "@/lib/excel";
 
 export const runtime = "nodejs";
 
@@ -17,11 +17,11 @@ export async function POST(req: Request) {
     const user = await requireUser();
     assertPermission(user, "admin.users");
 
+    assertImportRequestSize(req);
     const form = await req.formData();
-    const file = form.get("file");
-    if (!(file instanceof File)) {
-      throw new BusinessError(ERR.VALIDATION_FAILED, "Chưa chọn file Excel.", 400);
-    }
+    // Không có file / file rỗng / quá 5 MB → báo lỗi rõ; quá 5000 dòng chặn
+    // trong bộ đọc file.
+    const file = assertImportFile(form.get("file"));
 
     const result = await importUsersFromFile(
       user,

@@ -2,7 +2,8 @@ import { Download, CircleCheck } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Badge, EmptyState, PageHeader, formatDateTime } from "@/components/ui";
-import { canExportLeaveReport, getAnnualLeaveQuota } from "@/lib/services/leave-service";
+import { getAnnualLeaveQuota, leaveReportScope } from "@/lib/services/leave-service";
+import { formatVnDate, vnParts } from "@/lib/vn-time";
 import LeaveRequestForm from "./leave-request-form";
 import LeaveRequestActions from "./leave-request-actions";
 
@@ -10,8 +11,8 @@ export const dynamic = "force-dynamic";
 
 export default async function LeaveRequestsPage() {
   const user = (await requireSession())!;
-  const canExport = await canExportLeaveReport(user);
-  const quota = await getAnnualLeaveQuota(user.id, new Date().getFullYear());
+  const exportScope = await leaveReportScope(user);
+  const quota = await getAnnualLeaveQuota(user.id, vnParts(new Date()).year);
 
   const where =
     user.role === "CEO" || user.role === "ADMIN"
@@ -31,8 +32,15 @@ export default async function LeaveRequestsPage() {
   const requests = await prisma.leaveRequest.findMany({
     where,
     include: {
-      employee: { include: { department: true } },
-      reviewedBy: true,
+      employee: {
+        select: {
+          id: true,
+          fullName: true,
+          role: true,
+          department: { select: { name: true } },
+        },
+      },
+      reviewedBy: { select: { id: true, fullName: true } },
     },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
   });
@@ -70,9 +78,10 @@ export default async function LeaveRequestsPage() {
         title="Nghỉ phép"
         subtitle="Phải gửi trước giờ bắt đầu nghỉ ít nhất 24 tiếng. Gửi trễ hơn vẫn gửi được nhưng hệ thống gắn nhãn khẩn cấp để người duyệt biết."
         actions={
-          canExport ? (
+          exportScope ? (
             <a href="/api/leave-requests/export" className="btn-ghost btn-sm inline-flex items-center gap-1.5">
-              <Download size={14} strokeWidth={2} /> Tải tổng hợp tháng trước — toàn công ty (Excel)
+              <Download size={14} strokeWidth={2} /> Tải tổng hợp tháng trước —{" "}
+              {exportScope === "ALL" ? "toàn công ty" : "phòng của bạn"} (Excel)
             </a>
           ) : undefined
         }
@@ -141,7 +150,7 @@ export default async function LeaveRequestsPage() {
                 {mine.map((r) => (
                   <tr key={r.id}>
                     <td className="text-ink-800">
-                      {formatDateTime(r.startDate)} → {formatDateTime(r.endDate)}
+                      {formatVnDate(r.startDate)} → {formatVnDate(r.endDate)}
                       {r.isUrgent && (
                         <span className="ml-2">
                           <Badge tone="red">Khẩn cấp</Badge>
@@ -196,7 +205,7 @@ export default async function LeaveRequestsPage() {
                   <tr key={r.id}>
                     <td className="text-ink-800">{r.employee.fullName}</td>
                     <td className="text-ink-600">
-                      {formatDateTime(r.startDate)} → {formatDateTime(r.endDate)}
+                      {formatVnDate(r.startDate)} → {formatVnDate(r.endDate)}
                     </td>
                     <td className="text-ink-600">
                       {r.reviewedBy?.fullName ?? "—"}
@@ -252,8 +261,8 @@ function LeaveRequestCard({
         {r.reason}
       </p>
       <div className="mb-3 text-sm text-ink-600">
-        Nghỉ từ <b className="text-ink-800">{formatDateTime(r.startDate)}</b>{" "}
-        đến <b className="text-ink-800">{formatDateTime(r.endDate)}</b>
+        Nghỉ từ <b className="text-ink-800">{formatVnDate(r.startDate)}</b>{" "}
+        đến <b className="text-ink-800">{formatVnDate(r.endDate)}</b>
       </div>
       {actionable && <LeaveRequestActions requestId={r.id} mode="review" />}
     </div>

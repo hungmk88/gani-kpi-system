@@ -1,3 +1,4 @@
+import { vnDate } from "./vn-time";
 import {
   DATA_MISMATCH_THRESHOLD_PERCENT,
   KPI_DEADLINE_DAYS,
@@ -101,8 +102,25 @@ export function round2(n: number) {
 }
 
 /**
+ * Độ vênh giữa các nguồn số liệu, tính MỘT CÁCH DUY NHẤT cho toàn hệ thống
+ * (cờ Data Mismatch trên dashboard và bộ đối soát đa nguồn cùng dùng hàm này,
+ * để không có chuyện dashboard báo đỏ mà đối soát lại coi là khớp).
+ *
+ *   (lớn nhất − nhỏ nhất) / max(|lớn nhất|, |nhỏ nhất|, 1) × 100
+ */
+export function spreadPercent(values: number[]) {
+  if (values.length < 2) return 0;
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const base = Math.max(Math.abs(maxValue), Math.abs(minValue), 1);
+  return round2(((maxValue - minValue) / base) * 100);
+}
+
+/**
  * Đối soát số hệ thống (Excel/iPOS) với số nhân viên tự khai.
- * Lệch quá ngưỡng ±5% -> gắn cờ Data Mismatch để CEO Dashboard báo đỏ.
+ * Lệch quá ngưỡng ±5% (theo spreadPercent) -> gắn cờ Data Mismatch.
+ * mismatchPercent là độ lệch CÓ DẤU của số tự khai so với số hệ thống, chỉ
+ * để hiển thị ("khai cao hơn 7%").
  */
 export function detectMismatch(
   actualSystem: number | null | undefined,
@@ -116,30 +134,23 @@ export function detectMismatch(
   ) {
     return { hasMismatch: false, mismatchPercent: null };
   }
+  const hasMismatch =
+    spreadPercent([actualSystem, actualSelf]) > DATA_MISMATCH_THRESHOLD_PERCENT;
   if (actualSystem === 0) {
-    const has = actualSelf !== 0;
-    return { hasMismatch: has, mismatchPercent: has ? 100 : 0 };
+    return { hasMismatch, mismatchPercent: actualSelf === 0 ? 0 : 100 };
   }
   const diff = ((actualSelf - actualSystem) / Math.abs(actualSystem)) * 100;
-  return {
-    hasMismatch: Math.abs(diff) > DATA_MISMATCH_THRESHOLD_PERCENT,
-    mismatchPercent: round2(diff),
-  };
+  return { hasMismatch, mismatchPercent: round2(diff) };
 }
 
 /**
- * Lịch chốt 2-4-5: KPI của tháng M được chốt vào ngày 2/4/5 của tháng M+1.
- * Trả về mốc 23:59:59 theo giờ Việt Nam (UTC+7).
+ * Lịch chốt 2-4-5: KPI của tháng M được chốt vào ngày 2/4/5 của tháng M+1,
+ * mốc 23:59:59 giờ Việt Nam. Tính bằng lib/vn-time nên không phụ thuộc múi
+ * giờ của server (Vercel chạy UTC, máy dev chạy giờ VN — kết quả như nhau).
  */
 export function computeDeadlines(month: number, year: number) {
-  const nextMonth = month === 12 ? 1 : month + 1;
-  const nextYear = month === 12 ? year + 1 : year;
-
-  const at = (day: number) => {
-    // Vercel server ở UTC, cộng 7 tiếng để được Vietnam time
-    const utcDate = new Date(nextYear, nextMonth - 1, day, 23, 59, 59, 0);
-    return new Date(utcDate.getTime() + 7 * 60 * 60 * 1000);
-  };
+  // vnDate tự cuộn tháng 13 -> tháng 1 năm sau
+  const at = (day: number) => vnDate(year, month + 1, day, 23, 59, 59);
 
   return {
     selfReviewDeadline: at(KPI_DEADLINE_DAYS.SELF_REVIEW),
