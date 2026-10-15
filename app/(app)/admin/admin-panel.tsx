@@ -6,8 +6,6 @@ import { CircleCheck, CircleX } from "lucide-react";
 import { Badge, formatDateTime } from "@/components/ui";
 import {
   DATA_SOURCES,
-  KPI_CONFIG_DATA_SOURCES,
-  KPI_CONFIG_DATA_SOURCE_LABEL,
   ROLE_LABEL,
   ROLES,
 } from "@/lib/constants";
@@ -47,25 +45,10 @@ type DefRow = {
   departmentId: string | null;
   departmentName: string | null;
 };
-type KpiConfigRow = {
-  id: string;
-  code: string;
-  name: string;
-  unit: string;
-  isHigherBetter: boolean;
-  weightPercent: number;
-  dataSource: string;
-  baselineValue: number | null;
-  targetValue: number | null;
-  description: string | null;
-  isActive: boolean;
-};
-
 const TABS = [
   { id: "users", label: "Tài khoản" },
   { id: "departments", label: "Phòng ban" },
   { id: "kpis", label: "Danh mục KPI" },
-  { id: "kpiconfig", label: "6 chỉ tiêu" },
   { id: "integrations", label: "Tích hợp" },
   { id: "system", label: "Kết nối & cấu hình" },
 ] as const;
@@ -78,7 +61,6 @@ export default function AdminPanel({
   importLogs,
   integrationSources,
   webhookLogs,
-  kpiConfigs,
   appUrl,
   telegramReady,
   zaloReady,
@@ -99,7 +81,6 @@ export default function AdminPanel({
   }[];
   integrationSources: IntegrationRow[];
   webhookLogs: LogRow[];
-  kpiConfigs: KpiConfigRow[];
   appUrl: string;
   telegramReady: { enabled: boolean; hasToken: boolean; hasWebhookSecret: boolean };
   zaloReady: { enabled: boolean; hasToken: boolean };
@@ -131,7 +112,6 @@ export default function AdminPanel({
       {tab === "kpis" && (
         <KpisTab definitions={definitions} departments={departments} />
       )}
-      {tab === "kpiconfig" && <KpiConfigTab configs={kpiConfigs} />}
       {tab === "integrations" && (
         <IntegrationsTab
           sources={integrationSources}
@@ -799,266 +779,6 @@ function KpisTab({
 }
 
 /* ------------------------------------------------------------ 6 CHỈ TIÊU (KPI SẢN XUẤT) */
-
-/**
- * "6 chỉ tiêu" tính thưởng ca sản xuất (Sản Lượng/Hao Hụt/Chất Lượng/Đúng
- * Spec/An Toàn/Deadline). Đây là bộ số `lib/kpi-calculator.ts` đọc trực tiếp
- * mỗi lần tính điểm ca — sửa ở đây đổi cách tính thưởng thật, không phải màn
- * hình trưng bày. Không có "+ Thêm" vì công thức tính điểm chỉ nhận đúng 6 mã
- * cố định; thêm mã thứ 7 qua đây sẽ không được engine đọc tới.
- */
-function KpiConfigTab({ configs }: { configs: KpiConfigRow[] }) {
-  const router = useRouter();
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [f, setF] = useState<{
-    weightPercent: string;
-    targetValue: string;
-    baselineValue: string;
-    unit: string;
-    isHigherBetter: boolean;
-    dataSource: string;
-    description: string;
-    reason: string;
-  } | null>(null);
-
-  function startEdit(c: KpiConfigRow) {
-    setEditingId(c.id);
-    setError(null);
-    setF({
-      weightPercent: String(c.weightPercent),
-      targetValue: c.targetValue?.toString() ?? "",
-      baselineValue: c.baselineValue?.toString() ?? "",
-      unit: c.unit,
-      isHigherBetter: c.isHigherBetter,
-      dataSource: c.dataSource,
-      description: c.description ?? "",
-      reason: "",
-    });
-  }
-
-  function cancelEdit() {
-    setEditingId(null);
-    setF(null);
-    setError(null);
-  }
-
-  async function save(id: string) {
-    if (!f) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/admin/kpi-configs?id=${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          weightPercent: Number(f.weightPercent),
-          targetValue: f.targetValue === "" ? null : Number(f.targetValue),
-          baselineValue:
-            f.baselineValue === "" ? null : Number(f.baselineValue),
-          unit: f.unit,
-          isHigherBetter: f.isHigherBetter,
-          dataSource: f.dataSource,
-          description: f.description || null,
-          reason: f.reason || undefined,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.message || "Không lưu được.");
-        return;
-      }
-      cancelEdit();
-      router.refresh();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const totalWeight = configs.reduce((s, c) => s + c.weightPercent, 0);
-  const weightOff = Math.abs(totalWeight - 100) > 0.01;
-
-  return (
-    <>
-      <div className="mb-3 flex items-center justify-between">
-        <div className="text-sm text-ink-500">
-          {configs.length} chỉ tiêu · tổng trọng số{" "}
-          <span
-            className={
-              weightOff ? "font-semibold text-red-600" : "font-semibold text-ink-700"
-            }
-          >
-            {totalWeight.toFixed(2)}%
-          </span>
-          {weightOff && " — phải bằng 100%"}
-        </div>
-      </div>
-
-      <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-        Bộ số này đổ thẳng vào công thức tính điểm ca sản xuất — sửa trọng số
-        hoặc chỉ tiêu giao có hiệu lực ngay lần tính điểm kế tiếp, ảnh hưởng
-        tới thưởng thật của cả xưởng.
-      </div>
-
-      {error && (
-        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </div>
-      )}
-
-      <div className="table-wrap">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Mã</th>
-              <th>Tên chỉ tiêu</th>
-              <th>Đơn vị</th>
-              <th>Chiều</th>
-              <th className="text-right">Trọng số</th>
-              <th className="text-right">Chỉ tiêu giao</th>
-              <th>Nguồn</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {configs.map((c) => (
-              <tr key={c.id}>
-                <td className="font-mono text-xs text-ink-600">{c.code}</td>
-                <td className="font-medium text-ink-800">{c.name}</td>
-                <td className="text-ink-600">{c.unit}</td>
-                <td className="text-xs text-ink-600">
-                  {c.isHigherBetter ? "↑ cao tốt" : "↓ thấp tốt"}
-                </td>
-                <td className="text-right text-ink-600">{c.weightPercent}%</td>
-                <td className="text-right text-ink-600">
-                  {c.targetValue ?? "—"}
-                </td>
-                <td className="text-xs text-ink-600">
-                  {KPI_CONFIG_DATA_SOURCE_LABEL[c.dataSource] ?? c.dataSource}
-                </td>
-                <td>
-                  <button
-                    className="text-xs text-brand-600 hover:underline"
-                    onClick={() =>
-                      editingId === c.id ? cancelEdit() : startEdit(c)
-                    }
-                  >
-                    {editingId === c.id ? "Đóng" : "Sửa"}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {editingId && f && (
-        <div className="card mt-4 grid gap-3 p-4 sm:grid-cols-3">
-          <div className="sm:col-span-3 text-sm font-semibold text-ink-700">
-            Sửa {configs.find((c) => c.id === editingId)?.name}
-          </div>
-          <div>
-            <label className="label">Trọng số (%)</label>
-            <input
-              type="number"
-              className="input"
-              value={f.weightPercent}
-              onChange={(e) => setF({ ...f, weightPercent: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className="label">Chỉ tiêu giao</label>
-            <input
-              type="number"
-              className="input"
-              value={f.targetValue}
-              onChange={(e) => setF({ ...f, targetValue: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className="label">Baseline</label>
-            <input
-              type="number"
-              className="input"
-              value={f.baselineValue}
-              onChange={(e) => setF({ ...f, baselineValue: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className="label">Đơn vị</label>
-            <input
-              className="input"
-              value={f.unit}
-              onChange={(e) => setF({ ...f, unit: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className="label">Chiều tốt</label>
-            <select
-              className="input"
-              value={f.isHigherBetter ? "1" : "0"}
-              onChange={(e) =>
-                setF({ ...f, isHigherBetter: e.target.value === "1" })
-              }
-            >
-              <option value="1">Càng cao càng tốt</option>
-              <option value="0">Càng thấp càng tốt</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Nguồn số liệu</label>
-            <select
-              className="input"
-              value={f.dataSource}
-              onChange={(e) => setF({ ...f, dataSource: e.target.value })}
-            >
-              {KPI_CONFIG_DATA_SOURCES.map((s) => (
-                <option key={s} value={s}>
-                  {KPI_CONFIG_DATA_SOURCE_LABEL[s]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="sm:col-span-3">
-            <label className="label">Mô tả</label>
-            <input
-              className="input"
-              value={f.description}
-              onChange={(e) => setF({ ...f, description: e.target.value })}
-            />
-          </div>
-          <div className="sm:col-span-3">
-            <label className="label">
-              Lý do đổi (bắt buộc nếu sửa trọng số hoặc chỉ tiêu giao)
-            </label>
-            <input
-              className="input"
-              value={f.reason}
-              onChange={(e) => setF({ ...f, reason: e.target.value })}
-              placeholder="VD: hiệu chỉnh theo năng lực xưởng thật sau 2 tháng vận hành"
-            />
-          </div>
-          <div className="sm:col-span-3 flex gap-2">
-            <button
-              className="btn-primary"
-              disabled={busy}
-              onClick={() => save(editingId)}
-            >
-              {busy ? "Đang lưu..." : "Lưu"}
-            </button>
-            <button className="btn-ghost" onClick={cancelEdit}>
-              Huỷ
-            </button>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-/* ------------------------------------------------------------ HỆ THỐNG */
-
 function SystemTab({
   settings,
   importLogs,

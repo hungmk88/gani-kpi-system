@@ -100,8 +100,10 @@ Thay đổi hành vi người dùng sẽ thấy:
   ngày/nửa năm được kiểm tra thật khi gửi và khi duyệt.
 - Đăng nhập sai 5 lần trong 15 phút thì tạm khoá 15 phút.
 - Bot Telegram chỉ làm việc trong chat riêng.
-- Tính điểm 6 KPI ca: server tự lấy số từ ca đã khoá, chỉ tiêu kỳ phải được Ban
-  Giám đốc duyệt trước.
+- Sản xuất chỉ còn **một** bộ chấm điểm: điểm 2 tầng tự chấm khi khoá ca, chảy
+  vào KPI tháng. Trang "Năm Quyết Định", nút "Tính điểm 6 KPI" và tab "6 chỉ tiêu"
+  đã gỡ; chỉ tiêu sản lượng/hao hụt đặt theo từng mã ở `/production/skus`.
+  Dashboard KPI sản xuất (`/admin/kpi-dashboard`) giờ hiện đúng điểm 2 tầng đó.
 
 ---
 
@@ -838,8 +840,6 @@ Các bước đã thực hiện, ghi lại để làm lại được cho môi tr
 | Thêm/sửa chuẩn SKU sản xuất (sản lượng, hao hụt, đơn giá) | `/production/skus` (CEO / ADMIN / Giám đốc Sản xuất) |
 | Đổi mật khẩu, bật/tắt Telegram, Zalo, đổi secret | Vercel Dashboard → **Environment Variables**, sau đó Redeploy |
 
-> **Lỗ hổng còn treo:** bộ "6 chỉ tiêu" tính thưởng ca sản xuất (`KpiConfig` — Sản Lượng/Hao Hụt/Chất Lượng/Đúng Spec/An Toàn/Deadline) **chưa có giao diện quản trị**, chỉ nạp qua `prisma/seed.ts` (file này chưa gắn vào `npm run setup`). Muốn đổi trọng số/chỉ tiêu của bộ này phải sửa thẳng database hoặc nhờ dựng thêm màn hình quản trị.
-
 ### Sửa tính năng, giao diện, luồng hoạt động (đụng code)
 
 Vòng lặp làm việc:
@@ -1023,9 +1023,16 @@ Nói thẳng để không nhầm lẫn khi nghiệm thu. Cả bốn Phase của 
   không cần ngrok nữa) — chỉ còn thiếu bật `TELEGRAM_ENABLED="true"` và làm nốt
   mục 6b (setWebhook) khi anh muốn dùng.
 
-**Bộ tính thưởng ca sản xuất "6 chỉ tiêu" — ĐÃ có giao diện quản trị (09/09/2026)**
-- ✅ Tab **"6 chỉ tiêu"** trong `/admin` — sửa trọng số/chỉ tiêu giao/đơn vị/nguồn số liệu qua giao diện, không cần đụng database hay file seed nữa. `lib/kpi-calculator.ts` đọc thẳng từ `KpiConfig`, có hiệu lực ngay lần tính điểm ca kế tiếp. Bắt buộc ghi lý do khi sửa trọng số/chỉ tiêu giao, tự chặn nếu tổng 6 trọng số lệch 100%.
-- Đã nạp đủ 6 dòng `KpiConfig` + 4 bậc `BonusConfig` vào cả database dev lẫn production (trước đó là 0 dòng ở production — bonus luôn ra 0đ dù tính điểm đúng, đã phát hiện và nạp kịp).
+**Bộ tính thưởng ca sản xuất "6 chỉ tiêu" — ĐÃ GỠ (15/10/2026)**
+- Bộ này chạy song song với điểm 2 tầng (`lib/production/kpi-engine.ts`), cho ra
+  điểm và bảng thưởng khác cho cùng một ca, mà không chảy vào lương. Đã gộp về một
+  bộ: điểm 2 tầng là nguồn điểm và thưởng duy nhất (bảng thưởng ở `BONUS_TIERS`).
+- Đã gỡ: trang `/kpi/nam-quyet-dinh`, `/api/kpi/targets*`, `/api/kpi/calculate*`,
+  nút "Tính điểm 6 KPI" ở chi tiết ca, tab "6 chỉ tiêu" trong `/admin`,
+  `lib/kpi-calculator.ts`. Dashboard KPI sản xuất đọc `DailyKpiResult`.
+- Các bảng `kpi_configs`, `bonus_configs`, `kpi_period_targets`,
+  `kpi_shift_targets`, `shift_kpi_scores` **vẫn giữ nguyên dữ liệu cũ** trong
+  database (không xoá), chỉ không còn code nào ghi vào.
 
 **Bốn tính năng mới thêm (10/09/2026), xem mục lịch sử dưới cùng để biết chi tiết kỹ thuật:**
 - ✅ **Auto-báo cáo giao ban gửi Telegram BGĐ** — tự chạy đúng ngày chốt kỳ (ngày 5), không cần Gemini vẫn viết được (bản luật cứng).

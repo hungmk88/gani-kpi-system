@@ -121,16 +121,14 @@ Quyền tạo: `CEO`, `ADMIN`.
 ```
 Hạn 2-4-5 được tính tự động vào tháng kế tiếp. `autoAssign` gán sẵn bộ chỉ tiêu của từng phòng ban cho mọi nhân sự.
 
-### `POST /api/kpi/targets` · `DELETE /api/kpi/targets?id=...`
-Gán hoặc sửa chỉ tiêu giao và trọng số. Quyền: `MANAGER` (trong phòng mình), `CEO`, `ADMIN`.
+### `POST /api/kpi/results/targets`
+Đặt chỉ tiêu (`targetValue`) hàng loạt cho các dòng KPI của một kỳ. Quyền: `MANAGER` (nhân sự phòng mình, không tự đặt cho mình, chỉ khi kỳ còn `OPEN`), `CEO`, `ADMIN`. Không sửa được dòng đã chốt; sửa xong điểm được tính lại ngay.
 
 ```json
-{
-  "periodId": "...", "employeeId": "...", "kpiDefinitionId": "...",
-  "weightPercent": 30, "targetValue": 400000000
-}
+{ "periodId": "...", "updates": [{ "resultId": "...", "targetValue": 400000000 }] }
 ```
-Trả kèm `totalWeight` và `weightWarning` nếu tổng trọng số của nhân sự đó chưa bằng 100%.
+
+> Các route `/api/kpi/targets*` và `/api/kpi/calculate*` của bộ "6 KPI ca sản xuất" đã gỡ (10/2026). Điểm ca sản xuất chấm tự động khi khoá ca — xem `docs/KPI-SAN-XUAT.md`.
 
 ### `POST /api/kpi/results/:id`
 Một endpoint, ba hành động phân biệt bằng trường `action`.

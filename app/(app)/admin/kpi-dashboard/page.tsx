@@ -23,7 +23,7 @@ export default async function KpiDashboardPage() {
             <BarChart3 size={22} strokeWidth={2} /> Dashboard KPI
           </span>
         }
-        subtitle="Tổng hợp điểm KPI 6 chỉ tiêu theo ngày/tuần/tháng"
+        subtitle="Điểm KPI ca sản xuất đã khoá số (2 tầng) — cùng nguồn với KPI tháng và thưởng ca"
         actions={
           <Badge tone="blue">
             Phòng SX

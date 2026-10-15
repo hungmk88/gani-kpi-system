@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Lock, BarChart3, Check } from "lucide-react";
+import { Lock, Check } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
@@ -26,9 +26,6 @@ import {
   formatDateTime,
 } from "@/components/ui";
 import ShiftActions from "./shift-actions";
-import KpiScoreCalculator from "./kpi-score-calculator";
-import { canManageProductionKpi, parseBreakdown } from "@/lib/kpi-calculator";
-import KpiScoreDisplay from "./kpi-score-display";
 
 export const dynamic = "force-dynamic";
 
@@ -50,12 +47,6 @@ export default async function ShiftDetailPage({
       lockedBy: true,
       participants: { include: { user: true } },
       kpiResults: { include: { user: true } },
-      kpiScore: {
-        include: {
-          calculatedBy: { select: { id: true, fullName: true } },
-          approvedBy: { select: { id: true, fullName: true } },
-        },
-      },
       audits: {
         include: { explainedBy: true, reviewedBy: true },
         orderBy: { createdAt: "desc" },
@@ -89,9 +80,6 @@ export default async function ShiftDetailPage({
   }
 
   const showMoney = canSeeMoney(user);
-  // Nút tính điểm 6 KPI chỉ hiện cho đúng người API cho phép (CEO, ADMIN,
-  // Trưởng phòng Sản xuất) — hiện cho người khác thì bấm vào chỉ nhận 403.
-  const canCalcShiftKpi = await canManageProductionKpi(user);
   const metrics = computeShiftMetrics({
     rawOutputKg: log.rawOutputKg,
     qcPassedKg: log.qcPassedKg,
@@ -364,40 +352,7 @@ export default async function ShiftDetailPage({
             </div>
           )}
 
-          {/* ---- Tính Điểm KPI 6 chỉ tiêu (PHASE 2) ---- */}
-          {log.status === "LOCKED" && canCalcShiftKpi && (
-            <KpiScoreCalculator shiftLogId={log.id} />
-          )}
-
-          {/* ---- Hiển Thị Kết Quả KPI 6 chỉ tiêu ---- */}
-          {log.kpiScore && (
-            <div>
-              <h2 className="section-title mb-3 flex items-center gap-1.5">
-                <BarChart3 size={17} strokeWidth={2} /> Điểm KPI 6 chỉ tiêu (Phòng SX)
-              </h2>
-              <KpiScoreDisplay
-                scoreId={log.kpiScore.id}
-                status={log.kpiScore.status}
-                totalScore={log.kpiScore.totalScore}
-                bonusMultiplier={log.kpiScore.bonusMultiplier}
-                bonusAmount={showMoney ? log.kpiScore.bonusAmount : null}
-                breakdownJson={
-                  showMoney
-                    ? log.kpiScore.breakdownJson
-                    : (() => {
-                        const b = parseBreakdown(log.kpiScore.breakdownJson, false);
-                        return b ? JSON.stringify(b) : null;
-                      })()
-                }
-                calculatedBy={log.kpiScore.calculatedBy}
-                calculatedAt={log.kpiScore.calculatedAt}
-                approvedBy={log.kpiScore.approvedBy}
-                approvedAt={log.kpiScore.approvedAt}
-              />
-            </div>
-          )}
-
-          {/* ---------------- Điểm KPI Cũ (2 tầng) ---------------- */}
+          {/* ---------------- Điểm KPI ca (2 tầng) ---------------- */}
           {visibleScores.length > 0 && (
             <div>
               <h2 className="section-title mb-3">

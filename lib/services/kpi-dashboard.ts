@@ -2,8 +2,13 @@ import { prisma } from "@/lib/db";
 import { BusinessError } from "@/lib/rbac";
 import { ERR } from "@/lib/constants";
 import type { SessionUser } from "@/lib/auth";
-import { SHIFT_TYPES } from "@/lib/production/constants";
-import { SHIFT_SCORE_CAP } from "@/lib/kpi-calculator";
+import {
+  BONUS_TIERS,
+  SHIFT_STATUSES,
+  SHIFT_TYPES,
+  type ShiftStatus,
+} from "@/lib/production/constants";
+import { computeShiftMetrics } from "@/lib/production/kpi-engine";
 import {
   addDays,
   vnDateKey,
@@ -20,6 +25,20 @@ import { canSeeMoney, withProductionRole } from "./production-service";
  * Tách riêng khỏi 3 route summary/distribution/trends để route xuất báo cáo
  * (Excel + PDF) dùng lại đúng công thức, không tính lại một lần nữa theo cách
  * khác — tránh số trên màn hình và số trong báo cáo lệch nhau.
+ *
+ * NGUỒN SỐ LIỆU: điểm THẬT của ca sản xuất — `DailyKpiResult` (mỗi người một
+ * dòng, sinh ra khi Ban Giám đốc khoá số một `ProductionShiftLog`). Đây chính là
+ * số nuôi KPI tháng và tính thưởng ca, nên dashboard nhìn vào đâu thì lương
+ * thưởng chạy theo đó. Bảng ShiftKpiScore cũ (6 chỉ tiêu/ca) đã bỏ.
+ *
+ * Quy ước:
+ *  - "Ca" = một ProductionShiftLog đã KHOÁ SỐ (status LOCKED). Ca chưa khoá chưa
+ *    có điểm — chỉ xuất hiện trong khối "theo trạng thái" để thấy việc còn treo.
+ *  - Điểm trung bình tính theo NGƯỜI (finalWeightedScore), không theo ca — một
+ *    ca 12 người nặng hơn một ca 3 người, đúng như cách tính thưởng.
+ *  - Điểm ca = trung bình điểm của những người trong ca; thưởng ca = tổng thưởng.
+ *  - Thang điểm: 100 = đạt; trần kỹ thuật 150 nhưng thực tế tối đa ~112 (xem
+ *    BONUS_TIERS trong lib/production/constants.ts).
  *
  * Mọi mốc ngày (hôm nay / tuần / tháng / nhóm theo ngày) tính theo LỊCH VIỆT
  * NAM qua lib/vn-time — không dựa vào múi giờ của server.
@@ -55,9 +74,9 @@ export async function assertDashboardAccess(user: SessionUser) {
 }
 
 const MONEY_KEYS = new Set([
-  "bonusAmount",
   "totalBonus",
   "avgBonus",
+  "shiftBonus",
   "totalBonusDistributed",
 ]);
 
@@ -107,59 +126,109 @@ const round2 = (n: number) => parseFloat(n.toFixed(2));
 const avgOf = (xs: number[]) =>
   xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
 
+const round2OrNull = (n: number | null) => (n === null ? null : round2(n));
+const sumOf = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+const LOCKED: ShiftStatus = "LOCKED";
+
 /* ================================================================ SUMMARY */
 
 export async function getDashboardSummary(periodInput: DashboardPeriod | string) {
   const period = normalizePeriod(periodInput);
-  const scores = await prisma.shiftKpiScore.findMany({
-    where: { shiftLog: { shiftDate: periodRange(period) } },
+
+  // Một truy vấn: mọi ca trong kỳ (mọi trạng thái — để đếm việc còn treo), kèm
+  // điểm từng người. Chỉ ca LOCKED mới có DailyKpiResult (mở lại ca thì điểm bị xoá).
+  const shifts = await prisma.productionShiftLog.findMany({
+    where: { shiftDate: periodRange(period) },
     select: {
-      totalScore: true,
-      bonusAmount: true,
+      id: true,
       status: true,
-      shiftLog: { select: { shiftDate: true, shiftType: true } },
+      shiftDate: true,
+      shiftType: true,
+      sku: { select: { skuCode: true, skuName: true } },
+      kpiResults: {
+        select: {
+          finalWeightedScore: true,
+          tier2Score: true,
+          finalBonusVnd: true,
+          isBonusLocked: true,
+        },
+      },
     },
   });
 
-  const totalShifts = scores.length;
-  const avgScore = avgOf(scores.map((s) => s.totalScore)) ?? 0;
-  const totalBonus = scores.reduce((sum, s) => sum + s.bonusAmount, 0);
-  const avgBonus = totalShifts > 0 ? totalBonus / totalShifts : 0;
+  const statusCounts = Object.fromEntries(
+    SHIFT_STATUSES.map((st) => [st, shifts.filter((s) => s.status === st).length])
+  ) as Record<ShiftStatus, number>;
 
-  const statusCounts = {
-    CALCULATED: scores.filter((s) => s.status === "CALCULATED").length,
-    APPROVED: scores.filter((s) => s.status === "APPROVED").length,
-    DRAFT: scores.filter((s) => s.status === "DRAFT").length,
-  };
+  const locked = shifts.filter((s) => s.status === LOCKED);
+  const results = locked.flatMap((s) => s.kpiResults);
+
+  const totalShifts = locked.length;
+  const resultCount = results.length;
+  const avgScore = avgOf(results.map((r) => r.finalWeightedScore));
+  const totalBonus = sumOf(results.map((r) => r.finalBonusVnd));
+  const bonusLockedCount = results.filter((r) => r.isBonusLocked).length;
+
+  // Điểm và thưởng theo từng ca.
+  const perShift = locked.map((s) => ({
+    shiftId: s.id,
+    shiftDate: s.shiftDate,
+    shiftType: s.shiftType,
+    skuCode: s.sku.skuCode,
+    skuName: s.sku.skuName,
+    peopleCount: s.kpiResults.length,
+    avgScore: avgOf(s.kpiResults.map((r) => r.finalWeightedScore)),
+    // Tầng 2 giống hệt nhau cho mọi người trong ca — lấy trung bình cho chắc.
+    tier2Score: avgOf(s.kpiResults.map((r) => r.tier2Score)),
+    shiftBonus: sumOf(s.kpiResults.map((r) => r.finalBonusVnd)),
+    bonusLocked: s.kpiResults.some((r) => r.isBonusLocked),
+  }));
 
   // Mã ca thật trong ProductionShiftLog là CA_1 / CA_2 / CA_3 (xem
-  // lib/production/constants.ts) — bản cũ đếm MORNING/AFTERNOON/NIGHT nên luôn ra 0.
+  // lib/production/constants.ts). Chỉ đếm ca đã khoá — cùng tập với totalShifts.
   const shiftTypes: Record<string, number> = Object.fromEntries(
-    SHIFT_TYPES.map((t) => [t, scores.filter((s) => s.shiftLog.shiftType === t).length])
+    SHIFT_TYPES.map((t) => [t, locked.filter((s) => s.shiftType === t).length])
   );
 
   return {
     period,
     timestamp: new Date(),
     summary: {
+      /** Số ca đã khoá số trong kỳ */
       totalShifts,
-      avgScore: round2(avgScore),
+      /** Số lượt chấm điểm (người × ca) */
+      resultCount,
+      /** Điểm cuối TB theo người; null = chưa có ca nào khoá */
+      avgScore: round2OrNull(avgScore),
+      /** Điểm Tầng 2 (toàn xưởng) TB theo ca */
+      avgTier2Score: round2OrNull(
+        avgOf(perShift.flatMap((s) => (s.tier2Score === null ? [] : [s.tier2Score])))
+      ),
       totalBonus: Math.round(totalBonus),
-      avgBonus: Math.round(avgBonus),
-      percentApproved:
-        totalShifts > 0 ? Math.round((statusCounts.APPROVED / totalShifts) * 100) : 0,
+      /** Thưởng TB mỗi ca đã khoá */
+      avgBonus: totalShifts > 0 ? Math.round(totalBonus / totalShifts) : 0,
+      /** Số lượt bị khoá thưởng vì cảnh báo chống chạy chỉ tiêu còn treo/bị từ chối */
+      bonusLockedCount,
+      /** % lượt chấm KHÔNG bị khoá thưởng; null = chưa có lượt nào */
+      percentBonusUnlocked:
+        resultCount > 0
+          ? Math.round(((resultCount - bonusLockedCount) / resultCount) * 100)
+          : null,
     },
+    /** Đếm ca theo trạng thái duyệt — gồm cả ca chưa khoá (việc còn treo) */
     statusCounts,
     shiftTypes,
-    topScores: [...scores]
-      .sort((a, b) => b.totalScore - a.totalScore)
+    /** Top 5 ca có điểm TB cao nhất */
+    topScores: perShift
+      .filter((s) => s.avgScore !== null)
+      .sort((a, b) => (b.avgScore ?? 0) - (a.avgScore ?? 0))
       .slice(0, 5)
       .map((s) => ({
-        shiftDate: s.shiftLog.shiftDate,
-        shiftType: s.shiftLog.shiftType,
-        totalScore: s.totalScore,
-        bonusAmount: s.bonusAmount,
-        status: s.status,
+        ...s,
+        avgScore: round2(s.avgScore ?? 0),
+        tier2Score: round2OrNull(s.tier2Score),
+        shiftBonus: Math.round(s.shiftBonus),
       })),
   };
 }
@@ -167,32 +236,45 @@ export async function getDashboardSummary(periodInput: DashboardPeriod | string)
 /* ============================================================ DISTRIBUTION */
 
 /**
- * Khoảng điểm — khớp thang điểm ca (100 = đạt kế hoạch, trần SHIFT_SCORE_CAP =
- * 150) và mốc bậc thưởng 90 / 100 / 120 trong BonusConfig.
+ * Khoảng điểm dựng thẳng từ BONUS_TIERS — mỗi cột là đúng một bậc hệ số thưởng
+ * (<90 → 0×, 90–100 → 0,7×, 100–105 → 1×, 105–110 → 1,2×, ≥110 → 1,5×). Đổi bậc
+ * thưởng trong constants là biểu đồ tự đổi theo. Biên dưới tính vào bậc (≥),
+ * khớp bonusMultiplierFor.
  */
-const BUCKETS = [
-  { range: "0-50", max: 50 },
-  { range: "50-75", max: 75 },
-  { range: "75-90", max: 90 },
-  { range: "90-100", max: 100 },
-  { range: "100-120", max: 120 },
-  { range: `120-${SHIFT_SCORE_CAP}`, max: Infinity },
-] as const;
+const BUCKETS = (() => {
+  const asc = [...BONUS_TIERS].sort((a, b) => a.minScore - b.minScore);
+  return asc.map((t, i) => {
+    const next = asc[i + 1];
+    const min = t.minScore;
+    const max = next ? next.minScore : Infinity;
+    const range =
+      i === 0 && next
+        ? `<${max}`
+        : next
+          ? `${min}–${max}`
+          : `≥${min}`;
+    return { range, min, max, multiplier: t.multiplier as number };
+  });
+})();
 
 const DISTRIBUTION_DAYS = 30;
 
+/** Phân bố điểm cuối của từng NGƯỜI trong các ca đã khoá, 30 ngày VN gần nhất. */
 export async function getDashboardDistribution() {
   const today = vnStartOfDay();
-  const scores = await prisma.shiftKpiScore.findMany({
+  const results = await prisma.dailyKpiResult.findMany({
     where: {
       shiftLog: {
+        status: LOCKED,
         shiftDate: { gte: addDays(today, -(DISTRIBUTION_DAYS - 1)), lt: addDays(today, 1) },
       },
     },
-    select: { totalScore: true },
+    select: { finalWeightedScore: true },
   });
 
-  const validScores = scores.map((s) => s.totalScore);
+  const validScores = results
+    .map((r) => r.finalWeightedScore)
+    .filter((n) => Number.isFinite(n));
   const distribution: Record<string, number> = Object.fromEntries(
     BUCKETS.map((b) => [b.range, 0])
   );
@@ -222,15 +304,18 @@ export async function getDashboardDistribution() {
     period: "last_30_days",
     distribution,
     statistics: {
+      /** Số lượt chấm (người × ca) */
       count: validScores.length,
       average: round2(avg),
       median: round2(median),
       stdDev: round2(stdDev),
-      min: validScores.length > 0 ? Math.min(...validScores) : 0,
-      max: validScores.length > 0 ? Math.max(...validScores) : 0,
+      min: sorted.length > 0 ? round2(sorted[0]) : 0,
+      max: sorted.length > 0 ? round2(sorted[sorted.length - 1]) : 0,
     },
     chartData: BUCKETS.map((b) => ({
-      range: b.range as string,
+      range: b.range,
+      /** Hệ số thưởng của bậc này */
+      multiplier: b.multiplier,
       count: distribution[b.range],
       percentage:
         validScores.length > 0
@@ -244,71 +329,102 @@ export async function getDashboardDistribution() {
 
 const MOVING_AVG_WINDOW = 3;
 
-/** Xu hướng `numDays` ngày lịch VN gần nhất, tính cả hôm nay. */
+/** Xu hướng `numDays` ngày lịch VN gần nhất, tính cả hôm nay — chỉ ca đã khoá. */
 export async function getDashboardTrends(numDaysInput: number) {
   const numDays = Math.min(90, Math.max(1, Math.floor(numDaysInput) || 7));
   const today = vnStartOfDay();
   const start = addDays(today, -(numDays - 1));
 
-  const scores = await prisma.shiftKpiScore.findMany({
-    where: { shiftLog: { shiftDate: { gte: start, lt: addDays(today, 1) } } },
+  const shifts = await prisma.productionShiftLog.findMany({
+    where: { status: LOCKED, shiftDate: { gte: start, lt: addDays(today, 1) } },
     select: {
-      totalScore: true,
-      output_achievement: true,
-      waste_achievement: true,
-      bonusAmount: true,
-      shiftLog: { select: { shiftDate: true } },
+      shiftDate: true,
+      // Đủ dữ kiện cho computeShiftMetrics — dùng đúng công thức của engine chấm điểm.
+      rawOutputKg: true,
+      qcPassedKg: true,
+      reworkKg: true,
+      scrapKg: true,
+      haccpViolationCount: true,
+      totalLaborHours: true,
+      downtimeHours: true,
+      targetOutputKg: true,
+      rawMaterialInputKg: true,
+      stdMaterialNormKg: true,
+      kpiResults: { select: { finalWeightedScore: true, finalBonusVnd: true } },
     },
   });
 
-  const groupedByDate = new Map<string, typeof scores>();
-  for (const score of scores) {
-    const key = vnDateKey(score.shiftLog.shiftDate);
+  type DayShift = {
+    scores: number[];
+    bonus: number;
+    outputAchievement: number | null;
+    defectRate: number | null;
+  };
+  const groupedByDate = new Map<string, DayShift[]>();
+  for (const s of shifts) {
+    const m = computeShiftMetrics(s);
+    const item: DayShift = {
+      scores: s.kpiResults.map((r) => r.finalWeightedScore),
+      bonus: sumOf(s.kpiResults.map((r) => r.finalBonusVnd)),
+      outputAchievement: m.outputAchievementPercent,
+      defectRate: m.defectRatePercent,
+    };
+    const key = vnDateKey(s.shiftDate);
     const arr = groupedByDate.get(key);
-    if (arr) arr.push(score);
-    else groupedByDate.set(key, [score]);
+    if (arr) arr.push(item);
+    else groupedByDate.set(key, [item]);
   }
+
+  const notNull = (xs: (number | null)[]) =>
+    xs.filter((v): v is number => v !== null);
 
   const trendData = Array.from({ length: numDays }, (_, i) => {
     const day = addDays(start, i);
     const dateKey = vnDateKey(day);
     const p = vnParts(day);
-    const dayScores = groupedByDate.get(dateKey) ?? [];
+    const dayShifts = groupedByDate.get(dateKey) ?? [];
+    const dayScores = dayShifts.flatMap((s) => s.scores);
 
     // Ngày không có ca → null (không phải 0). Trung bình đúng bằng 0 vẫn là 0.
-    const avgScore = avgOf(dayScores.map((s) => s.totalScore));
-    const avgOutput = avgOf(dayScores.map((s) => s.output_achievement));
-    const avgWaste = avgOf(dayScores.map((s) => s.waste_achievement));
-
     return {
       date: dateKey,
       displayDate: `${String(p.day).padStart(2, "0")}/${String(p.month).padStart(2, "0")}`,
-      shiftCount: dayScores.length,
-      avgScore: avgScore === null ? null : round2(avgScore),
-      avgOutput: avgOutput === null ? null : round2(avgOutput),
-      avgWaste: avgWaste === null ? null : round2(avgWaste),
-      totalBonus: Math.round(dayScores.reduce((sum, s) => sum + s.bonusAmount, 0)),
+      shiftCount: dayShifts.length,
+      peopleCount: dayScores.length,
+      /** Điểm cuối TB theo người */
+      avgScore: round2OrNull(avgOf(dayScores)),
+      /** TB theo ca của % đạt chỉ tiêu sản lượng (QC đạt / chỉ tiêu); ca không có chỉ tiêu bị bỏ qua */
+      avgOutputAchievement: round2OrNull(
+        avgOf(notNull(dayShifts.map((s) => s.outputAchievement)))
+      ),
+      /** TB theo ca của tỷ lệ lỗi (phế + làm lại × hệ số) / sản lượng thô — đúng defectRatePercent của engine */
+      avgDefectRate: round2OrNull(avgOf(notNull(dayShifts.map((s) => s.defectRate)))),
+      totalBonus: Math.round(sumOf(dayShifts.map((s) => s.bonus))),
     };
   });
 
   // Trung bình trượt 3 ngày: chỉ lấy những ngày CÓ dữ liệu trong cửa sổ —
   // ngày nghỉ không kéo đường xuống 0. Cả cửa sổ trống → null.
   const movingAvg = trendData.map((_, idx) => {
-    const windowVals = trendData
-      .slice(Math.max(0, idx - MOVING_AVG_WINDOW + 1), idx + 1)
-      .map((d) => d.avgScore)
-      .filter((v): v is number => v !== null);
-    const a = avgOf(windowVals);
-    return a === null ? null : round2(a);
+    const windowVals = notNull(
+      trendData
+        .slice(Math.max(0, idx - MOVING_AVG_WINDOW + 1), idx + 1)
+        .map((d) => d.avgScore)
+    );
+    return round2OrNull(avgOf(windowVals));
   });
+
+  const allScores = shifts.flatMap((s) => s.kpiResults.map((r) => r.finalWeightedScore));
 
   return {
     period: `${numDays}_days`,
     trendData: trendData.map((d, idx) => ({ ...d, movingAvg: movingAvg[idx] })),
     statistics: {
       daysWithData: trendData.filter((d) => d.shiftCount > 0).length,
-      totalShifts: scores.length,
-      avgDailyScore: round2(avgOf(scores.map((s) => s.totalScore)) ?? 0),
+      totalShifts: shifts.length,
+      resultCount: allScores.length,
+      /** Điểm cuối TB theo người trong cả khoảng; null = không có ca nào khoá */
+      avgScore: round2OrNull(avgOf(allScores)),
       totalBonusDistributed: Math.round(
         trendData.reduce((sum, d) => sum + d.totalBonus, 0)
       ),
