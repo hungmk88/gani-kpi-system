@@ -15,6 +15,7 @@ import {
   HEALTH_WEIGHTS,
   type Confidence,
 } from "./constants";
+import { fmtNum } from "../format";
 
 /**
  * LÕI TÍNH TOÁN CỦA PHẦN PHÂN TÍCH & DỰ BÁO.
@@ -655,10 +656,10 @@ export function median(values: number[]): number {
 }
 
 function fmt(n: number) {
-  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
+  return fmtNum(n);
 }
 
 /** Số 1 chữ số thập phân, dấu phẩy kiểu Việt ("4,2") cho câu chữ hiển thị */
 function vnNum(n: number) {
-  return round1(n).toLocaleString("vi-VN", { maximumFractionDigits: 1 });
+  return fmtNum(round1(n), 1);
 }

@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { KeyRound, Check, Circle, Plus } from "lucide-react";
-import { Badge, formatDateTime } from "@/components/ui";
+import { Badge, ShowingCount, formatDateTime } from "@/components/ui";
+import { fmtNum } from "@/lib/format";
 import ConfirmDialog from "@/components/confirm-dialog";
 
 export type SourceRow = {
@@ -46,12 +47,15 @@ const KIND_LABEL: Record<string, string> = Object.fromEntries(
 export default function IntegrationsTab({
   sources,
   logs,
+  logsTotal,
   appUrl,
   telegramReady,
   zaloReady,
 }: {
   sources: SourceRow[];
   logs: LogRow[];
+  /** Tổng số lần gọi đã ghi — trang chỉ nạp vài chục lần gần nhất */
+  logsTotal: number;
   appUrl: string;
   telegramReady: { enabled: boolean; hasToken: boolean; hasWebhookSecret: boolean };
   zaloReady: { enabled: boolean; hasToken: boolean };
@@ -241,7 +245,7 @@ export default function IntegrationsTab({
       <div className="card p-5">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="section-title">
-            Nguồn dữ liệu bên ngoài ({sources.length.toLocaleString("vi-VN")})
+            Nguồn dữ liệu bên ngoài ({fmtNum(sources.length)})
           </h3>
           <button
             className="btn-primary btn-sm"
@@ -357,7 +361,7 @@ export default function IntegrationsTab({
                     <td className="font-medium text-ink-800">{s.name}</td>
                     <td className="text-ink-600">{KIND_LABEL[s.kind] ?? s.kind}</td>
                     <td className="text-right text-ink-600 tabular-nums">
-                      {s.priority.toLocaleString("vi-VN")}
+                      {fmtNum(s.priority)}
                     </td>
                     <td className="text-xs text-ink-500">
                       {s.lastSeenAt ? formatDateTime(s.lastSeenAt) : "chưa gọi bao giờ"}
@@ -444,8 +448,7 @@ export default function IntegrationsTab({
                     </td>
                     <td className="text-right text-ink-600 tabular-nums">{l.httpStatus}</td>
                     <td className="text-right text-ink-600 tabular-nums">
-                      {l.itemsReceived.toLocaleString("vi-VN")} /{" "}
-                      {l.itemsApplied.toLocaleString("vi-VN")}
+                      {fmtNum(l.itemsReceived)} / {fmtNum(l.itemsApplied)}
                     </td>
                     <td className="max-w-xs text-xs text-ink-600">
                       {l.error ? (
@@ -463,6 +466,11 @@ export default function IntegrationsTab({
             </table>
           </div>
         )}
+        <ShowingCount
+          shown={logs.length}
+          total={logsTotal}
+          hint="các lần gọi gần nhất"
+        />
       </div>
     </div>
   );

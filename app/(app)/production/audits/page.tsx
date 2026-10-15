@@ -18,9 +18,8 @@ import {
   EmptyState,
   PageHeader,
   StatCard,
-  formatDate,
-  formatDateTime,
 } from "@/components/ui";
+import { fmtDate, fmtDateTime } from "@/lib/format";
 import AuditActions from "./audit-actions";
 
 export const dynamic = "force-dynamic";
@@ -216,7 +215,7 @@ export default async function AuditsPage() {
                             </div>
                             <div className="mt-1 text-xs text-ink-600">
                               {SHIFT_TYPE_LABEL[a.shiftLog.shiftType]} ·{" "}
-                              {formatDate(a.shiftLog.shiftDate)} ·{" "}
+                              {fmtDate(a.shiftLog.shiftDate)} ·{" "}
                               <span className="font-mono">{a.shiftLog.sku.skuCode}</span> —{" "}
                               {a.shiftLog.sku.skuName}
                               {" · khai bởi "}
@@ -245,7 +244,7 @@ export default async function AuditsPage() {
                             <div className="border-l-2 border-ink-200 py-1 pl-3">
                               <div className="text-xs font-semibold text-ink-500">
                                 Giải trình — {a.explainedBy?.fullName} ·{" "}
-                                {formatDateTime(a.explainedAt)}
+                                {fmtDateTime(a.explainedAt)}
                               </div>
                               <div className="mt-1 text-sm whitespace-pre-wrap text-ink-700">
                                 {a.explanationText}
@@ -263,7 +262,7 @@ export default async function AuditsPage() {
                             >
                               <div className="text-xs font-semibold text-ink-500">
                                 Ý kiến Ban Giám đốc — {a.reviewedBy?.fullName} ·{" "}
-                                {formatDateTime(a.reviewedAt)}
+                                {fmtDateTime(a.reviewedAt)}
                               </div>
                               <div className="mt-1 text-sm text-ink-700">
                                 {a.ceoReviewNote}

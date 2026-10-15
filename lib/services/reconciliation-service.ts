@@ -4,6 +4,7 @@ import { BusinessError } from "../rbac";
 import { DATA_MISMATCH_THRESHOLD_PERCENT, ERR } from "../constants";
 import { spreadPercent } from "../kpi";
 import { writeAudit } from "../audit";
+import { fmtNum } from "../format";
 import { notify, sendCeoAlert } from "../telegram";
 import { recalcResult } from "./kpi-service";
 import type { SessionUser } from "../auth";
@@ -695,6 +696,27 @@ function sourceLabel(code: string, kind: string) {
   return map[code] ?? map[kind] ?? code;
 }
 
+/** Số trong câu thông báo — cùng một cách viết số với mọi màn hình */
 function fmt(n: number) {
-  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
+  return fmtNum(n);
+}
+
+/* ------------------------------------------------- TÌNH TRẠNG MỘT KỲ (màn hình) */
+
+export type ReconPeriodState = "no_data" | "all_matched" | "has_mismatch";
+
+/**
+ * Tóm tắt một kỳ cho màn Đối soát. Ô đối soát chỉ sinh ra khi có ít nhất một
+ * nguồn NGOÀI (iPOS, Excel, xưởng…) nạp số — nên kỳ không có ô nào nghĩa là
+ * CHƯA CÓ GÌ ĐỂ SO, không phải "mọi thứ khớp". Nói "khớp" lúc đó là trấn an
+ * sai: có khi nguồn ngoài đang hỏng nên mới không về số.
+ */
+export function reconPeriodState(counts: {
+  matched: number;
+  mismatched: number;
+  resolved: number;
+}): ReconPeriodState {
+  if (counts.mismatched > 0) return "has_mismatch";
+  if (counts.matched + counts.resolved === 0) return "no_data";
+  return "all_matched";
 }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Search } from "lucide-react";
+import { fmtPct } from "@/lib/format";
 
 type Advisory = {
   suggestedScore: number;
@@ -69,8 +70,7 @@ export default function KpiAdvisoryPanel({
     );
   }
 
-  const pct = (n: number) =>
-    `${n.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%`;
+  const pct = (n: number) => fmtPct(n);
 
   // Khung phân tích: một khối viền mảnh, các phần bên trong chỉ cách nhau bằng
   // khoảng trắng và nhãn viết thường câu — không lồng hộp trong hộp.
@@ -165,7 +165,7 @@ function ConfidencePill({ value }: { value: number }) {
         : "rounded-md bg-red-50 px-1.5 py-0.5 text-red-700";
   return (
     <span className={tone}>
-      Tự tin {value.toLocaleString("vi-VN")}%
+      Tự tin {fmtPct(value)}
     </span>
   );
 }

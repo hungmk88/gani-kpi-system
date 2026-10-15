@@ -524,6 +524,7 @@ async function main() {
       reworkKg: 5,
       scrapKg: 5, // tổng 360, lệch 40 kg so với 400
       haccpViolationCount: 0,
+      massBalanceReason: "Cân sót lô test luật 3", // lệch >5 kg bắt buộc ghi lý do
     }),
   });
   const lock3 = await ceo(`/api/production/shifts/${s3.body.shift.id}`, {

@@ -344,8 +344,12 @@ const PERIOD_LABEL_VI: Record<string, string> = {
 const SHIFT_LABEL_VI = SHIFT_TYPE_LABEL;
 
 /** Trạng thái duyệt ca sản xuất (ProductionShiftLog.status). */
-const DASHBOARD_STATUS_ROWS: [key: "DRAFT" | "QC_APPROVED" | "LOCKED", label: string][] = [
+const DASHBOARD_STATUS_ROWS: [
+  key: "DRAFT" | "RETURNED" | "QC_APPROVED" | "LOCKED",
+  label: string,
+][] = [
   ["DRAFT", "Chờ KCS xác nhận"],
+  ["RETURNED", "KCS trả về sản xuất"],
   ["QC_APPROVED", "Chờ Ban Giám đốc khoá"],
   ["LOCKED", "Đã khoá số"],
 ];

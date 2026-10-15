@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, Circle, CircleCheck, CircleX, Plus } from "lucide-react";
+import { Check, Circle, CircleCheck, CircleX, Plus, Search } from "lucide-react";
 import { Badge, formatDateTime } from "@/components/ui";
+import StickyActions from "@/components/sticky-actions";
+import VnNumberInput from "@/components/vn-number-input";
+import { toast } from "@/components/toast";
+import { fmtNum } from "@/lib/format";
 import {
   DATA_SOURCES,
   ROLE_LABEL,
@@ -12,6 +16,8 @@ import {
 import {
   EMPLOYMENT_TYPES,
   EMPLOYMENT_TYPE_LABEL,
+  PRODUCTION_ROLES,
+  PRODUCTION_ROLE_LABEL,
 } from "@/lib/production/constants";
 import IntegrationsTab, {
   type LogRow,
@@ -29,6 +35,9 @@ type UserRow = {
   employmentType: string;
   departmentId: string | null;
   departmentName: string | null;
+  phone: string | null;
+  /** Vai trò trong xưởng (KCS, tổ trưởng…), tách riêng khỏi vai trò tổ chức */
+  productionRole: string | null;
   telegramChatId: string | null;
   isActive: boolean;
   lastLoginAt: string | null;
@@ -81,6 +90,7 @@ export default function AdminPanel({
   importLogs,
   integrationSources,
   webhookLogs,
+  webhookLogsTotal,
   appUrl,
   telegramReady,
   zaloReady,
@@ -101,6 +111,7 @@ export default function AdminPanel({
   }[];
   integrationSources: IntegrationRow[];
   webhookLogs: LogRow[];
+  webhookLogsTotal: number;
   appUrl: string;
   telegramReady: { enabled: boolean; hasToken: boolean; hasWebhookSecret: boolean };
   zaloReady: { enabled: boolean; hasToken: boolean };
@@ -159,6 +170,7 @@ export default function AdminPanel({
         <IntegrationsTab
           sources={integrationSources}
           logs={webhookLogs}
+          logsTotal={webhookLogsTotal}
           appUrl={appUrl}
           telegramReady={telegramReady}
           zaloReady={zaloReady}
@@ -185,21 +197,42 @@ function UsersTab({
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   // Thao tác nhạy cảm đang chờ xác nhận (khoá, đặt lại MK, đổi vai trò…)
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [newPw, setNewPw] = useState("");
   const [showPw, setShowPw] = useState(false);
 
-  const [form, setForm] = useState({
+  const emptyForm = {
     email: "",
     fullName: "",
     jobTitle: "",
     role: "EMPLOYEE",
     departmentId: departments[0]?.id ?? "",
+    productionRole: "",
     password: "",
-  });
+  };
+  const [form, setForm] = useState(emptyForm);
+
+  // Tìm + lọc ngay trên trình duyệt: trang đã nạp đủ mọi tài khoản (vài trăm
+  // người), không cần gọi lại máy chủ mỗi lần gõ.
+  const [q, setQ] = useState("");
+  const [fDept, setFDept] = useState("");
+  const [fRole, setFRole] = useState("");
+  const [fStatus, setFStatus] = useState<"" | "active" | "locked">("");
+  const shown = useMemo(() => {
+    const needle = foldVn(q.trim());
+    return users.filter((u) => {
+      if (fDept === "__none__" ? u.departmentId !== null : fDept && u.departmentId !== fDept)
+        return false;
+      if (fRole === "__prod__" ? !u.productionRole : fRole && u.role !== fRole) return false;
+      if (fStatus === "active" && !u.isActive) return false;
+      if (fStatus === "locked" && u.isActive) return false;
+      if (!needle) return true;
+      return foldVn(`${u.fullName} ${u.email} ${u.jobTitle} ${u.phone ?? ""}`).includes(needle);
+    });
+  }, [users, q, fDept, fRole, fStatus]);
+  const filtering = !!(q.trim() || fDept || fRole || fStatus);
 
   async function create() {
     setBusy(true);
@@ -212,24 +245,20 @@ function UsersTab({
           ...form,
           departmentId: form.departmentId || null,
           jobTitle: form.jobTitle || undefined,
+          productionRole: form.productionRole || null,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.message || "Không tạo được tài khoản.");
+        setError(apiError(data, "Không tạo được tài khoản."));
         return;
       }
       setAdding(false);
-      setNotice(`Đã tạo tài khoản ${form.email}.`);
-      setForm({
-        email: "",
-        fullName: "",
-        jobTitle: "",
-        role: "EMPLOYEE",
-        departmentId: departments[0]?.id ?? "",
-        password: "",
-      });
+      toast(`Đã tạo tài khoản ${form.email}.`);
+      setForm(emptyForm);
       router.refresh();
+    } catch {
+      setError("Mất kết nối tới máy chủ. Kiểm tra mạng rồi thử lại.");
     } finally {
       setBusy(false);
     }
@@ -242,7 +271,6 @@ function UsersTab({
   ): Promise<string | null> {
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       const res = await fetch(`/api/admin/users/${id}`, {
         method: "PATCH",
@@ -251,7 +279,7 @@ function UsersTab({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        return data.message || "Không cập nhật được.";
+        return apiError(data, "Không cập nhật được.");
       }
       router.refresh();
       return null;
@@ -304,6 +332,12 @@ function UsersTab({
         payload = { employmentType: pending.value };
         done = `Đã đổi loại nhân sự của ${u.fullName}.`;
         break;
+      case "production":
+        payload = { productionRole: pending.value || null };
+        done = pending.value
+          ? `Đã đặt vai trò sản xuất của ${u.fullName}: ${PRODUCTION_ROLE_LABEL[pending.value] ?? pending.value}.`
+          : `Đã gỡ vai trò sản xuất của ${u.fullName}.`;
+        break;
     }
     const err = await patch(u.id, payload);
     if (err) {
@@ -312,7 +346,7 @@ function UsersTab({
     }
     setPending(null);
     setEditing(null);
-    setNotice(done);
+    toast(done);
   }
 
   const pwChecks = passwordChecks(newPw);
@@ -321,24 +355,6 @@ function UsersTab({
   return (
     <>
       <UserImport />
-
-      {notice && (
-        <div
-          role="status"
-          className="mb-3 flex items-center justify-between gap-3 text-sm text-leaf-700"
-        >
-          <span className="inline-flex items-center gap-1.5">
-            <CircleCheck size={16} strokeWidth={2} className="shrink-0" />
-            {notice}
-          </span>
-          <button
-            className="text-xs text-ink-500 hover:text-ink-800 hover:underline"
-            onClick={() => setNotice(null)}
-          >
-            Đóng
-          </button>
-        </div>
-      )}
 
       <ConfirmDialog
         open={pending !== null}
@@ -367,7 +383,9 @@ function UsersTab({
                       ? "Đổi vai trò"
                       : pending.kind === "department"
                         ? "Chuyển phòng ban"
-                        : "Đổi loại nhân sự"
+                        : pending.kind === "production"
+                          ? "Đổi vai trò sản xuất"
+                          : "Đổi loại nhân sự"
         }
         confirmLabel={
           pending?.kind === "lock"
@@ -407,7 +425,8 @@ function UsersTab({
         )}
         {(pending?.kind === "role" ||
           pending?.kind === "department" ||
-          pending?.kind === "employment") && (
+          pending?.kind === "employment" ||
+          pending?.kind === "production") && (
           <p>
             {pending.user.fullName}:{" "}
             <b>{describeValue(pending.kind, currentValue(pending), departments)}</b>{" "}
@@ -423,6 +442,15 @@ function UsersTab({
                 Trưởng phòng được duyệt KPI và giao việc cho cả phòng.
               </span>
             )}
+            {pending.kind === "production" &&
+              (pending.value === "QC_OFFICER" ||
+                pending.value === "PRODUCTION_DIRECTOR") && (
+                <span className="mt-2 block rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                  {pending.value === "QC_OFFICER"
+                    ? "Nhân viên KCS được ký xác nhận phẩm chất ca sản xuất — số đó vào thẳng KPI xưởng."
+                    : "Giám đốc Sản xuất được quản lý danh mục SKU (chuẩn sản lượng) và giải trình các ca bị cảnh báo chạy chỉ tiêu."}
+                </span>
+              )}
           </p>
         )}
         {pending?.kind === "reset" && (
@@ -498,9 +526,81 @@ function UsersTab({
         )}
       </ConfirmDialog>
 
-      <div className="mb-3 flex items-center justify-between">
-        <div className="text-sm text-ink-500 tabular-nums">
-          {users.length.toLocaleString("vi-VN")} tài khoản
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <div className="relative min-w-52 flex-1">
+          <Search
+            size={16}
+            aria-hidden
+            className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink-400"
+          />
+          <input
+            type="search"
+            className="input pl-9"
+            placeholder="Tìm theo tên, email, chức danh, điện thoại…"
+            aria-label="Tìm tài khoản"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+        <select
+          className="input w-auto"
+          aria-label="Lọc theo phòng ban"
+          value={fDept}
+          onChange={(e) => setFDept(e.target.value)}
+        >
+          <option value="">Mọi phòng ban</option>
+          {departments.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+          <option value="__none__">Không thuộc phòng ban</option>
+        </select>
+        <select
+          className="input w-auto"
+          aria-label="Lọc theo vai trò"
+          value={fRole}
+          onChange={(e) => setFRole(e.target.value)}
+        >
+          <option value="">Mọi vai trò</option>
+          {ROLES.map((r) => (
+            <option key={r} value={r}>
+              {ROLE_LABEL[r]}
+            </option>
+          ))}
+          <option value="__prod__">Có vai trò sản xuất</option>
+        </select>
+        <select
+          className="input w-auto"
+          aria-label="Lọc theo trạng thái"
+          value={fStatus}
+          onChange={(e) => setFStatus(e.target.value as typeof fStatus)}
+        >
+          <option value="">Mọi trạng thái</option>
+          <option value="active">Đang hoạt động</option>
+          <option value="locked">Đã khoá</option>
+        </select>
+      </div>
+
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="text-sm text-ink-500 tabular-nums" aria-live="polite">
+          {filtering
+            ? `${fmtNum(shown.length)}/${fmtNum(users.length)} người`
+            : `${fmtNum(users.length)} tài khoản`}
+          {filtering && (
+            <button
+              type="button"
+              className="btn btn-sm ml-2"
+              onClick={() => {
+                setQ("");
+                setFDept("");
+                setFRole("");
+                setFStatus("");
+              }}
+            >
+              Xoá bộ lọc
+            </button>
+          )}
         </div>
         <button className="btn-primary btn-sm" onClick={() => setAdding(!adding)}>
           {adding ? (
@@ -579,6 +679,26 @@ function UsersTab({
             </select>
           </div>
           <div>
+            <label className="label">Vai trò sản xuất</label>
+            <select
+              className="input"
+              value={form.productionRole}
+              onChange={(e) =>
+                setForm({ ...form, productionRole: e.target.value })
+              }
+            >
+              <option value="">— Không làm ở xưởng —</option>
+              {PRODUCTION_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {PRODUCTION_ROLE_LABEL[r]}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-ink-500">
+              Tách riêng khỏi vai trò tổ chức: một nhân viên vẫn có thể là KCS.
+            </p>
+          </div>
+          <div>
             <label className="label">Mật khẩu khởi tạo</label>
             <input
               className="input"
@@ -589,9 +709,22 @@ function UsersTab({
             />
           </div>
           <div className="sm:col-span-2">
-            <button className="btn-primary" disabled={busy} onClick={create}>
-              {busy ? "Đang tạo..." : "Tạo tài khoản"}
-            </button>
+            <StickyActions className="sm:mt-0">
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy}
+                onClick={() => {
+                  setAdding(false);
+                  setError(null);
+                }}
+              >
+                Huỷ
+              </button>
+              <button className="btn-primary" disabled={busy} onClick={create}>
+                {busy ? "Đang tạo…" : "Tạo tài khoản"}
+              </button>
+            </StickyActions>
           </div>
         </div>
       )}
@@ -611,7 +744,14 @@ function UsersTab({
             </tr>
           </thead>
           <tbody>
-            {users.map((u) => (
+            {shown.length === 0 && (
+              <tr>
+                <td colSpan={8} className="py-10 text-center text-ink-500">
+                  Không có tài khoản nào khớp bộ lọc.
+                </td>
+              </tr>
+            )}
+            {shown.map((u) => (
               <tr key={u.id}>
                 <td className="min-w-52">
                   <div className="font-medium whitespace-nowrap text-ink-800">
@@ -641,6 +781,31 @@ function UsersTab({
                     <Badge tone={u.role === "CEO" ? "brand" : "slate"}>
                       {ROLE_LABEL[u.role]}
                     </Badge>
+                  )}
+                  {/* Vai trò xưởng nằm ngay dưới vai trò tổ chức — một cột ít
+                      hơn cho bảng vốn đã rộng. */}
+                  {editing === u.id ? (
+                    <select
+                      className="input mt-1 py-1 text-xs"
+                      aria-label="Vai trò sản xuất"
+                      value={u.productionRole ?? ""}
+                      onChange={(e) =>
+                        ask({ kind: "production", user: u, value: e.target.value })
+                      }
+                    >
+                      <option value="">Xưởng: —</option>
+                      {PRODUCTION_ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          Xưởng: {PRODUCTION_ROLE_LABEL[r]}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    u.productionRole && (
+                      <div className="mt-1 text-xs text-ink-500">
+                        Xưởng: {PRODUCTION_ROLE_LABEL[u.productionRole] ?? u.productionRole}
+                      </div>
+                    )
                   )}
                 </td>
                 <td data-label="Loại nhân sự">
@@ -785,14 +950,17 @@ function DepartmentsTab({ departments }: { departments: DeptRow[] }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: code.toUpperCase(), name }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.message);
+        setError(apiError(data, "Không tạo được phòng ban."));
         return;
       }
+      toast(`Đã thêm phòng ban ${name}.`);
       setCode("");
       setName("");
       router.refresh();
+    } catch {
+      setError("Mất kết nối tới máy chủ. Kiểm tra mạng rồi thử lại.");
     } finally {
       setBusy(false);
     }
@@ -849,7 +1017,7 @@ function DepartmentsTab({ departments }: { departments: DeptRow[] }) {
                 <td className="font-mono text-xs text-ink-600">{d.code}</td>
                 <td className="font-medium text-ink-800">{d.name}</td>
                 <td className="text-right text-ink-600 tabular-nums">
-                  {d.userCount.toLocaleString("vi-VN")}
+                  {fmtNum(d.userCount)}
                 </td>
               </tr>
             ))}
@@ -880,7 +1048,7 @@ function KpisTab({
     departmentId: departments[0]?.id ?? "",
     isHigherBetter: true,
     dataSource: "MANUAL",
-    defaultWeight: 20,
+    defaultWeight: 20 as number | null,
   });
 
   async function create() {
@@ -894,16 +1062,19 @@ function KpisTab({
           ...f,
           code: f.code.toUpperCase(),
           departmentId: f.departmentId || null,
-          defaultWeight: Number(f.defaultWeight),
+          defaultWeight: f.defaultWeight ?? 0,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.message);
+        setError(apiError(data, "Không tạo được chỉ tiêu."));
         return;
       }
       setAdding(false);
+      toast(`Đã tạo chỉ tiêu ${f.code.toUpperCase()}.`);
       router.refresh();
+    } catch {
+      setError("Mất kết nối tới máy chủ. Kiểm tra mạng rồi thử lại.");
     } finally {
       setBusy(false);
     }
@@ -939,8 +1110,8 @@ function KpisTab({
     <>
       <div className="mb-3 flex items-center justify-between">
         <div className="text-sm text-ink-500 tabular-nums">
-          {definitions.length.toLocaleString("vi-VN")} chỉ tiêu ·{" "}
-          {definitions.filter((d) => d.isActive).length.toLocaleString("vi-VN")} đang dùng
+          {fmtNum(definitions.length)} chỉ tiêu ·{" "}
+          {fmtNum(definitions.filter((d) => d.isActive).length)} đang dùng
         </div>
         <button className="btn-primary btn-sm" onClick={() => setAdding(!adding)}>
           {adding ? (
@@ -1004,13 +1175,10 @@ function KpisTab({
           </div>
           <div>
             <label className="label">Trọng số mặc định (%)</label>
-            <input
-              type="number"
-              className="input"
+            <VnNumberInput
               value={f.defaultWeight}
-              onChange={(e) =>
-                setF({ ...f, defaultWeight: Number(e.target.value) })
-              }
+              min={0}
+              onValue={(n) => setF({ ...f, defaultWeight: n })}
             />
           </div>
           <div>
@@ -1041,9 +1209,22 @@ function KpisTab({
             </select>
           </div>
           <div className="sm:col-span-3">
-            <button className="btn-primary" disabled={busy} onClick={create}>
-              {busy ? "Đang lưu..." : "Tạo chỉ tiêu"}
-            </button>
+            <StickyActions className="sm:mt-0">
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy}
+                onClick={() => {
+                  setAdding(false);
+                  setError(null);
+                }}
+              >
+                Huỷ
+              </button>
+              <button className="btn-primary" disabled={busy} onClick={create}>
+                {busy ? "Đang lưu…" : "Tạo chỉ tiêu"}
+              </button>
+            </StickyActions>
           </div>
         </div>
       )}
@@ -1076,7 +1257,7 @@ function KpisTab({
                   {dataSourceLabel(d.dataSource)}
                 </td>
                 <td className="text-right text-ink-600 tabular-nums">
-                  {d.defaultWeight.toLocaleString("vi-VN")}%
+                  {fmtNum(d.defaultWeight)}%
                 </td>
                 <td>
                   <button
@@ -1210,11 +1391,11 @@ function SystemTab({
                 <div className="mt-1 text-xs tabular-nums">
                   <span className="text-ink-500">{dataSourceLabel(l.source)} · </span>
                   <span className="text-leaf-700">
-                    {l.rowsOk.toLocaleString("vi-VN")} dòng vào
+                    {fmtNum(l.rowsOk)} dòng vào
                   </span>
                   {l.rowsError > 0 && (
                     <span className="ml-2 font-medium text-red-700">
-                      {l.rowsError.toLocaleString("vi-VN")} dòng lỗi
+                      {fmtNum(l.rowsError)} dòng lỗi
                     </span>
                   )}
                 </div>
@@ -1247,7 +1428,8 @@ type PendingAction = {
     | "unlinkTelegram"
     | "role"
     | "department"
-    | "employment";
+    | "employment"
+    | "production";
   user: UserRow;
   value?: string;
 };
@@ -1255,6 +1437,7 @@ type PendingAction = {
 function currentValue(p: PendingAction) {
   if (p.kind === "role") return p.user.role;
   if (p.kind === "department") return p.user.departmentId ?? "";
+  if (p.kind === "production") return p.user.productionRole ?? "";
   return p.user.employmentType;
 }
 
@@ -1265,7 +1448,32 @@ function describeValue(
 ) {
   if (kind === "role") return ROLE_LABEL[v] ?? v;
   if (kind === "department") return departments.find((d) => d.id === v)?.name ?? "—";
+  if (kind === "production") return v ? (PRODUCTION_ROLE_LABEL[v] ?? v) : "Không làm ở xưởng";
   return EMPLOYMENT_TYPE_LABEL[v as keyof typeof EMPLOYMENT_TYPE_LABEL] ?? v;
+}
+
+/** Bỏ dấu + chữ thường để tìm "nguyen" ra "Nguyễn" */
+function foldVn(s: string) {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+}
+
+/**
+ * Lỗi API → câu cụ thể. Lỗi validate (zod) thì nêu đúng từng trường sai thay
+ * vì "Dữ liệu gửi lên không hợp lệ" chung chung.
+ */
+function apiError(
+  data: { message?: string; issues?: { message: string }[] },
+  fallback: string
+) {
+  if (Array.isArray(data.issues) && data.issues.length > 0) {
+    return data.issues.map((i) => i.message).join(" ");
+  }
+  return data.message || fallback;
 }
 
 /**

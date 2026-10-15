@@ -4,6 +4,10 @@ import { useState } from "react";
 import { FileText } from "lucide-react";
 import { Badge, ProgressBar } from "@/components/ui";
 import { HEALTH_BANDS } from "@/lib/analytics/constants";
+import { fmtNum, fmtPct } from "@/lib/format";
+
+/** Cảnh báo tải nhân sự hiện trước chừng này dòng, còn lại bấm mở */
+const WORKLOAD_PREVIEW = 3;
 
 type HealthPart = {
   key: string;
@@ -44,6 +48,7 @@ export default function BriefingPanel({
   const [data, setData] = useState<Briefing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [allWorkload, setAllWorkload] = useState(false);
 
   const band =
     HEALTH_BANDS.find((b) => health.score >= b.min) ??
@@ -88,7 +93,7 @@ export default function BriefingPanel({
             </div>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="text-4xl font-bold text-ink-900 tabular-nums">
-                {health.score}
+                {fmtNum(health.score, 0)}
               </span>
               <span className="text-lg text-ink-400">/ 100</span>
               <Badge tone={tone}>{band.label}</Badge>
@@ -120,7 +125,7 @@ export default function BriefingPanel({
             <div key={p.key}>
               <div className="mb-1 flex items-center justify-between text-xs">
                 <span className="text-ink-600">{p.label}</span>
-                <span className="font-medium text-ink-800 tabular-nums">{p.score}</span>
+                <span className="font-medium text-ink-800 tabular-nums">{fmtNum(p.score, 0)}</span>
               </div>
               <ProgressBar
                 value={p.score}
@@ -159,11 +164,8 @@ export default function BriefingPanel({
               <Badge tone="amber">Dự báo chưa được kiểm chứng</Badge>
             ) : (
               <Badge tone="slate">
-                Dự báo đúng{" "}
-                {accuracy.accuracyPercent?.toLocaleString("vi-VN", {
-                  maximumFractionDigits: 1,
-                })}
-                % trên {accuracy.total.toLocaleString("vi-VN")} việc
+                Dự báo đúng {fmtPct(accuracy.accuracyPercent)} trên{" "}
+                {fmtNum(accuracy.total)} việc
               </Badge>
             )}
           </div>
@@ -208,10 +210,24 @@ export default function BriefingPanel({
                 Tải nhân sự
               </div>
               <ul className="list-inside list-disc space-y-1 text-sm text-ink-700">
-                {data.workloadWarnings.map((w, i) => (
+                {(allWorkload
+                  ? data.workloadWarnings
+                  : data.workloadWarnings.slice(0, WORKLOAD_PREVIEW)
+                ).map((w, i) => (
                   <li key={i}>{w}</li>
                 ))}
               </ul>
+              {data.workloadWarnings.length > WORKLOAD_PREVIEW && (
+                <button
+                  type="button"
+                  className="btn btn-sm mt-1"
+                  onClick={() => setAllWorkload(!allWorkload)}
+                >
+                  {allWorkload
+                    ? "Thu gọn"
+                    : `Xem tất cả ${fmtNum(data.workloadWarnings.length)} cảnh báo`}
+                </button>
+              )}
             </div>
           )}
 

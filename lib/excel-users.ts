@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { ROLES } from "./constants";
 import { assertSheetRowLimit, loadWorkbook } from "./excel";
+import { PRODUCTION_ROLES } from "./production/constants";
 
 /**
  * FILE MẪU + BỘ ĐỌC DANH SÁCH NHÂN SỰ.
@@ -13,13 +14,9 @@ import { assertSheetRowLimit, loadWorkbook } from "./excel";
 const BRAND = "FF1B6EF5";
 const HEADER_TEXT = "FFFFFFFF";
 
-export const PRODUCTION_ROLES = [
-  "WORKER",
-  "TEAM_LEADER",
-  "SUPERVISOR",
-  "QC_OFFICER",
-  "PRODUCTION_DIRECTOR",
-] as const;
+// Một nguồn duy nhất cho danh sách vai trò xưởng (trước đây chép lại ở đây,
+// thêm vai trò mới bên xưởng là file mẫu lệch theo).
+export { PRODUCTION_ROLES };
 
 /* ------------------------------------------------------------- FILE MẪU */
 
@@ -74,9 +71,11 @@ export async function buildUserTemplate(
     "   vẫn có thể là QC_OFFICER và có quyền xác nhận phẩm chất ca sản xuất.",
     "7. Lưu file rồi vào Quản trị > Tài khoản > Nạp nhân sự từ Excel.",
     "",
-    "HỆ THỐNG SẼ TỪ CHỐI CẢ FILE nếu có bất kỳ dòng nào sai.",
-    "Lý do: nạp nửa vời thì không biết ai đã vào ai chưa, sửa lại còn mệt hơn làm lại.",
-    "Máy sẽ liệt kê từng dòng sai và sai vì sao, anh sửa rồi nạp lại.",
+    "HỆ THỐNG CHO XEM TRƯỚC, CHƯA TẠO AI CẢ khi vừa chọn file.",
+    "Màn xem trước liệt kê từng dòng: dòng sai tô đỏ, ghi rõ sai ở cột nào và vì sao;",
+    "email đã có tài khoản thì tự bỏ qua. Chỉ khi anh bấm \"Nhập N dòng\" thì những",
+    "dòng hợp lệ mới được tạo. Dòng sai sửa trong file rồi nạp lại cả file —",
+    "những người đã tạo ở lần trước sẽ tự được bỏ qua, không tạo trùng.",
   ].forEach((line) => guide.addRow([line]));
   guide.getRow(1).font = { bold: true, size: 14 };
 
@@ -105,113 +104,128 @@ export type UserImportRow = {
   productionRole: string | null;
 };
 
+/** Một chỗ sai của một dòng: cột nào (tên cột trong file mẫu) và sai vì sao. */
+export type RowIssue = { column: string | null; message: string };
+
+export type ParsedUserRow = UserImportRow & { issues: RowIssue[] };
+
 /**
  * Đọc file và kiểm tra những gì kiểm tra được mà không cần chạm database:
  * thiếu cột, sai định dạng, sai vai trò, và trùng email NGAY TRONG FILE.
+ *
+ * Trả về MỌI dòng (kể cả dòng sai) kèm danh sách chỗ sai của từng dòng — màn
+ * xem trước cần vẽ đủ bảng, và một dòng sai hai chỗ thì báo cả hai chỗ một
+ * lượt, không bắt người quản trị sửa xong chỗ này mới thấy chỗ kia.
  *
  * Việc đối chiếu với database (phòng ban có thật không, email đã tồn tại chưa)
  * để tầng dịch vụ làm, vì chỗ này cố ý không biết gì về database.
  */
 export async function parseUserFile(buffer: ArrayBuffer): Promise<{
-  rows: UserImportRow[];
-  errors: string[];
+  rows: ParsedUserRow[];
+  /** Lỗi cả file (không có sheet…), không gắn với dòng nào */
+  fileErrors: string[];
 }> {
   const wb = await loadWorkbook(buffer);
 
   const ws = wb.getWorksheet("NHAN_SU") ?? wb.worksheets[0];
-  if (!ws) return { rows: [], errors: ["File không có sheet dữ liệu nào."] };
+  if (!ws) return { rows: [], fileErrors: ["File không có sheet dữ liệu nào."] };
   assertSheetRowLimit(ws);
 
-  const rows: UserImportRow[] = [];
-  const errors: string[] = [];
+  const rows: ParsedUserRow[] = [];
   const seenEmails = new Map<string, number>();
 
   ws.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return; // dòng tiêu đề
 
-    const fullName = cellText(row.getCell(1));
-    const email = cellText(row.getCell(2)).toLowerCase();
-    const password = cellText(row.getCell(3));
-    const role = cellText(row.getCell(4)).toUpperCase();
-    const departmentCode = cellText(row.getCell(5)).toUpperCase();
-    const jobTitle = cellText(row.getCell(6));
-    const phone = cellText(row.getCell(7));
-    const productionRole = cellText(row.getCell(8)).toUpperCase();
+    const parsed: ParsedUserRow = {
+      rowNumber,
+      fullName: cellText(row.getCell(1)),
+      email: cellText(row.getCell(2)).toLowerCase(),
+      password: cellText(row.getCell(3)),
+      role: cellText(row.getCell(4)).toUpperCase(),
+      departmentCode: cellText(row.getCell(5)).toUpperCase(),
+      jobTitle: cellText(row.getCell(6)) || null,
+      phone: cellText(row.getCell(7)) || null,
+      productionRole: cellText(row.getCell(8)).toUpperCase() || null,
+      issues: [],
+    };
 
     // Dòng trống hoàn toàn thì bỏ qua, không coi là lỗi
-    if (!fullName && !email && !password) return;
+    if (!parsed.fullName && !parsed.email && !parsed.password) return;
 
-    const at = `Dòng ${rowNumber}`;
-
-    if (!fullName || fullName.length < 2) {
-      errors.push(`${at}: thiếu HO_TEN.`);
-      return;
-    }
-    if (!email) {
-      errors.push(`${at}: thiếu EMAIL.`);
-      return;
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      errors.push(`${at}: EMAIL không hợp lệ ("${email}").`);
-      return;
-    }
-    const dup = seenEmails.get(email);
-    if (dup !== undefined) {
-      errors.push(`${at}: EMAIL "${email}" đã xuất hiện ở dòng ${dup}.`);
-      return;
-    }
-    seenEmails.set(email, rowNumber);
-
-    if (!password) {
-      errors.push(`${at}: thiếu MAT_KHAU_TAM.`);
-      return;
-    }
-    if (!role) {
-      errors.push(`${at}: thiếu VAI_TRO.`);
-      return;
-    }
-    if (!(ROLES as readonly string[]).includes(role)) {
-      errors.push(
-        `${at}: VAI_TRO "${role}" không có trong hệ thống. Chỉ nhận EMPLOYEE hoặc MANAGER.`
-      );
-      return;
-    }
-    // Chặn ngay ở bộ đọc, không đợi tầng dịch vụ: tạo quyền cao nhất của hệ
-    // thống bằng một dòng Excel là đường leo thang quyền quá dễ.
-    if (role === "CEO" || role === "ADMIN") {
-      errors.push(
-        `${at}: không tạo được tài khoản ${role} bằng file Excel. Vai trò này phải tạo tay trong mục Quản trị.`
-      );
-      return;
-    }
-    if (!departmentCode) {
-      errors.push(`${at}: thiếu MA_PHONG_BAN.`);
-      return;
-    }
-    if (
-      productionRole &&
-      !(PRODUCTION_ROLES as readonly string[]).includes(productionRole)
-    ) {
-      errors.push(
-        `${at}: VAI_TRO_XUONG "${productionRole}" không hợp lệ. Để trống hoặc dùng: ${PRODUCTION_ROLES.join(", ")}.`
-      );
-      return;
-    }
-
-    rows.push({
-      rowNumber,
-      fullName,
-      email,
-      password,
-      role,
-      departmentCode,
-      jobTitle: jobTitle || null,
-      phone: phone || null,
-      productionRole: productionRole || null,
-    });
+    parsed.issues = validateUserRow(parsed, seenEmails);
+    rows.push(parsed);
   });
 
-  return { rows, errors };
+  return { rows, fileErrors: [] };
+}
+
+/**
+ * Kiểm tra một dòng (không cần database). Tách riêng để test được không cần
+ * dựng file Excel. `seenEmails` ghi lại email đã gặp ở các dòng trước — dòng
+ * nào gặp email trùng thì báo trùng với dòng nào.
+ */
+export function validateUserRow(
+  r: UserImportRow,
+  seenEmails: Map<string, number>
+): RowIssue[] {
+  const issues: RowIssue[] = [];
+
+  if (!r.fullName || r.fullName.length < 2) {
+    issues.push({ column: "HO_TEN", message: "Thiếu họ tên (tối thiểu 2 ký tự)." });
+  }
+
+  if (!r.email) {
+    issues.push({ column: "EMAIL", message: "Thiếu email." });
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email)) {
+    issues.push({ column: "EMAIL", message: `Email không hợp lệ ("${r.email}").` });
+  } else {
+    const dup = seenEmails.get(r.email);
+    if (dup !== undefined) {
+      issues.push({
+        column: "EMAIL",
+        message: `Email "${r.email}" đã xuất hiện ở dòng ${dup} trong file.`,
+      });
+    } else {
+      seenEmails.set(r.email, r.rowNumber);
+    }
+  }
+
+  if (!r.password) {
+    issues.push({ column: "MAT_KHAU_TAM", message: "Thiếu mật khẩu tạm." });
+  }
+
+  if (!r.role) {
+    issues.push({ column: "VAI_TRO", message: "Thiếu vai trò (EMPLOYEE hoặc MANAGER)." });
+  } else if (r.role === "CEO" || r.role === "ADMIN") {
+    // Chặn ngay ở bộ đọc, không đợi tầng dịch vụ: tạo quyền cao nhất của hệ
+    // thống bằng một dòng Excel là đường leo thang quyền quá dễ.
+    issues.push({
+      column: "VAI_TRO",
+      message: `Không tạo được tài khoản ${r.role} bằng file Excel. Vai trò này phải tạo tay trong mục Quản trị.`,
+    });
+  } else if (!(ROLES as readonly string[]).includes(r.role)) {
+    issues.push({
+      column: "VAI_TRO",
+      message: `Vai trò "${r.role}" không có trong hệ thống. Chỉ nhận EMPLOYEE hoặc MANAGER.`,
+    });
+  }
+
+  if (!r.departmentCode) {
+    issues.push({ column: "MA_PHONG_BAN", message: "Thiếu mã phòng ban." });
+  }
+
+  if (
+    r.productionRole &&
+    !(PRODUCTION_ROLES as readonly string[]).includes(r.productionRole)
+  ) {
+    issues.push({
+      column: "VAI_TRO_XUONG",
+      message: `Vai trò xưởng "${r.productionRole}" không hợp lệ. Để trống hoặc dùng: ${PRODUCTION_ROLES.join(", ")}.`,
+    });
+  }
+
+  return issues;
 }
 
 /* --------------------------------------------------------- tiện ích nội bộ */

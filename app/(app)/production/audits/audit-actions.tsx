@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Ban, CircleCheck } from "lucide-react";
+import { toast } from "@/components/toast";
 
 /**
  * Hai thao tác trên một cảnh báo:
@@ -39,7 +40,7 @@ export default function AuditActions({
   const [text, setText] = useState("");
   const [note, setNote] = useState("");
 
-  async function call(payload: unknown) {
+  async function call(payload: unknown, okMsg: string) {
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -61,6 +62,7 @@ export default function AuditActions({
           `Đã ghi nhận, nhưng ca này còn ${data.stillOpen} cảnh báo chưa xử lý nên thưởng vẫn khoá.`
         );
       }
+      toast(okMsg);
       setText("");
       setNote("");
       router.refresh();
@@ -106,7 +108,10 @@ export default function AuditActions({
             className="btn-primary btn-sm"
             disabled={busy || text.trim().length < 20}
             onClick={() =>
-              call({ action: "EXPLAIN", explanationText: text })
+              call(
+                { action: "EXPLAIN", explanationText: text },
+                "Đã gửi giải trình — chờ Ban Giám đốc quyết."
+              )
             }
           >
             {busy ? "Đang gửi..." : "Gửi giải trình cho Ban Giám đốc"}
@@ -145,7 +150,10 @@ export default function AuditActions({
               className="btn-primary btn-sm"
               disabled={busy || note.trim().length < 10}
               onClick={() =>
-                call({ action: "REVIEW", approved: true, reviewNote: note })
+                call(
+                  { action: "REVIEW", approved: true, reviewNote: note },
+                  "Đã chấp nhận giải trình."
+                )
               }
             >
               <Check size={14} strokeWidth={2.5} /> Đồng ý — mở khoá thưởng
@@ -154,7 +162,10 @@ export default function AuditActions({
               className="btn-danger btn-sm"
               disabled={busy || note.trim().length < 10}
               onClick={() =>
-                call({ action: "REVIEW", approved: false, reviewNote: note })
+                call(
+                  { action: "REVIEW", approved: false, reviewNote: note },
+                  "Đã từ chối giải trình — thưởng giữ khoá."
+                )
               }
             >
               <Ban size={14} strokeWidth={2} /> Từ chối — giữ khoá thưởng

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Lock, Check } from "lucide-react";
+import { Lock, Check, Pencil, Undo2 } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
@@ -14,20 +14,25 @@ import {
   AUDIT_STATUS_LABEL,
   BEHAVIOR_LABEL,
   PRODUCTION_ROLE_LABEL,
-  SHIFT_STATUS_LABEL,
   SHIFT_TYPE_LABEL,
   STAGE_LABEL,
   TIER1_WEIGHT,
   TIER2_WEIGHT,
 } from "@/lib/production/constants";
 import {
-  Badge,
-  PageHeader,
-  ProgressBar,
-  fmtScore,
-  formatDate,
-  formatDateTime,
-} from "@/components/ui";
+  SHIFT_STAGE_LABEL,
+  extractShiftReturn,
+  shiftStage,
+} from "@/lib/production/shift-flow";
+import {
+  fmtDate,
+  fmtDateTime,
+  fmtKg,
+  fmtNum,
+  fmtPct,
+  fmtVnd,
+} from "@/lib/format";
+import { Badge, PageHeader, ProgressBar, fmtScore } from "@/components/ui";
 import ShiftActions from "./shift-actions";
 
 export const dynamic = "force-dynamic";
@@ -98,6 +103,10 @@ export default async function ShiftDetailPage({
 
   // Bước 2 do BGĐ vượt quyền KCS (lý do nằm ở dòng đầu qcNote)
   const qcOverridden = extractCeoQcOverrideReason(log.qcNote) !== null;
+  // KCS trả ca về sản xuất sửa: ca vẫn DRAFT, người trả + lý do nằm trong qcNote
+  const stage = shiftStage(log);
+  const returnInfo = stage === "RETURNED" ? extractShiftReturn(log.qcNote) : null;
+  const isCreator = log.createdById === user.id;
 
   const visibleScores = log.kpiResults.filter(
     (r) => isWide || r.userId === user.id
@@ -115,19 +124,21 @@ export default async function ShiftDetailPage({
       </div>
 
       <PageHeader
-        title={`${SHIFT_TYPE_LABEL[log.shiftType] ?? log.shiftType} · ${formatDate(log.shiftDate)}`}
+        title={`${SHIFT_TYPE_LABEL[log.shiftType] ?? log.shiftType} · ${fmtDate(log.shiftDate)}`}
         subtitle={`${log.sku.skuCode} — ${log.sku.skuName}`}
         actions={
           <Badge
             tone={
-              log.status === "LOCKED"
+              stage === "LOCKED"
                 ? "green"
-                : log.status === "QC_APPROVED"
+                : stage === "QC_APPROVED"
                   ? "brand"
-                  : "slate"
+                  : stage === "RETURNED"
+                    ? "amber"
+                    : "slate"
             }
           >
-            {SHIFT_STATUS_LABEL[log.status]}
+            {SHIFT_STAGE_LABEL[stage]}
           </Badge>
         }
       />
@@ -138,34 +149,62 @@ export default async function ShiftDetailPage({
         <div className="grid gap-3 sm:grid-cols-3">
           <Step
             n="1"
-            title="Sản xuất khai"
+            title={returnInfo ? "Sản xuất sửa lại" : "Sản xuất khai"}
             who={log.createdBy.fullName}
-            when={formatDateTime(log.createdAt)}
-            done
+            when={returnInfo ? "đang chờ sửa và gửi lại" : fmtDateTime(log.createdAt)}
+            done={!returnInfo}
+            active={!!returnInfo}
           />
           <Step
             n="2"
             title="KCS xác nhận"
             who={
-              log.qcOfficer
-                ? log.qcOfficer.fullName +
-                  (qcOverridden ? " · BGĐ vượt quyền KCS" : "")
-                : null
+              returnInfo
+                ? `${returnInfo.by} · đã trả về sản xuất`
+                : log.qcOfficer
+                  ? log.qcOfficer.fullName +
+                    (qcOverridden ? " · BGĐ vượt quyền KCS" : "")
+                  : null
             }
-            when={log.qcApprovedAt ? formatDateTime(log.qcApprovedAt) : null}
+            when={log.qcApprovedAt ? fmtDateTime(log.qcApprovedAt) : null}
             done={log.status !== "DRAFT"}
-            active={log.status === "DRAFT"}
+            active={stage === "DRAFT"}
           />
           <Step
             n="3"
             title="Ban Giám đốc khoá số"
             who={log.lockedBy?.fullName ?? null}
-            when={log.lockedAt ? formatDateTime(log.lockedAt) : null}
+            when={log.lockedAt ? fmtDateTime(log.lockedAt) : null}
             done={log.status === "LOCKED"}
             active={log.status === "QC_APPROVED"}
           />
         </div>
       </div>
+
+      {/* Ca bị KCS trả về: nói rõ cần sửa gì ngay trên đầu — đây là việc
+          đang chờ, không phải một dòng ghi chú lẫn trong số liệu. */}
+      {returnInfo && (
+        <div
+          role="status"
+          className="mb-6 flex flex-wrap items-start gap-3 rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          <Undo2 size={18} strokeWidth={2} className="mt-0.5 shrink-0" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">
+              {returnInfo.by} trả ca về sản xuất để sửa
+            </div>
+            <div className="mt-0.5 whitespace-pre-line">{returnInfo.reason}</div>
+          </div>
+          {isCreator && (
+            <Link
+              href={`/production/${log.id}/edit`}
+              className="btn-primary btn-sm inline-flex items-center gap-1.5"
+            >
+              <Pencil size={14} aria-hidden /> Sửa và gửi lại
+            </Link>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
@@ -175,15 +214,15 @@ export default async function ShiftDetailPage({
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {/* Ca còn ở bước 1: các ô KCS chưa điền là chữ xám trung tính,
                   không tô xanh như thể đã đạt. */}
-              <Metric label="Sản lượng thô" value={kg(log.rawOutputKg)} />
+              <Metric label="Sản lượng thô" value={fmtKg(log.rawOutputKg)} />
               <Metric
                 label="Thành phẩm đạt"
-                value={log.status === "DRAFT" ? "chờ KCS" : kg(log.qcPassedKg)}
+                value={log.status === "DRAFT" ? "chờ KCS" : fmtKg(log.qcPassedKg)}
                 tone={log.status === "DRAFT" ? "muted" : undefined}
               />
               <Metric
                 label="Hàng làm lại"
-                value={log.status === "DRAFT" ? "—" : kg(log.reworkKg)}
+                value={log.status === "DRAFT" ? "—" : fmtKg(log.reworkKg)}
                 tone={
                   log.status === "DRAFT"
                     ? "muted"
@@ -194,7 +233,7 @@ export default async function ShiftDetailPage({
               />
               <Metric
                 label="Phế phẩm"
-                value={log.status === "DRAFT" ? "—" : kg(log.scrapKg)}
+                value={log.status === "DRAFT" ? "—" : fmtKg(log.scrapKg)}
                 tone={
                   log.status === "DRAFT"
                     ? "muted"
@@ -205,21 +244,21 @@ export default async function ShiftDetailPage({
               />
               <Metric
                 label="Nguyên liệu kho cấp"
-                value={kg(log.rawMaterialInputKg)}
+                value={fmtKg(log.rawMaterialInputKg)}
               />
               <Metric
                 label="Định mức nguyên liệu"
                 value={
                   log.stdMaterialNormKg > 0
-                    ? kg(log.stdMaterialNormKg)
+                    ? fmtKg(log.stdMaterialNormKg)
                     : "chờ BGĐ chốt chỉ tiêu"
                 }
                 tone={log.stdMaterialNormKg > 0 ? undefined : "muted"}
               />
-              <Metric label="Tổng giờ công" value={`${num(log.totalLaborHours)} giờ`} />
+              <Metric label="Tổng giờ công" value={`${fmtNum(log.totalLaborHours)} giờ`} />
               <Metric
                 label="Vi phạm HACCP"
-                value={log.status === "DRAFT" ? "—" : num(log.haccpViolationCount)}
+                value={log.status === "DRAFT" ? "—" : fmtNum(log.haccpViolationCount)}
                 tone={
                   log.status === "DRAFT"
                     ? "muted"
@@ -238,15 +277,15 @@ export default async function ShiftDetailPage({
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <Metric
                     label="Đạt chỉ tiêu"
-                    value={pct(metrics.outputAchievementPercent)}
+                    value={fmtPct(metrics.outputAchievementPercent)}
                   />
                   <Metric
                     label="Tỷ lệ thu hồi"
-                    value={pct(metrics.yieldPercent)}
+                    value={fmtPct(metrics.yieldPercent)}
                   />
                   <Metric
                     label="Phế + làm lại"
-                    value={pct(metrics.defectRatePercent)}
+                    value={fmtPct(metrics.defectRatePercent)}
                     tone={
                       (metrics.defectRatePercent ?? 0) > 5 ? "red" : undefined
                     }
@@ -256,14 +295,14 @@ export default async function ShiftDetailPage({
                     value={
                       metrics.kgPerLaborHour === null
                         ? "—"
-                        : `${num(metrics.kgPerLaborHour)} kg/giờ công`
+                        : `${fmtNum(metrics.kgPerLaborHour)} kg/giờ công`
                     }
                   />
                 </div>
                 <p className="mt-2 text-xs text-ink-500 tabular-nums">
-                  Cân đối khối lượng lệch {kg(metrics.massBalanceDiffKg)} ·
+                  Cân đối khối lượng lệch {fmtKg(metrics.massBalanceDiffKg)} ·
                   Nguyên liệu {metrics.materialOverrunKg > 0 ? "vượt" : "dưới"}{" "}
-                  định mức {kg(Math.abs(metrics.materialOverrunKg))}
+                  định mức {fmtKg(Math.abs(metrics.materialOverrunKg))}
                 </p>
               </div>
             )}
@@ -273,8 +312,8 @@ export default async function ShiftDetailPage({
                 <b>Ghi chú của ca:</b> {log.draftNote}
               </div>
             )}
-            {log.qcNote && (
-              <div className="mt-2 rounded-md bg-ink-50 px-3 py-2 text-sm text-ink-700">
+            {log.qcNote && !returnInfo && (
+              <div className="mt-2 whitespace-pre-line rounded-md bg-ink-50 px-3 py-2 text-sm text-ink-700">
                 <b>KCS ghi:</b> {log.qcNote}
               </div>
             )}
@@ -295,16 +334,16 @@ export default async function ShiftDetailPage({
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <Metric
                   label="Tổn thất chất lượng"
-                  value={money(log.qualityLossVnd)}
+                  value={fmtVnd(log.qualityLossVnd)}
                   tone={log.qualityLossVnd > 0 ? "red" : undefined}
                 />
                 <Metric
                   label="Đơn giá quy đổi"
-                  value={money(log.sku.unitPriceVnd) + "/kg"}
+                  value={fmtVnd(log.sku.unitPriceVnd) + "/kg"}
                 />
                 <Metric
                   label="Chênh lệch nguyên liệu"
-                  value={money(
+                  value={fmtVnd(
                     (log.rawMaterialInputKg - log.stdMaterialNormKg) *
                       log.sku.unitPriceVnd
                   )}
@@ -315,8 +354,8 @@ export default async function ShiftDetailPage({
                   <b>Ban Giám đốc đã sửa khác chuẩn:</b>
                   {log.targetOverrideReason && (
                     <div className="mt-1">
-                      Chỉ tiêu (chuẩn SKU {kg(log.sku.targetOutputKg)} →{" "}
-                      {kg(log.targetOutputKg)}): {log.targetOverrideReason}
+                      Chỉ tiêu (chuẩn SKU {fmtKg(log.sku.targetOutputKg)} →{" "}
+                      {fmtKg(log.targetOutputKg)}): {log.targetOverrideReason}
                     </div>
                   )}
                   {log.materialOverrideReason && (
@@ -476,6 +515,7 @@ export default async function ShiftDetailPage({
                 skuCode: log.sku.skuCode,
                 qcOfficerId: log.qcOfficerId,
                 qcOverridden,
+                returned: returnInfo,
                 // Chỉ người được xem tiền mới nhận đơn giá (để ước tổn thất
                 // trong hộp xác nhận khoá); người khác nhận null.
                 unitPriceVnd: showMoney ? log.sku.unitPriceVnd : null,
@@ -508,7 +548,7 @@ export default async function ShiftDetailPage({
                       {p.user.fullName}
                     </span>
                     <span className="text-xs text-ink-500 tabular-nums">
-                      {num(p.hoursWorked)}/{num(p.scheduledHours)} giờ
+                      {fmtNum(p.hoursWorked)}/{fmtNum(p.scheduledHours)} giờ
                     </span>
                   </div>
                   <div className="mt-0.5 text-xs text-ink-500">
@@ -520,7 +560,7 @@ export default async function ShiftDetailPage({
                   {(p.personalDefectKg > 0 || p.violationCount > 0) && (
                     <div className="mt-1 text-xs text-amber-800">
                       {p.personalDefectKg > 0 &&
-                        `Lỗi công đoạn ${kg(p.personalDefectKg)}`}
+                        `Lỗi công đoạn ${fmtKg(p.personalDefectKg)}`}
                       {p.personalDefectKg > 0 && p.violationCount > 0 && " · "}
                       {p.violationCount > 0 && `${p.violationCount} vi phạm`}
                     </div>
@@ -626,7 +666,7 @@ function Breakdown({
             <div className="flex items-center justify-between text-xs">
               <span className="text-ink-700">
                 {p.label}{" "}
-                <span className="text-ink-500">({num(p.weight)}%)</span>
+                <span className="text-ink-500">({fmtPct(p.weight)})</span>
               </span>
               <span className="font-medium text-ink-900 tabular-nums">
                 {fmtScore(p.componentScore)}
@@ -650,21 +690,4 @@ function Breakdown({
       </div>
     </div>
   );
-}
-
-/** Số kiểu Việt Nam, tối đa 2 chữ số thập phân: 374,5 */
-function num(n: number) {
-  return n.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
-}
-
-function kg(n: number) {
-  return `${num(n)} kg`;
-}
-
-function pct(n: number | null) {
-  return n === null ? "—" : `${num(n)}%`;
-}
-
-function money(n: number) {
-  return new Intl.NumberFormat("vi-VN").format(Math.round(n)) + " ₫";
 }

@@ -24,12 +24,9 @@ import {
   ReferenceLine,
   Cell,
 } from "recharts";
-import {
-  SHIFT_STATUSES,
-  SHIFT_STATUS_LABEL,
-  SHIFT_TYPE_LABEL,
-} from "@/lib/production/constants";
-import { formatVnDate } from "@/lib/vn-time";
+import { SHIFT_TYPE_LABEL } from "@/lib/production/constants";
+import { SHIFT_STAGES, SHIFT_STAGE_LABEL } from "@/lib/production/shift-flow";
+import { fmtDate, fmtNum, fmtPct, fmtVnd } from "@/lib/format";
 import { StatCard, fmtScore } from "@/components/ui";
 
 /**
@@ -118,25 +115,12 @@ const CHART = {
   tick: "#66665c",
 };
 
-const fmtScoreOrDash = (n: number | null | undefined) =>
-  n === null || n === undefined ? "—" : fmtScore(n);
-
-/** Tiền đầy đủ kiểu Việt Nam: "135.000 ₫"; null (đã ẩn) → "—". */
-const fmtMoney = (n: number | null | undefined) =>
-  n === null || n === undefined
-    ? "—"
-    : `${Math.round(n).toLocaleString("vi-VN")} ₫`;
-
-/** Tiền gọn cho thẻ số: từ 1 triệu trở lên ghi "1,2 tr ₫". */
-const fmtMoneyShort = (n: number | null | undefined) => {
-  if (n === null || n === undefined) return "—";
-  if (Math.abs(n) >= 1_000_000) {
-    return `${(n / 1_000_000).toLocaleString("vi-VN", { maximumFractionDigits: 1 })} tr ₫`;
-  }
-  return fmtMoney(n);
-};
-
-const fmtInt = (n: number) => n.toLocaleString("vi-VN");
+// Định dạng dùng chung (lib/format): null/NaN → "—", tiền đủ "1.250.000 ₫",
+// tiền gọn cho thẻ số "1,25 tr ₫".
+const fmtScoreOrDash = (n: number | null | undefined) => fmtScore(n);
+const fmtMoney = (n: number | null | undefined) => fmtVnd(n);
+const fmtMoneyShort = (n: number | null | undefined) => fmtVnd(n, { compact: true });
+const fmtInt = (n: number) => fmtNum(n, 0);
 
 type Period = "today" | "week" | "month";
 const PERIOD_LABEL: Record<Period, string> = {
@@ -268,7 +252,9 @@ export default function DashboardClient() {
 
   const s = summary?.summary;
   const pending =
-    (summary?.statusCounts.DRAFT ?? 0) + (summary?.statusCounts.QC_APPROVED ?? 0);
+    (summary?.statusCounts.DRAFT ?? 0) +
+    (summary?.statusCounts.RETURNED ?? 0) +
+    (summary?.statusCounts.QC_APPROVED ?? 0);
   // Chưa có ca khoá thì "0 ₫ thưởng" là con số giả — chưa có gì để tính.
   const noShifts = !s || s.totalShifts === 0;
 
@@ -287,7 +273,7 @@ export default function DashboardClient() {
             <p className="mt-1">
               Điểm KPI ca chỉ sinh ra khi Ban Giám đốc khoá số ca sản xuất.
               {pending > 0 &&
-                ` Hiện có ${fmtInt(pending)} ca trong kỳ đang chờ KCS xác nhận hoặc chờ khoá.`}
+                ` Hiện có ${fmtInt(pending)} ca trong kỳ đang chờ KCS, chờ sản xuất sửa hoặc chờ khoá.`}
             </p>
           </div>
         </div>
@@ -324,7 +310,7 @@ export default function DashboardClient() {
               value={
                 noShifts || s.percentBonusUnlocked === null
                   ? "—"
-                  : `${s.percentBonusUnlocked.toLocaleString("vi-VN")}%`
+                  : fmtPct(s.percentBonusUnlocked)
               }
               hint={
                 s.bonusLockedCount > 0
@@ -344,9 +330,9 @@ export default function DashboardClient() {
             <h2 className="section-title mb-3">Trạng thái ca trong kỳ</h2>
             <table className="w-full text-sm">
               <tbody>
-                {SHIFT_STATUSES.map((st) => (
+                {SHIFT_STAGES.map((st) => (
                   <tr key={st} className="border-b border-ink-100 last:border-0">
-                    <td className="py-1.5 text-ink-600">{SHIFT_STATUS_LABEL[st]}</td>
+                    <td className="py-1.5 text-ink-600">{SHIFT_STAGE_LABEL[st]}</td>
                     <td className="py-1.5 text-right font-semibold tabular-nums text-ink-900">
                       {fmtInt(summary.statusCounts[st] ?? 0)}
                     </td>
@@ -381,7 +367,7 @@ export default function DashboardClient() {
                     {summary.topScores.map((t) => (
                       <tr key={t.shiftId} className="border-t border-ink-100">
                         <td className="py-1.5 pr-2 whitespace-nowrap">
-                          {formatVnDate(t.shiftDate)}
+                          {fmtDate(t.shiftDate)}
                         </td>
                         <td className="py-1.5 pr-2">
                           {SHIFT_TYPE_LABEL[t.shiftType] ?? t.shiftType}
@@ -432,14 +418,14 @@ export default function DashboardClient() {
                   <BarChart
                     data={distribution.chartData.map((b) => ({
                       ...b,
-                      label: `${b.range} (${b.multiplier.toLocaleString("vi-VN")}×)`,
+                      label: `${b.range} (${fmtNum(b.multiplier)}×)`,
                     }))}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
                     <XAxis dataKey="label" tick={{ fontSize: 12, fill: CHART.tick }} />
                     <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: CHART.tick }} />
                     <Tooltip
-                      formatter={(v) => [`${Number(v).toLocaleString("vi-VN")} lượt`, "Số lượt"]}
+                      formatter={(v) => [`${fmtNum(Number(v), 0)} lượt`, "Số lượt"]}
                     />
                     <Bar dataKey="count" name="Số lượt">
                       {distribution.chartData.map((b) => (

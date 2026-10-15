@@ -18,6 +18,7 @@ export default async function AdminPage() {
     importLogs,
     integrationSources,
     webhookLogs,
+    webhookLogsTotal,
   ] = await Promise.all([
       prisma.user.findMany({
         include: { department: true },
@@ -42,6 +43,8 @@ export default async function AdminPage() {
         orderBy: { createdAt: "desc" },
         take: 30,
       }),
+      // Đếm tổng để màn hình nói rõ "đang hiển thị 30/…", không tưởng là hết
+      prisma.webhookLog.count(),
     ]);
 
   return (
@@ -61,6 +64,8 @@ export default async function AdminPage() {
           employmentType: u.employmentType,
           departmentId: u.departmentId,
           departmentName: u.department?.name ?? null,
+          phone: u.phone,
+          productionRole: u.productionRole,
           telegramChatId: u.telegramChatId,
           isActive: u.isActive,
           lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
@@ -108,6 +113,7 @@ export default async function AdminPage() {
           lastSeenAt: s.lastSeenAt?.toISOString() ?? null,
           lastStatus: s.lastStatus,
         }))}
+        webhookLogsTotal={webhookLogsTotal}
         webhookLogs={webhookLogs.map((w) => ({
           id: w.id,
           sourceCode: w.sourceCode,

@@ -8,9 +8,12 @@ import {
   isManagerReviewOpen,
   isSelfReviewOpen,
   isCountedKpiRow,
+  gatekeeperRuleFor,
+  kpiCapFor,
   summarizeResults,
 } from "@/lib/kpi";
-import { PageHeader, PeriodStatusBadge, formatDate } from "@/components/ui";
+import { PageHeader, PeriodStatusBadge } from "@/components/ui";
+import { fmtDeadline } from "@/lib/format";
 import KpiWorkTable, { type KpiRow } from "./kpi-work-table";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +32,8 @@ export default async function KpiPeriodPage({
   const results = await prisma.kpiResult.findMany({
     where: { periodId, ...kpiScopeWhere(user) },
     include: {
-      kpiDefinition: true,
+      // Phòng của CHỈ TIÊU quyết định trần (Sales 120%) — xem kpiCapFor
+      kpiDefinition: { include: { department: true } },
       employee: { include: { department: true } },
     },
     orderBy: [{ employee: { fullName: "asc" } }, { weightPercent: "desc" }],
@@ -41,6 +45,8 @@ export default async function KpiPeriodPage({
     {
       employeeId: string;
       employeeName: string;
+      employeeEmail: string;
+      employeeRole: string;
       jobTitle: string;
       departmentName: string;
       rows: KpiRow[];
@@ -56,6 +62,8 @@ export default async function KpiPeriodPage({
       groupsMap.set(key, {
         employeeId: r.employeeId,
         employeeName: r.employee.fullName,
+        employeeEmail: r.employee.email,
+        employeeRole: r.employee.role,
         jobTitle: r.employee.jobTitle ?? "",
         departmentName: r.employee.department?.name ?? "—",
         rows: [],
@@ -75,6 +83,8 @@ export default async function KpiPeriodPage({
       achievementPercent: r.achievementPercent,
       weightedScore: r.weightedScore,
       isCapped: r.isCapped,
+      cap: kpiCapFor(r.kpiDefinition?.department?.code),
+      gatekeeper: gatekeeperRuleFor(r.kpiDefinition?.code),
       hasMismatch: r.hasMismatch,
       mismatchPercent: r.mismatchPercent,
       status: r.status,
@@ -88,6 +98,7 @@ export default async function KpiPeriodPage({
     ...g,
     summary: summarizeResults(g.rows),
   }));
+  const rowCount = groups.reduce((n, g) => n + g.rows.length, 0);
 
   const selfOpen = isSelfReviewOpen(period);
   const managerOpen = isManagerReviewOpen(period);
@@ -102,7 +113,7 @@ export default async function KpiPeriodPage({
 
       <PageHeader
         title={`Bảng KPI ${period.name}`}
-        subtitle={`${results.length} dòng chỉ tiêu · ${groups.length} nhân sự trong tầm quản lý của bạn`}
+        subtitle={`${rowCount} dòng chỉ tiêu · ${groups.length} nhân sự trong tầm quản lý của bạn`}
         actions={
           <div className="flex items-center gap-2">
             {can(user, "kpi.target.assign") && (
@@ -129,21 +140,21 @@ export default async function KpiPeriodPage({
           <Phase
             step="1"
             title="Nhân viên tự khai"
-            deadline={formatDate(period.selfReviewDeadline)}
+            deadline={period.selfReviewDeadline}
             active={period.status === "OPEN"}
             done={period.status !== "OPEN"}
           />
           <Phase
             step="2"
             title="Trưởng phòng duyệt"
-            deadline={formatDate(period.managerReviewDeadline)}
+            deadline={period.managerReviewDeadline}
             active={period.status === "SELF_LOCKED"}
             done={["MANAGER_LOCKED", "FINALIZED"].includes(period.status)}
           />
           <Phase
             step="3"
             title="Ban Giám đốc chốt & khoá"
-            deadline={formatDate(period.ceoApprovalDeadline)}
+            deadline={period.ceoApprovalDeadline}
             active={period.status === "MANAGER_LOCKED"}
             done={period.status === "FINALIZED"}
           />
@@ -180,10 +191,12 @@ function Phase({
 }: {
   step: string;
   title: string;
-  deadline: string;
+  deadline: Date;
   active: boolean;
   done: boolean;
 }) {
+  // Bước đang mở thì ghi thêm còn bao lâu ("còn 2 ngày", "trễ 1 ngày")
+  const d = fmtDeadline(deadline, { done: !active });
   return (
     // Ô bên trong thẻ: nền ink-50, không viền (tránh thẻ lồng thẻ). Bước
     // đang mở chỉ được đánh dấu bằng vạch xanh thương hiệu bên trái.
@@ -206,7 +219,14 @@ function Phase({
         </span>
         <span className="text-sm font-medium text-ink-800">{title}</span>
       </div>
-      <div className="mt-1.5 pl-8 text-xs text-ink-500">Hạn {deadline}</div>
+      <div className="mt-1.5 pl-8 text-xs text-ink-500">
+        Hạn {d.date}
+        {d.relative && (
+          <span className={d.late ? "font-medium text-red-700" : "text-ink-700"}>
+            {" "}· {d.relative}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

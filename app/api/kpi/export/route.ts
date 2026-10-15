@@ -2,7 +2,12 @@ import { prisma } from "@/lib/db";
 import { fail, handle, requireUser } from "@/lib/api";
 import { kpiScopeWhere } from "@/lib/rbac";
 import { buildKpiReport, type ExportRow } from "@/lib/excel";
-import { classifyScoreFor, scoreStateOf, summarizeResults } from "@/lib/kpi";
+import {
+  classifyScoreFor,
+  isCountedKpiRow,
+  scoreStateOf,
+  summarizeResults,
+} from "@/lib/kpi";
 import { KPI_STATUS_LABEL } from "@/lib/constants";
 
 export const runtime = "nodejs";
@@ -28,7 +33,7 @@ async function exportKpi(req: Request): Promise<Response> {
     return fail("NOT_FOUND", "Không tìm thấy kỳ KPI.", 404);
   }
 
-  const results = await prisma.kpiResult.findMany({
+  const allResults = await prisma.kpiResult.findMany({
     where: { periodId, ...kpiScopeWhere(user) },
     include: {
       kpiDefinition: true,
@@ -40,6 +45,10 @@ async function exportKpi(req: Request): Promise<Response> {
       { weightPercent: "desc" },
     ],
   });
+
+  // Chỉ tiêu đã ngưng dùng, trọng số 0: không tính điểm — không xuất, để
+  // file Excel khớp đúng bảng KPI trên web.
+  const results = allResults.filter(isCountedKpiRow);
 
   const rows: ExportRow[] = results.map((r) => ({
     department: r.employee.department?.name ?? "—",

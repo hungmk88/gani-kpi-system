@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import VnNumberInput from "@/components/vn-number-input";
+import { toast } from "@/components/toast";
+import { fmtNum } from "@/lib/format";
 
 export type SourceRow = {
   code: string;
@@ -31,14 +34,15 @@ export default function ResolvePanel({
 }) {
   const router = useRouter();
   const [picked, setPicked] = useState<string>("");
-  const [custom, setCustom] = useState("");
+  // Ô nhập kiểu Việt: "1.250,5" đọc đúng; ô trống là null, không tự thành 0
+  const [custom, setCustom] = useState<number | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isCustom = picked === "__custom__";
   const pickedSource = sources.find((s) => s.code === picked);
-  const value = isCustom ? Number(custom) : (pickedSource?.value ?? NaN);
+  const value = isCustom ? (custom ?? NaN) : (pickedSource?.value ?? NaN);
   const canSubmit =
     Number.isFinite(value) && reason.trim().length >= 10 && !!picked;
 
@@ -55,11 +59,12 @@ export default function ResolvePanel({
           reason,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.message || "Không chốt được.");
         return;
       }
+      toast(`Đã chốt số ${fmtNum(value)} ${unit}.`);
       router.refresh();
     } catch {
       setError("Mất kết nối tới máy chủ.");
@@ -113,7 +118,7 @@ export default function ResolvePanel({
 
               <span className="shrink-0 text-right">
                 <span className="block font-semibold text-ink-900 tabular-nums">
-                  {fmt(s.value)}
+                  {fmtNum(s.value)}
                 </span>
                 <span className="block text-xs text-ink-400">{unit}</span>
               </span>
@@ -144,13 +149,11 @@ export default function ResolvePanel({
         )}
 
         {isCustom && (
-          <input
-            type="number"
-            step="any"
-            className="input"
-            placeholder={`Số đúng (${unit})`}
+          <VnNumberInput
             value={custom}
-            onChange={(e) => setCustom(e.target.value)}
+            onValue={(n, invalid) => setCustom(invalid ? null : n)}
+            placeholder={`Số đúng (${unit})`}
+            aria-label={`Số đúng (${unit})`}
           />
         )}
       </div>
@@ -181,7 +184,7 @@ export default function ResolvePanel({
         >
           {busy
             ? "Đang chốt..."
-            : `Chốt số ${Number.isFinite(value) ? fmt(value) : ""}`}
+            : `Chốt số ${Number.isFinite(value) ? fmtNum(value) : ""}`}
         </button>
         {!canSubmit && (
           <span className="text-xs text-ink-500">
@@ -195,8 +198,4 @@ export default function ResolvePanel({
       </div>
     </>
   );
-}
-
-function fmt(n: number) {
-  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
 }

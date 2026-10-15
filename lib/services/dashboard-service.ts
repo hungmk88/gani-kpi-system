@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { vnDate, vnDayRange, vnParts } from "../vn-time";
 import { prisma } from "@/lib/db";
 import type { SessionUser } from "@/lib/auth";
@@ -13,6 +14,8 @@ import { getCapacityReports } from "@/lib/services/analytics-service";
 import { CONFIDENCE_LABEL } from "@/lib/analytics/constants";
 import { getDeadlinePeriod } from "@/lib/services/period-service";
 import { LOCK_JUMP_MS, urgencyTone } from "@/lib/urgency";
+import { fmtDeadline, fmtNum } from "@/lib/format";
+import { WAITING_QC_WHERE } from "@/lib/services/production-service";
 
 /**
  * GOM DỮ LIỆU CHO BẢNG ĐIỀU HÀNH.
@@ -29,6 +32,24 @@ const OPEN_STATUSES = ["BACKLOG", "TO_DO", "IN_PROGRESS", "BLOCKED", "REVIEW"];
 
 /** Số kỳ vẽ lên cột mini của thẻ điểm KPI. */
 const TREND_PERIODS = 6;
+
+/**
+ * Bảng tải nhân sự là phần nặng nhất của trang chủ: nạp mọi người kèm toàn bộ
+ * việc đang mở rồi tính trong bộ nhớ — mà trưởng phòng/BGĐ mở trang chủ hàng
+ * chục lần mỗi ngày. Nhớ kết quả 2 phút là đủ: một hàng "đang gánh 130% tải"
+ * chậm 2 phút không đổi quyết định nào.
+ *
+ * An toàn theo người xem: kết quả chỉ phụ thuộc vào `departmentId` (đã là
+ * khoá nhớ — tham số của hàm tự vào khoá), không phụ thuộc ai đang xem. Phạm
+ * vi phòng ban được quyết theo vai trò TRƯỚC khi gọi (xem buildDashboard), nên
+ * trưởng phòng không bao giờ nhận được bản nhớ của toàn công ty.
+ * Dữ liệu trả về chỉ là số và chữ — qua được bước tuần tự hoá JSON của cache.
+ */
+const cachedCapacityReports = unstable_cache(
+  async (departmentId: string | null) => getCapacityReports(departmentId),
+  ["dashboard-capacity-v1"],
+  { revalidate: 120, tags: ["dashboard-capacity"] },
+);
 
 /* ==================================================================== */
 /* KIỂU DỮ LIỆU                                                          */
@@ -99,8 +120,8 @@ export type LeanTask = {
   assignee: string;
   progress: number;
   dueDate: Date;
-  /** Số ngày trễ, chỉ có ở nhóm quá hạn */
-  lateDays?: number;
+  /** "trễ 3 ngày" / "trễ hôm nay" — chỉ có ở nhóm quá hạn */
+  lateLabel?: string;
 };
 
 export type ProductionSummary = {
@@ -135,9 +156,13 @@ function formatRemaining(ms: number): string {
   return `${mins} phút`;
 }
 
-/** Số ngày trễ, làm tròn lên — trễ 3 tiếng vẫn tính là 1 ngày. */
-function lateDays(due: Date, now: Date): number {
-  return Math.max(1, Math.ceil((now.getTime() - due.getTime()) / 86_400_000));
+/**
+ * "trễ 3 ngày" / "trễ hôm nay" — đếm theo NGÀY LỊCH Việt Nam qua fmtDeadline,
+ * cùng cách đếm với bảng điều hành BGĐ, lịch và chi tiết việc (trước đây đếm
+ * theo khối 24 giờ nên cùng một việc chỗ ghi trễ 2 ngày, chỗ ghi 3 ngày).
+ */
+function lateLabel(due: Date, now: Date): string {
+  return fmtDeadline(due, { now }).relative ?? "đã trễ";
 }
 
 /**
@@ -255,7 +280,8 @@ async function buildProductionSummary(now: Date): Promise<ProductionSummary> {
     prisma.productionShiftLog.count({
       where: {
         shiftDate: { gte: startOfMonth, lt: startOfTomorrow },
-        status: "DRAFT",
+        // Ca KCS đã trả về vẫn là DRAFT trong DB nhưng không còn "chờ KCS"
+        ...WAITING_QC_WHERE,
       },
     }),
   ]);
@@ -315,6 +341,7 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
     overdueCountWeekAgo,
     overdueTasks,
     todayTasks,
+    todayCount,
     myResultsAll,
     pendingReview,
     trendPeriods,
@@ -345,6 +372,10 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
       orderBy: { dueDate: "asc" },
       take: 5,
       include: { assignee: { select: { fullName: true } } },
+    }),
+    // Đếm thật, không lấy độ dài danh sách đã cắt còn 5
+    prisma.task.count({
+      where: { ...openWhere, dueDate: { gte: now, lte: endOfToday } },
     }),
 
     period
@@ -439,7 +470,7 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
     // Cân bằng tải chỉ có nghĩa với người quản lý người khác. Nhân viên xem
     // tải của đồng nghiệp là vượt quyền, nên không tính luôn cho đỡ tốn.
     isLeader
-      ? getCapacityReports(
+      ? cachedCapacityReports(
           user.role === "MANAGER" ? (user.departmentId ?? "__none__") : null,
         )
       : Promise.resolve(null),
@@ -600,17 +631,17 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
   // 2. Việc đã quá hạn
   if (overdueCount > 0 && overdueTasks.length > 0) {
     const oldest = overdueTasks[0];
-    const days = lateDays(new Date(oldest.dueDate), now);
+    const late = lateLabel(new Date(oldest.dueDate), now);
     queue.push({
       id: "overdue",
       title: `${overdueCount} việc đã quá hạn${
         user.role === "EMPLOYEE" ? "" : " trong tầm quản lý"
       }`,
-      detail: `Sớm nhất: ${oldest.code} trễ ${days} ngày, tiến độ mới ${oldest.progress}%.`,
+      detail: `Sớm nhất: ${oldest.code} ${late}, tiến độ mới ${oldest.progress}%.`,
       href: "/tasks?filter=overdue",
       cta: "Xem",
       tone: "red",
-      when: `trễ ${days} ngày`,
+      when: late,
       hardLock: false,
       dueAt: new Date(oldest.dueDate),
     });
@@ -728,7 +759,7 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
   for (const a of anomalies.slice(0, 2)) {
     const ratio =
       a.historicalMedian > 0
-        ? (a.reportedValue / a.historicalMedian).toFixed(1).replace(".", ",")
+        ? fmtNum(a.reportedValue / a.historicalMedian, 1)
         : null;
     alerts.push({
       id: `anomaly-${a.id}`,
@@ -803,7 +834,7 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
     assignee: t.assignee?.fullName ?? "Chưa giao",
     progress: t.progress,
     dueDate: new Date(t.dueDate),
-    ...(late ? { lateDays: lateDays(new Date(t.dueDate), now) } : {}),
+    ...(late ? { lateLabel: lateLabel(new Date(t.dueDate), now) } : {}),
   });
 
   /**
@@ -852,6 +883,7 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
     overdueTasks: overdueTasks.map((t) => toLean(t, true)),
     todayTasks: todayTasks.map((t) => toLean(t, false)),
     overdueCount,
+    todayCount,
 
     myKpi: period
       ? {

@@ -1,26 +1,46 @@
 import Link from "next/link";
 import { CalendarDays, ChevronRight } from "lucide-react";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { can } from "@/lib/rbac";
 import {
   classifyScoreFor,
+  gatekeeperRuleFor,
   isCountedKpiRow,
+  kpiCapFor,
   scoreStateOf,
   summarizeResults,
 } from "@/lib/kpi";
+import { KPI_SCORE_CAP, SALES_KPI_CAP } from "@/lib/constants";
+import { fmtDate, fmtNum, fmtScore } from "@/lib/format";
 import { getDeadlinePeriod } from "@/lib/services/period-service";
 import {
   EmptyState,
   PageHeader,
   PeriodStatusBadge,
-  ProgressBar,
   ScoreBadge,
   StatCard,
-  fmtScore,
-  formatDate,
 } from "@/components/ui";
 import OpenPeriodButton from "./open-period-button";
+import {
+  AchievementBar,
+  GatekeeperStatus,
+  achievementText,
+  gatekeeperRuleText,
+} from "./achievement";
+
+/**
+ * Điều kiện Prisma tương đương isCountedKpiRow — để các con số "chờ duyệt"
+ * đếm ở DB khớp với bảng làm việc (không đếm chỉ tiêu đã ngưng, trọng số 0).
+ */
+const COUNTED_ROW: Prisma.KpiResultWhereInput = {
+  OR: [
+    { kpiDefinitionId: null },
+    { kpiDefinition: { isActive: true } },
+    { weightPercent: { gt: 0 } },
+  ],
+};
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +62,8 @@ export default async function KpiHomePage() {
   const allMine = current
     ? await prisma.kpiResult.findMany({
         where: { periodId: current.id, employeeId: user.id },
-        include: { kpiDefinition: true },
+        // Phòng của chỉ tiêu quyết định trần (Sales 120%) — xem kpiCapFor
+        include: { kpiDefinition: { include: { department: true } } },
         orderBy: { weightPercent: "desc" },
       })
     : [];
@@ -66,11 +87,12 @@ export default async function KpiHomePage() {
           periodId: current.id,
           status: "SELF_REVIEWED",
           employee: { departmentId: user.departmentId ?? "__none__" },
+          ...COUNTED_ROW,
         },
       });
     } else if (user.role === "CEO") {
       pending = await prisma.kpiResult.count({
-        where: { periodId: current.id, status: "MANAGER_REVIEWED" },
+        where: { periodId: current.id, status: "MANAGER_REVIEWED", ...COUNTED_ROW },
       });
     } else {
       pending = draftCount;
@@ -81,7 +103,7 @@ export default async function KpiHomePage() {
     <>
       <PageHeader
         title="KPI"
-        subtitle="Thang điểm 100 · Cho vượt chỉ tiêu, trần 150% (Kinh doanh 120%) · Luồng duyệt khoá tự động ngày 2 – 4 – 5"
+        subtitle={`Thang điểm 100 · Cho vượt chỉ tiêu, trần ${KPI_SCORE_CAP}% (Kinh doanh ${SALES_KPI_CAP}%) · Luồng duyệt khoá tự động ngày 2 – 4 – 5`}
         actions={
           can(user, "kpi.period.manage") ? <OpenPeriodButton /> : undefined
         }
@@ -106,7 +128,7 @@ export default async function KpiHomePage() {
               value={current.name}
               hint={
                 current.status === "OPEN"
-                  ? `Hạn tự khai ${formatDate(current.selfReviewDeadline)}`
+                  ? `Hạn tự khai ${fmtDate(current.selfReviewDeadline)}`
                   : undefined
               }
               href={`/kpi/${current.id}`}
@@ -131,7 +153,7 @@ export default async function KpiHomePage() {
             )}
             <StatCard
               label="Tổng trọng số của tôi"
-              value={hasOwnKpi ? `${s.totalWeight}%` : "—"}
+              value={hasOwnKpi ? `${fmtNum(s.totalWeight)}%` : "—"}
               tone={
                 !hasOwnKpi ? "slate" : s.totalWeight === 100 ? "green" : "amber"
               }
@@ -176,6 +198,8 @@ export default async function KpiHomePage() {
               <ul className="space-y-2 sm:hidden">
                 {myResults.map((r) => {
                   const actual = r.actualFinal ?? r.actualSelf ?? r.actualSystem;
+                  const cap = kpiCapFor(r.kpiDefinition?.department?.code);
+                  const gate = gatekeeperRuleFor(r.kpiDefinition?.code);
                   return (
                     <li key={r.id} className="card p-3.5">
                       <div className="flex items-start justify-between gap-3">
@@ -184,43 +208,41 @@ export default async function KpiHomePage() {
                             {r.kpiDefinition?.name ?? "—"}
                           </div>
                           <div className="text-xs text-ink-500">
-                            Trọng số {r.weightPercent ?? 0}% ·{" "}
-                            {r.kpiDefinition?.isHigherBetter
-                              ? "càng cao càng tốt"
-                              : "càng thấp càng tốt"}
+                            {gate
+                              ? gatekeeperRuleText(gate)
+                              : `Trọng số ${fmtNum(r.weightPercent ?? 0)}% · ${
+                                  r.kpiDefinition?.isHigherBetter
+                                    ? "càng cao càng tốt"
+                                    : "càng thấp càng tốt"
+                                }`}
                           </div>
                         </div>
                         <div className="shrink-0 text-right">
                           <div className="font-semibold text-ink-900">
-                            {actual === null ? "—" : fmtScore(r.weightedScore)}
+                            {scoreText(actual, r.weightedScore, gate !== null)}
                           </div>
                           <div className="text-xs text-ink-500">điểm</div>
                         </div>
                       </div>
                       <div className="mt-2 flex items-baseline justify-between gap-2 text-sm">
                         <span className="text-ink-600">
-                          Giao {fmt(r.targetValue)} → Thực tế{" "}
-                          <b className="text-ink-900">{fmt(actual)}</b>{" "}
+                          Giao {fmtNum(r.targetValue)} → Thực tế{" "}
+                          <b className="text-ink-900">{fmtNum(actual)}</b>{" "}
                           {r.kpiDefinition?.unit}
                         </span>
                         <span className="shrink-0 text-xs text-ink-600">
-                          {actual === null
-                            ? "chưa khai"
-                            : `${pct(r.achievementPercent)}${r.isCapped ? " · trần" : ""}`}
+                          {gate ? (
+                            <GatekeeperStatus rule={gate} actual={actual} />
+                          ) : actual === null ? (
+                            "chưa khai"
+                          ) : (
+                            achievementText(r.achievementPercent, r.isCapped, cap)
+                          )}
                         </span>
                       </div>
-                      {actual !== null && (
+                      {actual !== null && !gate && (
                         <div className="mt-1.5">
-                          <ProgressBar
-                            value={(r.achievementPercent / 150) * 100}
-                            tone={
-                              r.achievementPercent >= 100
-                                ? "green"
-                                : r.achievementPercent >= 80
-                                  ? "amber"
-                                  : "red"
-                            }
-                          />
+                          <AchievementBar percent={r.achievementPercent} cap={cap} />
                         </div>
                       )}
                     </li>
@@ -245,60 +267,57 @@ export default async function KpiHomePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {myResults.map((r) => (
-                      <tr key={r.id}>
-                        <td>
-                          <div className="font-medium text-ink-800">
-                            {r.kpiDefinition?.name ?? "—"}
-                          </div>
-                          <div className="text-xs text-ink-500">
-                            {r.kpiDefinition?.isHigherBetter
-                              ? "Càng cao càng tốt"
-                              : "Càng thấp càng tốt"}{" "}
-                            · {r.kpiDefinition?.unit}
-                          </div>
-                        </td>
-                        <td className="text-right text-ink-600 tabular-nums">
-                          {r.weightPercent}%
-                        </td>
-                        <td className="text-right text-ink-600">
-                          {fmt(r.targetValue)}
-                        </td>
-                        <td className="text-right font-medium text-ink-800">
-                          {fmt(r.actualFinal ?? r.actualSelf ?? r.actualSystem)}
-                        </td>
-                        <td>
-                          {(r.actualFinal ?? r.actualSelf ?? r.actualSystem) === null ? (
-                            <span className="text-xs text-ink-500">chưa khai</span>
-                          ) : (
-                          <>
-                          <div className="mb-1 text-xs text-ink-600">
-                            {pct(r.achievementPercent)}
-                            {r.isCapped && " (chạm trần)"}
-                          </div>
-                          <ProgressBar
-                            value={(r.achievementPercent / 150) * 100}
-                            tone={
-                              r.achievementPercent >= 100
-                                ? "green"
-                                : r.achievementPercent >= 80
-                                  ? "amber"
-                                  : "red"
-                            }
-                          />
-                          </>
-                          )}
-                        </td>
-                        <td className="text-right font-semibold text-ink-900">
-                          {(r.actualFinal ?? r.actualSelf ?? r.actualSystem) === null
-                            ? "—"
-                            : fmtScore(r.weightedScore)}
-                        </td>
-                      </tr>
-                    ))}
+                    {myResults.map((r) => {
+                      const actual = r.actualFinal ?? r.actualSelf ?? r.actualSystem;
+                      const cap = kpiCapFor(r.kpiDefinition?.department?.code);
+                      const gate = gatekeeperRuleFor(r.kpiDefinition?.code);
+                      return (
+                        <tr key={r.id}>
+                          <td>
+                            <div className="font-medium text-ink-800">
+                              {r.kpiDefinition?.name ?? "—"}
+                            </div>
+                            <div className="text-xs text-ink-500">
+                              {gate
+                                ? gatekeeperRuleText(gate)
+                                : r.kpiDefinition?.isHigherBetter
+                                  ? "Càng cao càng tốt"
+                                  : "Càng thấp càng tốt"}{" "}
+                              · {r.kpiDefinition?.unit}
+                            </div>
+                          </td>
+                          <td className="text-right text-ink-600 tabular-nums">
+                            {gate ? "—" : `${fmtNum(r.weightPercent)}%`}
+                          </td>
+                          <td className="text-right text-ink-600 tabular-nums">
+                            {fmtNum(r.targetValue)}
+                          </td>
+                          <td className="text-right font-medium text-ink-800 tabular-nums">
+                            {fmtNum(actual)}
+                          </td>
+                          <td>
+                            {gate ? (
+                              <GatekeeperStatus rule={gate} actual={actual} />
+                            ) : actual === null ? (
+                              <span className="text-xs text-ink-500">chưa khai</span>
+                            ) : (
+                              <>
+                                <div className="mb-1 text-xs text-ink-600">
+                                  {achievementText(r.achievementPercent, r.isCapped, cap)}
+                                </div>
+                                <AchievementBar percent={r.achievementPercent} cap={cap} />
+                              </>
+                            )}
+                          </td>
+                          <td className="text-right font-semibold text-ink-900 tabular-nums">
+                            {scoreText(actual, r.weightedScore, gate !== null)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                     <tr className="bg-ink-50/70 font-semibold">
                       <td>Tổng cộng</td>
-                      <td className="text-right">{s.totalWeight}%</td>
+                      <td className="text-right">{fmtNum(s.totalWeight)}%</td>
                       <td colSpan={3}></td>
                       <td className="text-right">
                         <ScoreBadge score={s.totalScore} state={state} />
@@ -330,14 +349,14 @@ export default async function KpiHomePage() {
                   </div>
                   <div className="space-y-1 text-xs text-ink-500">
                     <div>
-                      Nhân viên tự khai đến {formatDate(p.selfReviewDeadline)}
+                      Nhân viên tự khai đến {fmtDate(p.selfReviewDeadline)}
                     </div>
                     <div>
                       Trưởng phòng duyệt đến{" "}
-                      {formatDate(p.managerReviewDeadline)}
+                      {fmtDate(p.managerReviewDeadline)}
                     </div>
                     <div>
-                      Ban Giám đốc chốt {formatDate(p.ceoApprovalDeadline)}
+                      Ban Giám đốc chốt {fmtDate(p.ceoApprovalDeadline)}
                     </div>
                   </div>
                 </Link>
@@ -372,11 +391,12 @@ export default async function KpiHomePage() {
   );
 }
 
-function pct(n: number) {
-  return `${n.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%`;
-}
-
-function fmt(n: number | null | undefined) {
-  if (n === null || n === undefined) return "—";
-  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
+/**
+ * Điểm một dòng: chưa có số thì "—". Gatekeeper chỉ có điểm khi bị trừ —
+ * trong ngưỡng là "không trừ", hiện "—" chứ không phải "0,00".
+ */
+function scoreText(actual: number | null, weightedScore: number, isGatekeeper: boolean) {
+  if (actual === null) return "—";
+  if (isGatekeeper) return weightedScore < 0 ? fmtScore(weightedScore) : "—";
+  return fmtScore(weightedScore);
 }

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Lock, Paperclip } from "lucide-react";
+import { CalendarClock, Lock, Paperclip, TriangleAlert } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
@@ -10,9 +10,11 @@ import {
   ProgressBar,
   RiskBadge,
   TaskStatusBadge,
-  formatDateTime,
 } from "@/components/ui";
+import { fmtDate, fmtDateTime, fmtDeadline } from "@/lib/format";
+import { predecessorsDueAfter } from "@/lib/gantt";
 import TaskActions from "./task-actions";
+import StatusActions from "./status-actions";
 import DependenciesPanel from "./dependencies-panel";
 
 export const dynamic = "force-dynamic";
@@ -68,6 +70,13 @@ export default async function TaskDetailPage({
     );
   }
 
+  // Người "quản" việc — đúng luật của PATCH /api/tasks/[id]: BGĐ, người giao
+  // việc, hoặc trưởng phòng của chính phòng sở hữu việc.
+  const canManage =
+    user.role === "CEO" ||
+    task.creatorId === user.id ||
+    (user.role === "MANAGER" && task.departmentId === user.departmentId);
+
   const canEditDeps =
     user.role === "CEO" ||
     (user.role === "MANAGER" && task.departmentId === user.departmentId);
@@ -93,8 +102,22 @@ export default async function TaskDetailPage({
       ).filter((c) => !alreadyLinked.has(c.id))
     : [];
 
-  const nowMs = Date.now();
+  const now = new Date();
+  const nowMs = now.getTime();
   const openStatuses = ["BACKLOG", "TO_DO", "IN_PROGRESS", "BLOCKED", "REVIEW"];
+
+  // Hạn chót đặt ngay cạnh trạng thái — chỉ tô đỏ khi đã trễ thật
+  const isClosed = task.status === "DONE" || task.status === "CANCELLED";
+  const deadline = fmtDeadline(task.dueDate, { now, done: isClosed });
+
+  // Việc phải chờ mà hạn còn muộn hơn hạn của việc này: kế hoạch tự mâu thuẫn
+  const predsDueAfter = isClosed
+    ? []
+    : predecessorsDueAfter(
+        task.dueDate,
+        task.dependencies.map((d) => d.dependsOn)
+      );
+  const dueAfterIds = new Set(predsDueAfter.map((p) => p.id));
 
   // Nhân sự có thể chuyển giao (chỉ trong phòng ban, đúng luật cấm vượt cấp)
   const assignableUsers =
@@ -133,11 +156,63 @@ export default async function TaskDetailPage({
         {/* ------------- Cột chính ------------- */}
         <div className="space-y-6 lg:col-span-2">
           <div className="card p-5">
-            <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
               <TaskStatusBadge status={task.status} />
-              <PriorityBadge priority={task.priority} />
-              <RiskBadge score={task.riskScore} />
+              <span
+                className={`inline-flex items-center gap-1.5 text-sm ${
+                  deadline.late ? "font-semibold text-red-700" : "text-ink-700"
+                }`}
+              >
+                <CalendarClock size={16} strokeWidth={2} aria-hidden />
+                <span>
+                  Hạn {deadline.date}
+                  {deadline.relative && (
+                    <span className={deadline.late ? "" : "text-ink-500"}>
+                      {" "}
+                      · {deadline.relative}
+                    </span>
+                  )}
+                </span>
+              </span>
+              <span className="flex flex-wrap gap-2">
+                <PriorityBadge priority={task.priority} />
+                <RiskBadge score={task.riskScore} />
+              </span>
             </div>
+
+            {/* Nút đổi trạng thái ngay dưới trạng thái + hạn chót: máy tính là
+                một hàng trong thẻ, điện thoại dính đáy màn hình. Khoảng đệm
+                của StickyActions (phần tử aria-hidden) bị ẩn ở đây vì nó sẽ
+                nằm giữa trang — đệm thật đặt ở cuối trang bên dưới. */}
+            <div className="sm:-mt-4 sm:mb-4 [&>div[aria-hidden]]:hidden">
+              <StatusActions
+                taskId={task.id}
+                status={task.status}
+                canManage={canManage}
+              />
+            </div>
+
+            {predsDueAfter.length > 0 && (
+              <div className="mb-4 flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <TriangleAlert size={16} strokeWidth={2} className="mt-0.5 shrink-0" aria-hidden />
+                <div>
+                  {predsDueAfter.map((p) => (
+                    <div key={p.id}>
+                      Việc phụ thuộc{" "}
+                      <Link href={`/tasks/${p.id}`} className="font-medium underline">
+                        {p.code}
+                      </Link>{" "}
+                      hạn {fmtDate(p.dueDate)}, trễ hơn hạn của việc này (
+                      {fmtDate(task.dueDate)}).
+                    </div>
+                  ))}
+                  <div className="mt-0.5 text-xs">
+                    Dời hạn việc này hoặc thúc việc kia xong sớm hơn — nếu không
+                    việc này chắc chắn trễ.
+                  </div>
+                </div>
+              </div>
+            )}
 
             {task.riskReason && task.riskScore >= 30 && (
               <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -157,7 +232,7 @@ export default async function TaskDetailPage({
                 tone={
                   task.status === "DONE"
                     ? "green"
-                    : new Date(task.dueDate) < new Date()
+                    : deadline.late
                       ? "red"
                       : "brand"
                 }
@@ -189,7 +264,7 @@ export default async function TaskDetailPage({
                       {c.user.fullName}
                     </span>
                     <span className="text-ink-400">
-                      {formatDateTime(c.createdAt)}
+                      {fmtDateTime(c.createdAt)}
                     </span>
                     {c.kind === "EVIDENCE" && (
                       <Badge tone="violet">Bằng chứng</Badge>
@@ -231,9 +306,9 @@ export default async function TaskDetailPage({
               priority: task.priority,
               progress: task.progress,
               assigneeId: task.assigneeId,
-              dueDate: task.dueDate.toISOString(),
             }}
-            role={user.role}
+            canManage={canManage}
+            isManagerRole={user.role === "MANAGER"}
             assignableUsers={assignableUsers.map((u) => ({
               id: u.id,
               name: `${u.fullName} — ${u.department?.name ?? "Không phòng ban"}`,
@@ -252,6 +327,7 @@ export default async function TaskDetailPage({
               isLate:
                 openStatuses.includes(d.dependsOn.status) &&
                 d.dependsOn.dueDate.getTime() < nowMs,
+              dueAfterTask: dueAfterIds.has(d.dependsOn.id),
             }))}
             blocking={task.dependents.map((d) => ({
               id: d.task.id,
@@ -262,6 +338,7 @@ export default async function TaskDetailPage({
               isLate:
                 openStatuses.includes(d.task.status) &&
                 d.task.dueDate.getTime() < nowMs,
+              dueAfterTask: false,
             }))}
             candidates={dependencyCandidates}
           />
@@ -275,30 +352,26 @@ export default async function TaskDetailPage({
                 )}
               </Row>
               <Row label="Người giao việc">{task.creator.fullName}</Row>
-              <Row label="Bắt đầu">{formatDateTime(task.startDate)}</Row>
+              <Row label="Bắt đầu">{fmtDateTime(task.startDate)}</Row>
               <Row label="Hạn chót">
-                <span
-                  className={
-                    new Date(task.dueDate) < new Date() &&
-                    task.status !== "DONE"
-                      ? "font-medium text-red-700"
-                      : ""
-                  }
-                >
-                  {formatDateTime(task.dueDate)}
+                <span className={deadline.late ? "font-medium text-red-700" : ""}>
+                  {fmtDateTime(task.dueDate)}
                 </span>
               </Row>
               <Row label="Hoàn thành lúc">
-                {formatDateTime(task.completedAt)}
+                {fmtDateTime(task.completedAt)}
               </Row>
               <Row label="Chỉ tiêu KPI gắn kèm">
                 {task.kpiDefinition?.name ?? "—"}
               </Row>
-              <Row label="Tạo lúc">{formatDateTime(task.createdAt)}</Row>
+              <Row label="Tạo lúc">{fmtDateTime(task.createdAt)}</Row>
             </dl>
           </div>
         </div>
       </div>
+
+      {/* Đệm cuối trang cho thanh nút dính đáy trên điện thoại */}
+      <div className="h-16 sm:hidden" aria-hidden />
     </>
   );
 }

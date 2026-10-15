@@ -1,11 +1,11 @@
 import Link from "next/link";
 import type { Prisma } from "@prisma/client";
-import { GanttChartSquare, Info } from "lucide-react";
+import { GanttChartSquare } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { taskScopeWhere } from "@/lib/rbac";
 import { buildGantt } from "@/lib/gantt";
-import { EmptyState, PageHeader } from "@/components/ui";
+import { EmptyState, PageHeader, ShowingCount } from "@/components/ui";
 import GanttChart from "./gantt-chart";
 
 export const dynamic = "force-dynamic";
@@ -148,14 +148,14 @@ export default async function GanttPage({
         />
       ) : (
         <>
+          {/* Chạm trần 200 việc: nói rõ đang thiếu bao nhiêu và đã ưu tiên gì */}
           {totalCount > tasks.length && (
-            <div className="card mb-4 flex items-start gap-2 border-ink-200 bg-ink-50 p-3 text-sm text-ink-700">
-              <Info size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
-              <span>
-                Đang hiển thị {tasks.length}/{totalCount} việc — ưu tiên việc
-                trễ hạn và việc sắp đến hạn, việc đã xong lấy sau cùng. Lọc
-                theo dự án hoặc phòng ban để xem đủ.
-              </span>
+            <div className="-mt-2 mb-4">
+              <ShowingCount
+                shown={tasks.length}
+                total={totalCount}
+                hint="ưu tiên việc trễ hạn và sắp đến hạn, việc đã xong lấy sau cùng — lọc theo dự án hoặc phòng ban để xem đủ"
+              />
             </div>
           )}
           <GanttChart

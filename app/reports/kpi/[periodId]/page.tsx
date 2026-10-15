@@ -3,9 +3,17 @@ import { notFound, redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { kpiScopeWhere } from "@/lib/rbac";
-import { classifyScore, round2, summarizeResults } from "@/lib/kpi";
-import { KPI_SCORE_CAP } from "@/lib/constants";
-import { fmtScore } from "@/components/ui";
+import {
+  classifyScore,
+  gatekeeperOutcome,
+  gatekeeperRuleFor,
+  isCountedKpiRow,
+  kpiCapFor,
+  round2,
+  summarizeResults,
+} from "@/lib/kpi";
+import { KPI_SCORE_CAP, SALES_KPI_CAP } from "@/lib/constants";
+import { fmtNum, fmtPct, fmtScore } from "@/lib/format";
 import PrintButton from "./print-button";
 
 export const dynamic = "force-dynamic";
@@ -32,10 +40,11 @@ export default async function KpiReportPage({
   const period = await prisma.kpiPeriod.findUnique({ where: { id: periodId } });
   if (!period) notFound();
 
-  const results = await prisma.kpiResult.findMany({
+  const allResults = await prisma.kpiResult.findMany({
     where: { periodId, ...kpiScopeWhere(user) },
     include: {
-      kpiDefinition: true,
+      // Phòng của chỉ tiêu quyết định trần (Sales 120%) — xem kpiCapFor
+      kpiDefinition: { include: { department: true } },
       employee: { include: { department: true } },
     },
     orderBy: [
@@ -44,6 +53,9 @@ export default async function KpiReportPage({
       { weightPercent: "desc" },
     ],
   });
+
+  // Chỉ tiêu đã ngưng dùng, trọng số 0: không tính điểm — không in ra
+  const results = allResults.filter(isCountedKpiRow);
 
   const company = await prisma.systemSetting.findUnique({
     where: { key: "COMPANY_NAME" },
@@ -107,7 +119,11 @@ export default async function KpiReportPage({
     : 0;
 
   const mismatches = results.filter((r) => r.hasMismatch);
-  const capped = results.filter((r) => r.isCapped);
+  // Gatekeeper không có mức đạt nên không bao giờ "chạm trần" (dòng cũ đã
+  // khoá trước bản sửa có thể còn cờ isCapped — bỏ qua theo định nghĩa)
+  const capped = results.filter(
+    (r) => r.isCapped && !gatekeeperRuleFor(r.kpiDefinition?.code)
+  );
   const notFinalized = results.filter((r) => r.status !== "FINALIZED");
 
   // Màu cột theo ý nghĩa: tốt → lá xanh, đạt → xanh lam (trung tính),
@@ -186,10 +202,7 @@ export default async function KpiReportPage({
             value={fmt(mismatches.length)}
             warn={mismatches.length > 0}
           />
-          <Stat
-            label={`Chạm trần ${KPI_SCORE_CAP}%`}
-            value={fmt(capped.length)}
-          />
+          <Stat label="Dòng chạm trần" value={fmt(capped.length)} />
         </div>
 
         <h3 className="mb-2 text-sm font-semibold text-ink-700">
@@ -328,7 +341,7 @@ export default async function KpiReportPage({
                         {fmt(r.actualSelf)}
                       </td>
                       <td className="border border-ink-200 px-2 py-1 text-right font-semibold text-red-700">
-                        {fmt(r.mismatchPercent)}%
+                        {fmtPct(r.mismatchPercent, { signed: true })}
                       </td>
                     </tr>
                   ))}
@@ -340,7 +353,8 @@ export default async function KpiReportPage({
           {capped.length > 0 && (
             <div>
               <h3 className="mb-2 text-sm font-semibold text-ink-700">
-                Vượt trần {KPI_SCORE_CAP}% ({fmt(capped.length)} dòng)
+                Chạm trần ({fmt(capped.length)} dòng · trần {KPI_SCORE_CAP}%,
+                Kinh doanh {SALES_KPI_CAP}%)
               </h3>
               <p className="mb-2 text-xs text-ink-600">
                 Vượt trần nhiều kỳ liên tiếp thường là dấu hiệu chỉ tiêu giao
@@ -351,7 +365,8 @@ export default async function KpiReportPage({
                   <li key={r.id}>
                     {r.employee.fullName} — {r.kpiDefinition?.name ?? "—"} (giao{" "}
                     {fmt(r.targetValue)}, thực tế{" "}
-                    {fmt(r.actualFinal ?? r.actualSelf ?? r.actualSystem)})
+                    {fmt(r.actualFinal ?? r.actualSelf ?? r.actualSystem)}, trần{" "}
+                    {fmtPct(kpiCapFor(r.kpiDefinition?.department?.code))})
                   </li>
                 ))}
               </ul>
@@ -431,41 +446,66 @@ export default async function KpiReportPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {e.rows.map((r) => (
-                      <tr
-                        key={r.id}
-                        className={r.hasMismatch ? "bg-red-50" : ""}
-                      >
-                        <td className="border border-ink-200 px-2 py-1">
-                          {r.kpiDefinition?.name ?? "—"}
-                          <span className="text-ink-400">
-                            {" "}
-                            ({r.kpiDefinition?.unit ?? "—"},{" "}
-                            {r.kpiDefinition?.isHigherBetter ? "↑" : "↓"})
-                          </span>
-                        </td>
-                        <td className="border border-ink-200 px-2 py-1 text-right">
-                          {fmt(r.weightPercent)}%
-                        </td>
-                        <td className="border border-ink-200 px-2 py-1 text-right">
-                          {fmt(r.targetValue)}
-                        </td>
-                        <td className="border border-ink-200 px-2 py-1 text-right">
-                          {fmt(r.actualFinal ?? r.actualSelf ?? r.actualSystem)}
-                        </td>
-                        <td className="border border-ink-200 px-2 py-1 text-right">
-                          {r.isCapped && (
-                            <span className="mr-1 rounded bg-ink-100 px-1 text-xs font-medium text-ink-700">
-                              Trần
+                    {e.rows.map((r) => {
+                      const actual = r.actualFinal ?? r.actualSelf ?? r.actualSystem;
+                      const gate = gatekeeperRuleFor(r.kpiDefinition?.code);
+                      const outcome = gate ? gatekeeperOutcome(gate, actual) : null;
+                      return (
+                        <tr
+                          key={r.id}
+                          className={r.hasMismatch ? "bg-red-50" : ""}
+                        >
+                          <td className="border border-ink-200 px-2 py-1">
+                            {r.kpiDefinition?.name ?? "—"}
+                            <span className="text-ink-400">
+                              {" "}
+                              ({r.kpiDefinition?.unit ?? "—"},{" "}
+                              {gate
+                                ? `ngưỡng ≤${fmtNum(gate.thresholdPercent)}%, trừ ${fmtNum(gate.penaltyPoints)} điểm`
+                                : r.kpiDefinition?.isHigherBetter
+                                  ? "↑"
+                                  : "↓"}
+                              )
                             </span>
-                          )}
-                          {fmt(r.achievementPercent)}%
-                        </td>
-                        <td className="border border-ink-200 px-2 py-1 text-right font-semibold">
-                          {fmtScore(r.weightedScore)}
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="border border-ink-200 px-2 py-1 text-right">
+                            {gate ? "—" : `${fmt(r.weightPercent)}%`}
+                          </td>
+                          <td className="border border-ink-200 px-2 py-1 text-right">
+                            {fmt(r.targetValue)}
+                          </td>
+                          <td className="border border-ink-200 px-2 py-1 text-right">
+                            {fmt(actual)}
+                          </td>
+                          <td className="border border-ink-200 px-2 py-1 text-right">
+                            {/* Gatekeeper: đạt / vượt ngưỡng, không có mức đạt % */}
+                            {outcome === "PASS" ? (
+                              "Đạt ngưỡng"
+                            ) : outcome === "FAIL" ? (
+                              <span className="font-semibold text-red-700">Vượt ngưỡng</span>
+                            ) : outcome === "NO_DATA" ? (
+                              "—"
+                            ) : (
+                              <>
+                                {r.isCapped && (
+                                  <span className="mr-1 rounded bg-ink-100 px-1 text-xs font-medium text-ink-700">
+                                    Trần {fmtPct(kpiCapFor(r.kpiDefinition?.department?.code))}
+                                  </span>
+                                )}
+                                {fmtPct(r.achievementPercent)}
+                              </>
+                            )}
+                          </td>
+                          <td className="border border-ink-200 px-2 py-1 text-right font-semibold">
+                            {gate
+                              ? r.weightedScore < 0
+                                ? fmtScore(r.weightedScore)
+                                : "—"
+                              : fmtScore(r.weightedScore)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                     <tr className="bg-ink-50 font-semibold">
                       <td className="border border-ink-200 px-2 py-1">
                         Tổng cộng
@@ -491,7 +531,9 @@ export default async function KpiReportPage({
 
       <footer className="mt-8 border-t border-ink-200 pt-4 text-xs text-ink-500">
         <p>
-          Nhãn “Trần” là dòng đã chạm trần {KPI_SCORE_CAP}%. Dòng nền đỏ là dòng có
+          Nhãn “Trần” là dòng đã chạm trần của chỉ tiêu ({KPI_SCORE_CAP}%, chỉ
+          tiêu Kinh doanh {SALES_KPI_CAP}%). Chỉ tiêu ngưỡng (gatekeeper) không
+          cộng điểm, vượt ngưỡng thì trừ thẳng vào tổng. Dòng nền đỏ là dòng có
           số nhân viên khai lệch quá 5% so với số hệ thống.
         </p>
         <p className="mt-1">
@@ -531,6 +573,5 @@ function Stat({
 }
 
 function fmt(n: number | null | undefined) {
-  if (n === null || n === undefined) return "—";
-  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
+  return fmtNum(n);
 }

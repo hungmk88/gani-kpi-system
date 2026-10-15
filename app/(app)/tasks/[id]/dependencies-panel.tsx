@@ -1,9 +1,10 @@
 "use client";
 
-import { formatVnDate } from "@/lib/vn-time";
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "@/components/toast";
+import { fmtDate } from "@/lib/format";
 
 type Rel = {
   id: string;
@@ -12,6 +13,8 @@ type Rel = {
   status: string;
   dueDate: string;
   isLate: boolean;
+  /** Việc phải chờ mà hạn còn muộn hơn hạn của việc đang xem */
+  dueAfterTask: boolean;
 };
 
 /**
@@ -53,7 +56,10 @@ export default function DependenciesPanel({
         return;
       }
       setPick("");
+      toast("Đã nối việc phải chờ");
       router.refresh();
+    } catch {
+      setError("Mất kết nối tới máy chủ.");
     } finally {
       setBusy(false);
     }
@@ -72,6 +78,7 @@ export default function DependenciesPanel({
         setError(d?.message || "Không gỡ được quan hệ phụ thuộc.");
         return;
       }
+      toast("Đã gỡ quan hệ phụ thuộc");
       router.refresh();
     } catch {
       setError("Mất kết nối tới máy chủ.");
@@ -131,11 +138,18 @@ export default function DependenciesPanel({
                     {b.title}
                   </span>
                   <span
-                    className={`block ${b.isLate ? "font-medium text-red-700" : "text-ink-500"}`}
+                    className={`block ${
+                      b.isLate
+                        ? "font-medium text-red-700"
+                        : b.dueAfterTask
+                          ? "font-medium text-amber-800"
+                          : "text-ink-500"
+                    }`}
                   >
-                    {b.code} · hạn{" "}
-                    {formatVnDate(b.dueDate)}
-                    {b.isLate && " · đã trễ"}
+                    {b.code} · hạn {fmtDate(b.dueDate)}
+                    {b.isLate
+                      ? " · đã trễ"
+                      : b.dueAfterTask && " · hạn sau việc này"}
                   </span>
                 </Link>
                 {canEdit && (

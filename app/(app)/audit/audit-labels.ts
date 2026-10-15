@@ -1,0 +1,196 @@
+/**
+ * Nhãn tiếng Việt + nhóm rủi ro cho nhật ký hệ thống. Mã hành động lấy đúng
+ * từ các chỗ gọi writeAudit() trong lib/ và app/api/ — thêm hành động mới thì
+ * thêm nhãn ở đây (thiếu nhãn thì trang vẫn hiện mã gốc, không giấu).
+ */
+
+export const ACTION_LABEL: Record<string, string> = {
+  LOGIN: "Đăng nhập",
+  LOGIN_FAILED: "Đăng nhập sai",
+  LOGOUT: "Đăng xuất",
+  PASSWORD_CHANGE: "Đổi mật khẩu",
+  PASSWORD_CHANGE_FAILED: "Đổi mật khẩu thất bại",
+  TASK_CREATE: "Tạo công việc",
+  TASK_CREATE_FROM_AI: "Tạo công việc từ gợi ý AI",
+  TASK_UPDATE: "Cập nhật công việc",
+  TASK_DEPENDENCY_ADD: "Thêm phụ thuộc công việc",
+  TASK_DEPENDENCY_REMOVE: "Gỡ phụ thuộc công việc",
+  CROSS_DEPT_REQUEST_CREATE: "Gửi yêu cầu liên phòng",
+  CROSS_DEPT_REQUEST_ACCEPT: "Tiếp nhận yêu cầu liên phòng",
+  CROSS_DEPT_REQUEST_REJECT: "Từ chối yêu cầu liên phòng",
+  LEAVE_REQUEST_CREATE: "Gửi đơn nghỉ phép",
+  LEAVE_REQUEST_APPROVE: "Duyệt đơn nghỉ phép",
+  LEAVE_REQUEST_REJECT: "Từ chối đơn nghỉ phép",
+  LEAVE_REQUEST_CANCEL: "Huỷ đơn nghỉ phép",
+  KPI_PERIOD_OPEN: "Mở kỳ KPI",
+  KPI_PERIOD_FINALIZE: "Chốt toàn kỳ KPI",
+  KPI_TARGET_ASSIGN: "Gán chỉ tiêu KPI",
+  KPI_TARGET_UPDATE: "Sửa chỉ tiêu KPI",
+  KPI_TARGET_REMOVE: "Gỡ chỉ tiêu KPI",
+  KPI_TARGET_BULK_SET: "Gán chỉ tiêu hàng loạt",
+  KPI_SELF_REVIEW: "Nhân viên tự khai",
+  KPI_MANAGER_APPROVE: "Trưởng phòng duyệt",
+  KPI_MANAGER_ADJUST: "Trưởng phòng điều chỉnh số",
+  KPI_CEO_APPROVE_LOCK: "Ban Giám đốc chốt & khoá",
+  KPI_EDIT_AFTER_LOCK: "Sửa KPI đã khoá",
+  KPI_REQUEST_EVIDENCE: "Yêu cầu bằng chứng KPI",
+  KPI_IMPORT_EXCEL: "Nạp số từ Excel",
+  KPI_DEFINITION_CREATE: "Tạo chỉ tiêu trong danh mục",
+  KPI_DEFINITION_UPDATE: "Sửa chỉ tiêu trong danh mục",
+  KPI_ANOMALY_EXPLAIN: "Giải trình số bất thường",
+  KPI_ANOMALY_ACCEPT: "Chấp nhận số bất thường",
+  KPI_ANOMALY_DISMISS: "Bỏ qua cảnh báo bất thường",
+  KPI_APPROVAL_REQUEST_SENT: "Gửi yêu cầu duyệt qua Telegram",
+  RECONCILIATION_RESOLVE: "Chốt số đối soát",
+  STALE_MISMATCH_ALERT: "Cảnh báo ô lệch treo lâu",
+  IPOS_WEBHOOK_INGEST: "Đồng bộ dữ liệu iPOS",
+  INTEGRATION_INGEST: "Nhận số từ hệ thống ngoài",
+  INTEGRATION_SOURCE_CREATE: "Thêm nguồn tích hợp",
+  INTEGRATION_SOURCE_UPDATE: "Sửa nguồn tích hợp",
+  INTEGRATION_SECRET_ROTATE: "Đổi khoá bí mật tích hợp",
+  CRON_RUN: "Bộ máy nền chạy",
+  USER_CREATE: "Tạo tài khoản",
+  USER_UPDATE: "Sửa tài khoản",
+  USER_IMPORT: "Nạp nhân sự từ Excel",
+  USER_IMPORT_REJECTED: "Nạp nhân sự bị từ chối",
+  DEPARTMENT_CREATE: "Tạo phòng ban",
+  TELEGRAM_LINK: "Liên kết Telegram",
+  TELEGRAM_LINK_FAILED: "Liên kết Telegram thất bại",
+  TELEGRAM_UNLINK: "Gỡ liên kết Telegram",
+  TELEGRAM_APPROVE_DENIED: "Bấm duyệt qua Telegram bị chặn",
+  PRODUCTION_SHIFT_DRAFT: "Lưu nháp ca sản xuất",
+  PRODUCTION_SHIFT_QC_APPROVE: "KCS xác nhận ca",
+  PRODUCTION_SHIFT_QC_CEO_OVERRIDE: "Ban Giám đốc xác nhận thay KCS",
+  PRODUCTION_SHIFT_LOCK: "Khoá ca sản xuất",
+  PRODUCTION_SHIFT_REOPEN: "Mở lại ca đã khoá",
+  PRODUCTION_KPI_CALCULATED: "Tính KPI xưởng",
+  PRODUCTION_KPI_RESCORE: "Tính lại KPI xưởng",
+  PRODUCTION_SKU_CREATE: "Thêm SKU",
+  PRODUCTION_SKU_UPDATE: "Sửa SKU",
+  PRODUCTION_SKU_STANDARD_CHANGE: "Đổi chuẩn sản lượng SKU",
+  RAW_MATERIAL_CREATE: "Nhập nguyên liệu",
+  RAW_MATERIAL_UPDATE: "Sửa phiếu nguyên liệu",
+  ANTI_GAMING_EXPLAIN: "Giải trình nghi chạy chỉ tiêu",
+  ANTI_GAMING_CEO_APPROVE: "Ban Giám đốc chấp nhận ca bị nghi",
+  ANTI_GAMING_CEO_REJECT: "Ban Giám đốc bác ca bị nghi",
+  AI_TASK_PARSE: "AI đọc yêu cầu công việc",
+  AI_SUGGESTION_ACCEPT: "Chấp nhận gợi ý AI",
+  AI_SUGGESTION_REJECT: "Bỏ gợi ý AI",
+  AI_KPI_ADVISORY: "AI tư vấn KPI",
+  AI_EXECUTIVE_BRIEFING: "AI tóm tắt điều hành",
+  AI_CALL_RESERVED: "Giữ lượt gọi AI",
+};
+
+/**
+ * Thao tác RỦI RO CAO — mặc định trang nhật ký chỉ hiện nhóm này, vì giữa
+ * hàng nghìn dòng đăng nhập / cập nhật việc thì một lần "sửa KPI đã khoá"
+ * chìm nghỉm. Tiêu chí: đổi quyền / khoá tài khoản / đặt lại mật khẩu, chốt
+ * hoặc sửa điểm sau khi khoá, vượt quyền (BGĐ làm thay KCS), đổi chuẩn tính
+ * điểm, đổi khoá bí mật tích hợp, và các lần bị chặn vì sai quyền.
+ *
+ * USER_UPDATE gộp cả đổi vai trò, khoá/mở, đặt lại mật khẩu, gỡ Telegram —
+ * phần "Thay đổi" của từng dòng cho biết cụ thể là gì.
+ */
+export const HIGH_RISK_ACTIONS = [
+  "USER_CREATE",
+  "USER_UPDATE",
+  "USER_IMPORT",
+  "KPI_PERIOD_FINALIZE",
+  "KPI_CEO_APPROVE_LOCK",
+  "KPI_EDIT_AFTER_LOCK",
+  "KPI_MANAGER_ADJUST",
+  "RECONCILIATION_RESOLVE",
+  "PRODUCTION_SHIFT_LOCK",
+  "PRODUCTION_SHIFT_REOPEN",
+  "PRODUCTION_SHIFT_QC_CEO_OVERRIDE",
+  "PRODUCTION_KPI_RESCORE",
+  "PRODUCTION_SKU_STANDARD_CHANGE",
+  "ANTI_GAMING_CEO_APPROVE",
+  "INTEGRATION_SECRET_ROTATE",
+  "TELEGRAM_APPROVE_DENIED",
+] as const;
+
+export const HIGH_RISK = new Set<string>(HIGH_RISK_ACTIONS);
+
+/** Tên bảng (entityName) → nhãn đối tượng */
+export const ENTITY_LABEL: Record<string, string> = {
+  users: "Tài khoản",
+  tasks: "Công việc",
+  task_dependencies: "Phụ thuộc công việc",
+  kpi_results: "Dòng KPI",
+  kpi_periods: "Kỳ KPI",
+  kpi_definitions: "Danh mục KPI",
+  kpi_anomalies: "Cảnh báo bất thường",
+  reconciliations: "Ô đối soát",
+  leave_requests: "Đơn nghỉ phép",
+  cross_dept_requests: "Yêu cầu liên phòng",
+  departments: "Phòng ban",
+  data_imports: "Lần nạp file",
+  integration_sources: "Nguồn tích hợp",
+  production_shift_logs: "Ca sản xuất",
+  product_skus: "SKU",
+  raw_materials: "Nguyên liệu",
+  anti_gaming_audits: "Kiểm tra chạy chỉ tiêu",
+  ai_suggestions: "Gợi ý AI",
+  ai_quota: "Hạn mức AI",
+  telegram_chats: "Telegram",
+  system: "Hệ thống",
+};
+
+/**
+ * Tên trường trong dữ liệu trước/sau → nhãn tiếng Việt cho người đọc nhật ký.
+ * Trường chưa có trong bảng thì hiện nguyên tên gốc (không giấu thông tin).
+ */
+export const FIELD_LABEL: Record<string, string> = {
+  actualSystem: "Số hệ thống",
+  actualSelf: "Số tự khai",
+  actualFinal: "Số chốt",
+  targetValue: "Chỉ tiêu giao",
+  weightPercent: "Trọng số (%)",
+  weightedScore: "Điểm",
+  achievementPercent: "Mức đạt (%)",
+  mismatchPercent: "Mức lệch (%)",
+  hasMismatch: "Lệch số",
+  isCapped: "Chạm trần",
+  selfNote: "Giải trình nhân viên",
+  managerNote: "Ghi chú trưởng phòng",
+  status: "Trạng thái",
+  reason: "Lý do",
+  title: "Tiêu đề",
+  name: "Tên",
+  code: "Mã",
+  priority: "Ưu tiên",
+  progress: "Tiến độ (%)",
+  dueDate: "Hạn chót",
+  startDate: "Ngày bắt đầu",
+  assigneeId: "Người phụ trách",
+  departmentId: "Phòng ban",
+  role: "Vai trò",
+  productionRole: "Vai trò sản xuất",
+  isActive: "Đang hoạt động",
+  passwordReset: "Đặt lại mật khẩu",
+  telegramChatId: "Telegram",
+  fullName: "Họ tên",
+  email: "Email",
+  jobTitle: "Chức danh",
+  employmentType: "Loại hợp đồng",
+  unit: "Đơn vị",
+  severity: "Mức độ",
+  confidence: "Độ tin cậy",
+  sampleSize: "Số kỳ dữ liệu",
+  rowsOk: "Dòng nạp được",
+  rowsError: "Dòng lỗi",
+  totalRows: "Tổng số dòng",
+  created: "Đã tạo",
+  validCount: "Dòng hợp lệ",
+  errorCount: "Dòng lỗi",
+  skippedErrors: "Bỏ qua (lỗi)",
+  skippedExisting: "Bỏ qua (đã có)",
+  taskCode: "Mã việc",
+  ipAddress: "Địa chỉ IP",
+  userAgent: "Trình duyệt",
+};
+
+/** Trường trong dữ liệu trước/sau mang mã người dùng / phòng ban → đổi ra tên */
+export const USER_ID_FIELDS = new Set(["assigneeId", "employeeId", "approverId", "reviewerId"]);
+export const DEPT_ID_FIELDS = new Set(["departmentId", "targetDeptId"]);

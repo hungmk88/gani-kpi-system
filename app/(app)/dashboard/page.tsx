@@ -1,4 +1,5 @@
-import { formatVnDate, formatVnTime, VN_TZ } from "@/lib/vn-time";
+import { formatVnTime, VN_TZ } from "@/lib/vn-time";
+import { fmtDate, fmtNum, fmtPct } from "@/lib/format";
 import Link from "next/link";
 import { PartyPopper, Target } from "lucide-react";
 import { requireSession } from "@/lib/auth";
@@ -17,6 +18,7 @@ import {
   PageHeader,
   ProgressBar,
   ScoreBadge,
+  ShowingCount,
   StatCard,
 } from "@/components/ui";
 import { ROLE_LABEL } from "@/lib/constants";
@@ -98,9 +100,7 @@ export default async function DashboardPage() {
         {d.stats.kpiScore ? (
           <StatCard
             label={kpiScoreLabel}
-            value={d.stats.kpiScore.value.toLocaleString("vi-VN", {
-              maximumFractionDigits: 1,
-            })}
+            value={fmtNum(d.stats.kpiScore.value, 1)}
             spark={d.stats.trend}
             sparkTone={
               d.stats.kpiScore.delta !== null && d.stats.kpiScore.delta < 0
@@ -151,10 +151,15 @@ export default async function DashboardPage() {
                   <TaskGroupHeading
                     label="Đã quá hạn"
                     count={d.overdueCount}
-                    note={`cũ nhất ${d.overdueTasks[0].lateDays} ngày`}
+                    note={`lâu nhất: ${d.overdueTasks[0].lateLabel}`}
                     tone="red"
                   />
                   <LeanTaskList tasks={d.overdueTasks} tone="red" />
+                  <ShowingCount
+                    shown={d.overdueTasks.length}
+                    total={d.overdueCount}
+                    hint="trễ lâu nhất trước · bấm “Xem tất cả” để xem đủ"
+                  />
                 </div>
               )}
 
@@ -162,10 +167,15 @@ export default async function DashboardPage() {
                 <div>
                   <TaskGroupHeading
                     label="Hết hạn hôm nay"
-                    count={d.todayTasks.length}
+                    count={d.todayCount}
                     tone="amber"
                   />
                   <LeanTaskList tasks={d.todayTasks} tone="amber" />
+                  <ShowingCount
+                    shown={d.todayTasks.length}
+                    total={d.todayCount}
+                    hint="hạn sớm nhất trước"
+                  />
                 </div>
               )}
             </div>
@@ -236,7 +246,7 @@ export default async function DashboardPage() {
                       <div className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
                         Còn <b>{d.myKpi.draftCount}</b> chỉ tiêu chưa tự khai.
                         Hạn chót{" "}
-                        23:59 ngày {formatVnDate(d.myKpi.selfReviewDeadline)}.
+                        23:59 ngày {fmtDate(d.myKpi.selfReviewDeadline)}.
                       </div>
                     )}
 
@@ -257,10 +267,7 @@ export default async function DashboardPage() {
                                   : "text-red-700"
                             }`}
                           >
-                            {d.myKpi.weakest.achievement.toLocaleString("vi-VN", {
-                              maximumFractionDigits: 1,
-                            })}
-                            %
+                            {fmtPct(d.myKpi.weakest.achievement)}
                           </span>
                         </div>
                         <div className="mt-1">

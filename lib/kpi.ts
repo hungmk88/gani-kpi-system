@@ -3,6 +3,9 @@ import {
   DATA_MISMATCH_THRESHOLD_PERCENT,
   KPI_DEADLINE_DAYS,
   KPI_SCORE_CAP,
+  SALES_DEPARTMENT_CODE,
+  SALES_KPI_CAP,
+  SALES_RETURN_RATE_GATEKEEPER,
 } from "./constants";
 
 export type KpiCalcInput = {
@@ -95,6 +98,50 @@ export function calculateKpiScore({
     isCapped,
     rawAchievementPercent: round2(raw),
   };
+}
+
+/**
+ * Trần mức đạt của một chỉ tiêu, theo phòng ban SỞ HỮU chỉ tiêu (không theo
+ * phòng của người được chấm): Sales 120% (10/09/2026), còn lại 150%. Bộ tính
+ * điểm (kpi-service) và mọi màn hình ghi "chạm trần X%" cùng hỏi hàm này — để
+ * không có chuyện màn hình ghi 150% cho dòng Sales chỉ chặn ở 120%.
+ */
+export function kpiCapFor(definitionDepartmentCode: string | null | undefined) {
+  return definitionDepartmentCode === SALES_DEPARTMENT_CODE
+    ? SALES_KPI_CAP
+    : KPI_SCORE_CAP;
+}
+
+/**
+ * Chỉ tiêu "gatekeeper": trọng số 0, không cộng điểm, vượt ngưỡng thì TRỪ
+ * THẲNG vào tổng (hiện có Trả hàng/khiếu nại của Sales). Không phải chỉ tiêu
+ * thường — mức đạt %, "chạm trần" với nó là vô nghĩa, giao diện phải hiện
+ * luật ngưỡng thay vào.
+ */
+export type GatekeeperRule = { thresholdPercent: number; penaltyPoints: number };
+
+export function gatekeeperRuleFor(
+  definitionCode: string | null | undefined
+): GatekeeperRule | null {
+  if (definitionCode !== SALES_RETURN_RATE_GATEKEEPER.KPI_CODE) return null;
+  return {
+    thresholdPercent: SALES_RETURN_RATE_GATEKEEPER.THRESHOLD_PERCENT,
+    penaltyPoints: SALES_RETURN_RATE_GATEKEEPER.PENALTY_POINTS,
+  };
+}
+
+/**
+ * Kết quả của một dòng gatekeeper với số đang dùng để chấm. Đúng bằng ngưỡng
+ * vẫn là Đạt (luật là "vượt" ngưỡng mới trừ) — khớp computeDerivedFields.
+ */
+export function gatekeeperOutcome(
+  rule: GatekeeperRule,
+  actual: number | null | undefined
+): "NO_DATA" | "PASS" | "FAIL" {
+  if (actual === null || actual === undefined || !Number.isFinite(actual)) {
+    return "NO_DATA";
+  }
+  return actual > rule.thresholdPercent ? "FAIL" : "PASS";
 }
 
 export function round2(n: number) {

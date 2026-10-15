@@ -17,6 +17,7 @@ import {
   RiskBadge,
   TaskStatusBadge,
 } from "@/components/ui";
+import { fmtNum } from "@/lib/format";
 
 export type TaskRow = {
   id: string;
@@ -198,8 +199,8 @@ export default function TaskBoard({
 
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-ink-500">
         <span>
-          {filtered.length} công việc
-          {filtered.length !== tasks.length && ` (lọc từ ${tasks.length})`}
+          {fmtNum(filtered.length)} công việc
+          {filtered.length !== tasks.length && ` (lọc từ ${fmtNum(tasks.length)})`}
         </span>
         {(activeFilter === "overdue" || activeFilter === "mine") && (
           <button
@@ -213,7 +214,7 @@ export default function TaskBoard({
         )}
         {totalCount > tasks.length && (
           <span className="text-amber-800">
-            · Đang hiển thị {tasks.length}/{totalCount} việc — lọc thêm để thấy hết
+            · Đang hiển thị {fmtNum(tasks.length)}/{fmtNum(totalCount)} việc — lọc thêm để thấy hết
           </span>
         )}
         <span className="text-xs">

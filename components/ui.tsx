@@ -8,6 +8,9 @@ import {
   PERIOD_STATUS_LABEL,
 } from "@/lib/constants";
 import { RISK_LEVEL_LABEL, riskLevel } from "@/lib/risk";
+import { fmtNum, fmtScore } from "@/lib/format";
+
+export { fmtScore };
 
 /* ------------------------------------------------------------------ khung */
 
@@ -53,6 +56,65 @@ export function EmptyState({
       <div className="mb-3 text-ink-400">{icon}</div>
       <div className="font-medium text-ink-700">{title}</div>
       {hint && <div className="mt-1 max-w-md text-sm text-ink-500">{hint}</div>}
+    </div>
+  );
+}
+
+/**
+ * Khung xương khi đang tải — giữ đúng bố cục trang để không nhảy khi dữ liệu
+ * về. Dùng trong loading.tsx của từng nhóm trang.
+ */
+export function Skeleton({ className = "" }: { className?: string }) {
+  return <div aria-hidden className={`animate-pulse rounded-md bg-ink-100 ${className}`} />;
+}
+
+export function PageSkeleton({ rows = 6, stats = 4 }: { rows?: number; stats?: number }) {
+  return (
+    <div role="status" aria-live="polite" aria-label="Đang tải">
+      <span className="sr-only">Đang tải…</span>
+      <Skeleton className="mb-2 h-7 w-56" />
+      <Skeleton className="mb-6 h-4 w-80 max-w-full" />
+      {stats > 0 && (
+        <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {Array.from({ length: stats }, (_, i) => (
+            <div key={i} className="card p-4">
+              <Skeleton className="mb-3 h-3.5 w-24" />
+              <Skeleton className="h-7 w-16" />
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="card divide-y divide-ink-100">
+        {Array.from({ length: rows }, (_, i) => (
+          <div key={i} className="flex items-center gap-4 px-4 py-3.5">
+            <Skeleton className="h-4 flex-1" />
+            <Skeleton className="hidden h-4 w-24 sm:block" />
+            <Skeleton className="h-4 w-16" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Đang hiển thị 200/1.340" — bắt buộc hiện khi danh sách bị cắt theo giới
+ * hạn truy vấn, để người xem không tưởng đó là toàn bộ.
+ */
+export function ShowingCount({
+  shown,
+  total,
+  hint,
+}: {
+  shown: number;
+  total: number;
+  hint?: string;
+}) {
+  if (total <= shown) return null;
+  return (
+    <div className="mt-2 text-xs text-ink-500">
+      Đang hiển thị {fmtNum(shown)}/{fmtNum(total)}
+      {hint ? ` · ${hint}` : ""}
     </div>
   );
 }
@@ -387,14 +449,6 @@ export function PeriodStatusBadge({ status }: { status: string }) {
           ? "sky"
           : "brand";
   return <Badge tone={tone}>{PERIOD_STATUS_LABEL[status] ?? status}</Badge>;
-}
-
-/** Điểm thang 100, 2 chữ số thập phân, định dạng Việt Nam ("98,50"). */
-export function fmtScore(n: number) {
-  return n.toLocaleString("vi-VN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 }
 
 /**

@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { TriangleAlert, CalendarCheck, Check } from "lucide-react";
-import { addDays, parseVnDate, vnDateKey } from "@/lib/vn-time";
+import { TriangleAlert, CalendarCheck } from "lucide-react";
+import { addDays, parseVnDate, vnDateKey, vnDayDiff } from "@/lib/vn-time";
+import { toast } from "@/components/toast";
+import { fmtNum } from "@/lib/format";
 
 type Quota = {
   total: number;
@@ -32,7 +34,6 @@ export default function LeaveRequestForm() {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState(false);
   const [quota, setQuota] = useState<Quota | null>(null);
 
   useEffect(() => {
@@ -43,12 +44,19 @@ export default function LeaveRequestForm() {
   }, []);
 
   const noticeMs = noticeMsUntil(startDate);
+  // Cùng cách trừ phép với server (leaveDaysBetween): ngày lịch, gồm cả ngày
+  // đầu và ngày cuối, không trừ cuối tuần.
+  let days: number | null = null;
+  try {
+    days = Math.max(0, vnDayDiff(parseVnDate(startDate), parseVnDate(endDate)) + 1);
+  } catch {
+    days = null;
+  }
   const isUrgent = noticeMs !== null && noticeMs < 24 * 3600_000;
 
   async function submit() {
     setBusy(true);
     setError(null);
-    setOk(false);
     try {
       const res = await fetch("/api/leave-requests", {
         method: "POST",
@@ -60,14 +68,16 @@ export default function LeaveRequestForm() {
           reason,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.message || "Không gửi được đơn.");
         return;
       }
-      setOk(true);
+      toast("Đã gửi đơn — chờ người có thẩm quyền duyệt.");
       setReason("");
       router.refresh();
+    } catch {
+      setError("Mất kết nối tới máy chủ. Kiểm tra mạng rồi thử lại.");
     } finally {
       setBusy(false);
     }
@@ -79,22 +89,23 @@ export default function LeaveRequestForm() {
         <div className="space-y-1 rounded-md bg-ink-50 px-3 py-2 text-sm text-ink-700 tabular-nums">
           <div className="flex items-center gap-1.5">
             <CalendarCheck size={16} strokeWidth={2} className="text-ink-500" aria-hidden />
-            Số ngày phép còn lại trong năm: <b>{quota.remaining}/{quota.total}</b>
+            Số ngày phép còn lại trong năm:{" "}
+            <b>
+              {fmtNum(quota.remaining)}/{fmtNum(quota.total)}
+            </b>
           </div>
           <div className="pl-[22px] text-xs text-ink-500">
-            {quota.half.label}: <b>{quota.half.remaining}/{quota.half.cap}</b> — tối đa 6 ngày mỗi nửa năm
+            {quota.half.label}:{" "}
+            <b>
+              {fmtNum(quota.half.remaining)}/{fmtNum(quota.half.cap)}
+            </b>{" "}
+            — tối đa {fmtNum(quota.half.cap)} ngày mỗi nửa năm
           </div>
         </div>
       )}
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
-        </div>
-      )}
-      {ok && (
-        <div className="flex items-center gap-2 text-sm text-ink-700">
-          <Check size={16} strokeWidth={2.5} className="shrink-0 text-leaf-600" aria-hidden />
-          Đã gửi đơn — chờ người có thẩm quyền duyệt.
         </div>
       )}
 
@@ -122,6 +133,13 @@ export default function LeaveRequestForm() {
           />
         </label>
       </div>
+
+      {days !== null && days > 0 && (
+        <div className="text-xs text-ink-600 tabular-nums">
+          Đơn này: <b>{fmtNum(days)} ngày lịch</b> (tính cả cuối tuần — đúng
+          cách trừ phép)
+        </div>
+      )}
 
       <label className="block">
         <span className="mb-1 block text-xs font-medium text-ink-600">

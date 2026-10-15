@@ -6,14 +6,25 @@ import { hashPassword } from "@/lib/auth";
 import { checkPasswordStrength } from "@/lib/password";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { ERR, ROLES } from "@/lib/constants";
+import { PRODUCTION_ROLES } from "@/lib/production/constants";
 import { alertCeos } from "@/lib/services/user-security";
 
+// Thông báo lỗi tiếng Việt cho từng trường — màn quản trị hiện nguyên văn,
+// không còn "Dữ liệu gửi lên không hợp lệ" chung chung.
 const schema = z.object({
-  email: z.string().email(),
-  fullName: z.string().min(2).max(255),
-  jobTitle: z.string().max(255).optional(),
-  role: z.enum(ROLES),
+  email: z.string().email("Email không hợp lệ."),
+  fullName: z
+    .string()
+    .min(2, "Họ tên tối thiểu 2 ký tự.")
+    .max(255, "Họ tên quá dài."),
+  jobTitle: z.string().max(255, "Chức danh quá dài.").optional(),
+  role: z.enum(ROLES, { message: "Vai trò không hợp lệ." }),
   departmentId: z.string().nullable().optional(),
+  // Vai trò trong xưởng (KCS, tổ trưởng…) — tách riêng khỏi vai trò tổ chức.
+  productionRole: z
+    .enum(PRODUCTION_ROLES, { message: "Vai trò sản xuất không hợp lệ." })
+    .nullable()
+    .optional(),
   password: z.string().min(8, "Mật khẩu tối thiểu 8 ký tự."),
   telegramChatId: z.string().max(100).nullable().optional(),
   phone: z.string().max(50).nullable().optional(),
@@ -55,6 +66,16 @@ export async function POST(req: Request) {
       );
     }
 
+    // Vai trò xưởng mở quyền ký xác nhận phẩm chất / khoá ca (KCS, Giám đốc
+    // Sản xuất) — chỉ Quản trị hệ thống gán, giống mọi quyền khác.
+    if (body.productionRole && actor.role !== "ADMIN") {
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Chỉ Quản trị hệ thống được gán vai trò sản xuất.",
+        403
+      );
+    }
+
     const check = checkPasswordStrength(body.password, {
       fullName: body.fullName,
       email: body.email,
@@ -80,6 +101,7 @@ export async function POST(req: Request) {
         jobTitle: body.jobTitle ?? null,
         role: body.role,
         departmentId: body.departmentId ?? null,
+        productionRole: body.productionRole ?? null,
         passwordHash: await hashPassword(body.password),
         telegramChatId: null,
         phone: body.phone ?? null,
@@ -94,7 +116,12 @@ export async function POST(req: Request) {
       action: "USER_CREATE",
       entityName: "users",
       entityId: user.id,
-      after: { email, role: body.role, departmentId: body.departmentId },
+      after: {
+        email,
+        role: body.role,
+        departmentId: body.departmentId,
+        productionRole: body.productionRole ?? null,
+      },
       ...clientMeta(req),
     });
 
