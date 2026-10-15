@@ -2,7 +2,11 @@ import { Download, CircleCheck } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Badge, EmptyState, PageHeader, formatDateTime } from "@/components/ui";
-import { getAnnualLeaveQuota, leaveReportScope } from "@/lib/services/leave-service";
+import {
+  canCancelLeave,
+  getAnnualLeaveQuota,
+  leaveReportScope,
+} from "@/lib/services/leave-service";
 import { formatVnDate, vnParts } from "@/lib/vn-time";
 import LeaveRequestForm from "./leave-request-form";
 import LeaveRequestActions from "./leave-request-actions";
@@ -67,6 +71,7 @@ export default async function LeaveRequestsPage() {
       ? requests.filter((r) => r.status === "PENDING" && !inbox.includes(r))
       : [];
 
+  const now = new Date();
   const mine = requests.filter((r) => r.employeeId === user.id);
   const history = requests.filter(
     (r) => r.status !== "PENDING" && r.employeeId !== user.id
@@ -172,10 +177,11 @@ export default async function LeaveRequestsPage() {
                       {quota.remaining}/{quota.total} ngày
                     </td>
                     <td>
-                      {r.status === "PENDING" && (
+                      {canCancelLeave(user, r, now) && (
                         <LeaveRequestActions
                           requestId={r.id}
                           mode="cancel"
+                          approved={r.status === "APPROVED"}
                         />
                       )}
                     </td>
@@ -198,6 +204,7 @@ export default async function LeaveRequestsPage() {
                   <th>Thời gian nghỉ</th>
                   <th>Người duyệt</th>
                   <th>Trạng thái</th>
+                  <th>Thao tác</th>
                 </tr>
               </thead>
               <tbody>
@@ -212,6 +219,12 @@ export default async function LeaveRequestsPage() {
                     </td>
                     <td>
                       <StatusBadge status={r.status} />
+                    </td>
+                    <td>
+                      {/* Đơn đã duyệt, chưa tới ngày nghỉ: người có quyền duyệt được huỷ hộ */}
+                      {canCancelLeave(user, r, now) && (
+                        <LeaveRequestActions requestId={r.id} mode="cancel-other" />
+                      )}
                     </td>
                   </tr>
                 ))}

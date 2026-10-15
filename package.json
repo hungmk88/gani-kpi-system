@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "GANI FOODY - Work & KPI Management System (Phase 1 MVP Core)",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "postinstall": "prisma generate",
     "dev": "next dev -p 3000",
@@ -33,7 +36,6 @@
   "dependencies": {
     "@prisma/client": "^6.1.0",
     "bcryptjs": "^2.4.3",
-    "date-fns": "^4.4.0",
     "exceljs": "^4.4.0",
     "jose": "^5.9.6",
     "lucide-react": "^1.46.0",

@@ -15,6 +15,12 @@
  *    giờ VN (= 17:00Z hôm trước). Dòng có giờ đúng 00:00:00Z được cộng 17 tiếng.
  *    Dòng nào cộng xong đụng ca đã có (cùng ngày, ca, SKU) thì bỏ qua và in ra
  *    để xử lý tay.
+ *
+ *    CHỈ sửa dòng tạo TRƯỚC mốc deploy bản sửa múi giờ (createdAt < 00:00 giờ
+ *    VN của ngày --before, mặc định 2026-10-16). Dòng tạo sau mốc đó do code
+ *    mới (hoặc client khác) ghi — đúng 00:00Z có thể là cố ý, không được dời.
+ *
+ *   node scripts/fix-dates.mjs --before=2026-10-16 [--apply]
  */
 import { PrismaClient } from "@prisma/client";
 
@@ -25,6 +31,11 @@ try {
 }
 
 const APPLY = process.argv.includes("--apply");
+// Mốc deploy bản sửa múi giờ — dòng tạo từ mốc này trở đi không bị đụng tới
+const DEFAULT_BEFORE = "2026-10-16";
+const beforeArg =
+  process.argv.find((a) => a.startsWith("--before="))?.slice("--before=".length) ??
+  DEFAULT_BEFORE;
 const prisma = new PrismaClient();
 const OFFSET = 7 * 3600_000;
 
@@ -32,6 +43,22 @@ const vnDate = (y, m, d, h = 0, mi = 0, s = 0) =>
   new Date(Date.UTC(y, m - 1, d, h, mi, s) - OFFSET);
 const fmt = (d) =>
   new Date(d.getTime() + OFFSET).toISOString().replace("T", " ").slice(0, 19) + " (giờ VN)";
+
+function parseCutoff(input) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input);
+  if (!m) {
+    console.error(`❌ --before phải có dạng YYYY-MM-DD, nhận được: "${input}"`);
+    process.exit(1);
+  }
+  const d = vnDate(Number(m[1]), Number(m[2]), Number(m[3]));
+  if (Number.isNaN(d.getTime())) {
+    console.error(`❌ Ngày --before không hợp lệ: "${input}"`);
+    process.exit(1);
+  }
+  return d;
+}
+// 00:00 giờ VN của ngày --before
+const CUTOFF = parseCutoff(beforeArg);
 
 // Giữ khớp lib/constants.ts KPI_DEADLINE_DAYS
 const DEADLINE_DAYS = { SELF_REVIEW: 2, MANAGER_REVIEW: 4, CEO_APPROVAL: 5 };
@@ -65,7 +92,11 @@ async function fixShiftDates() {
     SELECT id, "shiftDate", "shiftType", "skuId"
     FROM production_shift_logs
     WHERE "shiftDate" = date_trunc('day', "shiftDate")
+      AND "createdAt" < ${CUTOFF.toISOString()}::timestamp
   `;
+  console.log(
+    `Chỉ xét ca có giờ đúng 00:00:00Z và tạo trước ${fmt(CUTOFF)} (--before=${beforeArg}).`
+  );
   let fixed = 0;
   const conflicts = [];
   for (const r of rows) {

@@ -111,6 +111,68 @@ export async function parseTaskText(
   return { ...parseWithRules(clean, people, now), sanitizeFlags: flagged };
 }
 
+/* ------------------------------------------------- ĐỌC HẠN CHÓT TỪ AI */
+
+const ISO_LOCAL =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3})\d*)?)?)?$/;
+const ISO_WITH_OFFSET =
+  /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(Z|[+-]\d{2}(?::?\d{2})?)$/i;
+
+/**
+ * Đọc hạn chót AI trả về thành một thời điểm.
+ *
+ * - Có múi giờ ("Z", "+07:00", "+0700", "+07") → giữ nguyên thời điểm đó.
+ * - KHÔNG có múi giờ ("2026-10-20T17:00", "2026-10-20 17:00:00") → hiểu là
+ *   giờ Việt Nam (vnDate), không phụ thuộc múi giờ server.
+ * - Chỉ có ngày ("2026-10-20") → 17:00 giờ VN ngày đó (khớp quy tắc prompt:
+ *   không nói giờ thì lấy 17:00).
+ * - Dạng khác, hoặc ngày/giờ không có thật (31/02, 25:00) → null, để người
+ *   dùng xác nhận thay vì đoán.
+ */
+export function parseAiDueDate(raw: string): Date | null {
+  const text = raw.trim();
+  if (!text) return null;
+
+  const off = ISO_WITH_OFFSET.exec(text);
+  if (off) {
+    let zone = off[2].toUpperCase();
+    if (zone !== "Z") {
+      // "+07" / "+0700" → "+07:00" cho chắc mọi engine JS đều đọc được
+      const m = /^([+-])(\d{2}):?(\d{2})?$/.exec(zone)!;
+      zone = `${m[1]}${m[2]}:${m[3] ?? "00"}`;
+    }
+    const local = ISO_LOCAL.exec(off[1]);
+    if (!local || !validParts(local)) return null;
+    const d = new Date(`${off[1].replace(" ", "T")}${zone}`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  const m = ISO_LOCAL.exec(text);
+  if (!m || !validParts(m)) return null;
+  const [y, mo, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (m[4] === undefined) return vnDate(y, mo, day, 17, 0, 0);
+  return vnDate(
+    y,
+    mo,
+    day,
+    Number(m[4]),
+    Number(m[5]),
+    m[6] ? Number(m[6]) : 0,
+    m[7] ? Number(m[7].padEnd(3, "0")) : 0
+  );
+}
+
+/** Ngày/giờ có thật không (vnDate tự cuộn 31/02 → 03/03, nên phải chặn trước). */
+function validParts(m: RegExpExecArray): boolean {
+  const [y, mo, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const h = m[4] === undefined ? 0 : Number(m[4]);
+  const mi = m[5] === undefined ? 0 : Number(m[5]);
+  const se = m[6] === undefined ? 0 : Number(m[6]);
+  if (mo < 1 || mo > 12 || day < 1 || h > 23 || mi > 59 || se > 59) return false;
+  const daysInMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  return day <= daysInMonth;
+}
+
 /* --------------------------------------------------------------- GEMINI */
 
 async function parseWithGemini(
@@ -145,7 +207,7 @@ async function parseWithGemini(
     "1. title: tên việc ngắn gọn, có động từ, không quá 120 ký tự.",
     "2. description: chi tiết còn lại. Không có thì để chuỗi rỗng.",
     "3. assignee_id: lấy đúng id trong danh sách. Không xác định được thì để rỗng và assignee_name = 'CẦN XÁC NHẬN'.",
-    "4. due_date: định dạng ISO 8601 đầy đủ. Không suy ra được thì để 'CẦN XÁC NHẬN'. Nói 'chiều' hiểu là 17:00, 'sáng' là 09:00, không nói giờ thì lấy 17:00.",
+    "4. due_date: định dạng ISO 8601 đầy đủ THEO GIỜ VIỆT NAM, BẮT BUỘC kèm múi giờ +07:00, ví dụ 2026-10-20T17:00:00+07:00. Không suy ra được thì để 'CẦN XÁC NHẬN'. Nói 'chiều' hiểu là 17:00, 'sáng' là 09:00, không nói giờ thì lấy 17:00.",
     "5. priority: LOW | MEDIUM | HIGH | CRITICAL. Mặc định MEDIUM. Chỉ dùng CRITICAL khi câu lệnh nói rõ là khẩn cấp, gấp, cháy, hoặc dừng chuyền.",
     "6. confidence_percent: mức tự tin của chính bạn, 0-100. Thiếu người nhận hoặc thiếu hạn chót thì phải dưới 70.",
     "7. rationale: một hai câu tiếng Việt nói rõ bạn suy ra hạn chót và mức ưu tiên từ chỗ nào trong câu lệnh.",
@@ -194,11 +256,13 @@ async function parseWithGemini(
     missing.push("Chưa xác định được người phụ trách");
   }
 
-  // Hạn chót cũng phải là ngày thật, và không được nằm ở quá khứ xa
+  // Hạn chót cũng phải là ngày thật, và không được nằm ở quá khứ xa.
+  // Chuỗi không kèm múi giờ là GIỜ VIỆT NAM — new Date() sẽ đọc thành giờ của
+  // server (Vercel = UTC) và lệch 7 tiếng.
   let dueDate: string | null = null;
   if (!isUnknown(d.due_date)) {
-    const t = new Date(d.due_date!);
-    if (!Number.isNaN(t.getTime()) && t.getTime() > now.getTime() - 86400000) {
+    const t = parseAiDueDate(d.due_date!);
+    if (t && t.getTime() > now.getTime() - 86400000) {
       dueDate = t.toISOString();
     }
   }
