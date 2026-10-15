@@ -46,6 +46,7 @@ export default async function KpiPeriodPage({
       employeeId: string;
       employeeName: string;
       employeeEmail: string;
+      employeeCode: string | null;
       employeeRole: string;
       jobTitle: string;
       departmentName: string;
@@ -63,6 +64,7 @@ export default async function KpiPeriodPage({
         employeeId: r.employeeId,
         employeeName: r.employee.fullName,
         employeeEmail: r.employee.email,
+        employeeCode: r.employee.employeeCode,
         employeeRole: r.employee.role,
         jobTitle: r.employee.jobTitle ?? "",
         departmentName: r.employee.department?.name ?? "—",

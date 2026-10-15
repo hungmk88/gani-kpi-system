@@ -12,6 +12,7 @@ const row = (over: Partial<ParsedUserRow> = {}): ParsedUserRow => ({
   jobTitle: null,
   phone: null,
   productionRole: null,
+  employeeCode: null,
   issues: [],
   ...over,
 });
@@ -60,5 +61,38 @@ describe("nạp nhân sự — xem trước (đối chiếu database)", () => {
     expect(prepared[0].departmentId).toBe("d1");
     // Không đưa mật khẩu tạm ra bảng xem trước
     expect(JSON.stringify(preview)).not.toContain("GaniTam2026a");
+  });
+});
+
+describe("nạp nhân sự — mã NV", () => {
+  it("chuẩn hoá in hoa, báo sai định dạng và trùng trong file", () => {
+    const emails = new Map<string, number>();
+    const codes = new Map<string, number>();
+    const a = row({ rowNumber: 2, email: "a@ganifoody.vn", employeeCode: " nv01 " });
+    expect(validateUserRow(a, emails, codes)).toEqual([]);
+    expect(a.employeeCode).toBe("NV01");
+    const dup = validateUserRow(
+      row({ rowNumber: 3, email: "b@ganifoody.vn", employeeCode: "NV01" }),
+      emails,
+      codes
+    );
+    expect(dup).toEqual([{ column: "MA_NV", message: expect.stringContaining("dòng 2") }]);
+    const bad = validateUserRow(
+      row({ rowNumber: 4, email: "c@ganifoody.vn", employeeCode: "Mã 01" }),
+      emails,
+      codes
+    );
+    expect(bad[0].column).toBe("MA_NV");
+  });
+
+  it("mã đã có người giữ trong hệ thống thì dòng lỗi, nêu tên người đó", () => {
+    const { preview, prepared } = classifyImportRows([row({ employeeCode: "NV09" })], {
+      departments: [{ id: "d1", code: "SALES", name: "Kinh doanh" }],
+      existingEmails: new Set(),
+      existingCodes: new Map([["NV09", "Trần Văn B"]]),
+    });
+    expect(preview[0].status).toBe("error");
+    expect(preview[0].issues[0].message).toContain("Trần Văn B");
+    expect(prepared).toHaveLength(0);
   });
 });

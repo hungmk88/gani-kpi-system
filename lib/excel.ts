@@ -227,6 +227,7 @@ export async function parseImportFile(buffer: ArrayBuffer): Promise<{
 export type ExportRow = {
   department: string;
   employee: string;
+  employeeCode: string;
   jobTitle: string;
   kpiName: string;
   unit: string;
@@ -290,6 +291,7 @@ export async function buildKpiReport(
   const det = wb.addWorksheet("CHI_TIET");
   det.columns = [
     { header: "Phòng ban", key: "department", width: 18 },
+    { header: "Mã NV", key: "employeeCode", width: 12 },
     { header: "Họ tên", key: "employee", width: 26 },
     { header: "Chức danh", key: "jobTitle", width: 24 },
     { header: "Chỉ tiêu", key: "kpiName", width: 40 },
@@ -327,7 +329,7 @@ export async function buildKpiReport(
     }
   });
 
-  det.autoFilter = { from: "A1", to: "P1" };
+  det.autoFilter = { from: "A1", to: "Q1" };
   det.views = [{ state: "frozen", ySplit: 1 }];
 
   return wb.xlsx.writeBuffer();

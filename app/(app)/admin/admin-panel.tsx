@@ -30,6 +30,7 @@ type UserRow = {
   id: string;
   email: string;
   fullName: string;
+  employeeCode: string | null;
   jobTitle: string;
   role: string;
   employmentType: string;
@@ -206,6 +207,7 @@ function UsersTab({
   const emptyForm = {
     email: "",
     fullName: "",
+    employeeCode: "",
     jobTitle: "",
     role: "EMPLOYEE",
     departmentId: departments[0]?.id ?? "",
@@ -229,7 +231,7 @@ function UsersTab({
       if (fStatus === "active" && !u.isActive) return false;
       if (fStatus === "locked" && u.isActive) return false;
       if (!needle) return true;
-      return foldVn(`${u.fullName} ${u.email} ${u.jobTitle} ${u.phone ?? ""}`).includes(needle);
+      return foldVn(`${u.fullName} ${u.employeeCode ?? ""} ${u.email} ${u.jobTitle} ${u.phone ?? ""}`).includes(needle);
     });
   }, [users, q, fDept, fRole, fStatus]);
   const filtering = !!(q.trim() || fDept || fRole || fStatus);
@@ -245,6 +247,7 @@ function UsersTab({
           ...form,
           departmentId: form.departmentId || null,
           jobTitle: form.jobTitle || undefined,
+          employeeCode: form.employeeCode.trim() || null,
           productionRole: form.productionRole || null,
         }),
       });
@@ -536,7 +539,7 @@ function UsersTab({
           <input
             type="search"
             className="input pl-9"
-            placeholder="Tìm theo tên, email, chức danh, điện thoại…"
+            placeholder="Tìm theo tên, mã NV, email, chức danh, điện thoại…"
             aria-label="Tìm tài khoản"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -636,6 +639,17 @@ function UsersTab({
               className="input"
               value={form.fullName}
               onChange={(e) => setForm({ ...form, fullName: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="label">Mã NV (tuỳ chọn)</label>
+            <input
+              className="input uppercase"
+              value={form.employeeCode}
+              onChange={(e) => setForm({ ...form, employeeCode: e.target.value })}
+              placeholder="vd NV0012"
+              autoComplete="off"
+              maxLength={32}
             />
           </div>
           <div>
@@ -756,8 +770,24 @@ function UsersTab({
                 <td className="min-w-52">
                   <div className="font-medium whitespace-nowrap text-ink-800">
                     {u.fullName}
+                    {u.employeeCode && (
+                      <span className="ml-1.5 font-mono text-xs font-normal text-ink-500">
+                        {u.employeeCode}
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs break-all text-ink-500">{u.email}</div>
+                  {editing === u.id && (
+                    <EmployeeCodeEditor
+                      user={u}
+                      busy={busy}
+                      onSave={async (code) => {
+                        const err = await patch(u.id, { employeeCode: code || null });
+                        if (!err) toast(code ? `Đã lưu mã NV ${code.toUpperCase()} cho ${u.fullName}.` : `Đã gỡ mã NV của ${u.fullName}.`);
+                        return err;
+                      }}
+                    />
+                  )}
                   {u.jobTitle && (
                     <div className="text-xs text-ink-500">{u.jobTitle}</div>
                   )}
@@ -1419,6 +1449,50 @@ function SystemTab({
 }
 
 /* ------------------------------------------------------------------ hộp xác nhận */
+
+/**
+ * Ô sửa mã NV trong dòng đang sửa. Lưu thẳng (không qua hộp xác nhận): mã NV
+ * chỉ để tra cứu, không mở quyền gì; trùng mã thì máy chủ báo tên người đang
+ * giữ mã đó ngay dưới ô.
+ */
+function EmployeeCodeEditor({
+  user,
+  busy,
+  onSave,
+}: {
+  user: UserRow;
+  busy: boolean;
+  onSave: (code: string) => Promise<string | null>;
+}) {
+  const [code, setCode] = useState(user.employeeCode ?? "");
+  const [err, setErr] = useState<string | null>(null);
+  const changed = code.trim().toUpperCase() !== (user.employeeCode ?? "");
+  return (
+    <div className="mt-2">
+      <div className="flex items-center gap-1.5">
+        <input
+          className="input w-32 py-1 text-xs uppercase"
+          aria-label={`Mã NV của ${user.fullName}`}
+          placeholder="Mã NV"
+          maxLength={32}
+          value={code}
+          onChange={(e) => {
+            setCode(e.target.value);
+            setErr(null);
+          }}
+        />
+        <button
+          className="btn-ghost btn-sm whitespace-nowrap"
+          disabled={busy || !changed}
+          onClick={async () => setErr(await onSave(code.trim()))}
+        >
+          Lưu mã
+        </button>
+      </div>
+      {err && <div className="mt-1 text-xs text-red-700">{err}</div>}
+    </div>
+  );
+}
 
 type PendingAction = {
   kind:

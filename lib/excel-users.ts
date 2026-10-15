@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import { ROLES } from "./constants";
 import { assertSheetRowLimit, loadWorkbook } from "./excel";
 import { PRODUCTION_ROLES } from "./production/constants";
+import { normalizeEmployeeCode } from "./employee-code";
 
 /**
  * FILE MẪU + BỘ ĐỌC DANH SÁCH NHÂN SỰ.
@@ -37,6 +38,8 @@ export async function buildUserTemplate(
     { header: "CHUC_DANH", key: "jobTitle", width: 26 },
     { header: "DIEN_THOAI", key: "phone", width: 16 },
     { header: "VAI_TRO_XUONG", key: "productionRole", width: 20 },
+    // Thêm sau cùng để file mẫu cũ (8 cột) vẫn nạp được
+    { header: "MA_NV", key: "employeeCode", width: 14 },
   ];
   styleHeader(ws.getRow(1));
 
@@ -49,6 +52,7 @@ export async function buildUserTemplate(
     jobTitle: "Nhân viên kinh doanh",
     phone: "0900000000",
     productionRole: "",
+    employeeCode: "NV0001",
   });
 
   const guide = wb.addWorksheet("HUONG_DAN");
@@ -69,7 +73,9 @@ export async function buildUserTemplate(
     "   Giá trị hợp lệ: " + PRODUCTION_ROLES.join(" / "),
     "   Vai trò xưởng TÁCH RIÊNG khỏi vai trò tổ chức: một nhân viên bình thường",
     "   vẫn có thể là QC_OFFICER và có quyền xác nhận phẩm chất ca sản xuất.",
-    "7. Lưu file rồi vào Quản trị > Tài khoản > Nạp nhân sự từ Excel.",
+    "7. MA_NV: mã nhân viên theo hồ sơ nhân sự (vd NV0012), không bắt buộc.",
+    "   Chỉ gồm chữ không dấu, số và . _ - ; không trùng với người khác.",
+    "8. Lưu file rồi vào Quản trị > Tài khoản > Nạp nhân sự từ Excel.",
     "",
     "HỆ THỐNG CHO XEM TRƯỚC, CHƯA TẠO AI CẢ khi vừa chọn file.",
     "Màn xem trước liệt kê từng dòng: dòng sai tô đỏ, ghi rõ sai ở cột nào và vì sao;",
@@ -102,6 +108,8 @@ export type UserImportRow = {
   jobTitle: string | null;
   phone: string | null;
   productionRole: string | null;
+  /** Đã chuẩn hoá (in hoa); null = không có mã */
+  employeeCode: string | null;
 };
 
 /** Một chỗ sai của một dòng: cột nào (tên cột trong file mẫu) và sai vì sao. */
@@ -133,6 +141,7 @@ export async function parseUserFile(buffer: ArrayBuffer): Promise<{
 
   const rows: ParsedUserRow[] = [];
   const seenEmails = new Map<string, number>();
+  const seenCodes = new Map<string, number>();
 
   ws.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return; // dòng tiêu đề
@@ -147,13 +156,14 @@ export async function parseUserFile(buffer: ArrayBuffer): Promise<{
       jobTitle: cellText(row.getCell(6)) || null,
       phone: cellText(row.getCell(7)) || null,
       productionRole: cellText(row.getCell(8)).toUpperCase() || null,
+      employeeCode: cellText(row.getCell(9)) || null,
       issues: [],
     };
 
     // Dòng trống hoàn toàn thì bỏ qua, không coi là lỗi
     if (!parsed.fullName && !parsed.email && !parsed.password) return;
 
-    parsed.issues = validateUserRow(parsed, seenEmails);
+    parsed.issues = validateUserRow(parsed, seenEmails, seenCodes);
     rows.push(parsed);
   });
 
@@ -167,9 +177,29 @@ export async function parseUserFile(buffer: ArrayBuffer): Promise<{
  */
 export function validateUserRow(
   r: UserImportRow,
-  seenEmails: Map<string, number>
+  seenEmails: Map<string, number>,
+  seenCodes: Map<string, number> = new Map()
 ): RowIssue[] {
   const issues: RowIssue[] = [];
+
+  // Mã NV: chuẩn hoá tại chỗ (in hoa) để bước sau đối chiếu đúng
+  if (r.employeeCode) {
+    const norm = normalizeEmployeeCode(r.employeeCode);
+    if (!norm.ok) {
+      issues.push({ column: "MA_NV", message: norm.error });
+    } else {
+      r.employeeCode = norm.value;
+      const dup = norm.value ? seenCodes.get(norm.value) : undefined;
+      if (dup !== undefined) {
+        issues.push({
+          column: "MA_NV",
+          message: `Mã NV "${norm.value}" đã xuất hiện ở dòng ${dup} trong file.`,
+        });
+      } else if (norm.value) {
+        seenCodes.set(norm.value, r.rowNumber);
+      }
+    }
+  }
 
   if (!r.fullName || r.fullName.length < 2) {
     issues.push({ column: "HO_TEN", message: "Thiếu họ tên (tối thiểu 2 ký tự)." });

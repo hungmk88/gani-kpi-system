@@ -59,6 +59,7 @@ export default async function AdminPage() {
           id: u.id,
           email: u.email,
           fullName: u.fullName,
+          employeeCode: u.employeeCode,
           jobTitle: u.jobTitle ?? "",
           role: u.role,
           employmentType: u.employmentType,

@@ -110,6 +110,7 @@ describe("tìm kiếm & mở sẵn", () => {
     expect(matchesSearch(x, "kinh doanh")).toBe(true);
     expect(matchesSearch(x, "nguyen")).toBe(false);
     expect(matchesSearch(x, "  ")).toBe(true);
+    expect(matchesSearch({ ...x, employeeCode: "NV0012" }, "nv0012")).toBe(true);
   });
 
   it("mở sẵn người đang chờ mình (tối đa 5); không ai chờ thì người lệch số / bảng của mình", () => {

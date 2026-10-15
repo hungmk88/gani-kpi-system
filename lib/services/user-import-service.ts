@@ -31,6 +31,7 @@ export type ImportPreviewRow = {
   departmentName: string | null;
   jobTitle: string | null;
   productionRole: string | null;
+  employeeCode: string | null;
   status: ImportRowStatus;
   issues: RowIssue[];
 };
@@ -66,6 +67,8 @@ export function classifyImportRows(
   ctx: {
     departments: { id: string; code: string; name: string }[];
     existingEmails: Set<string>;
+    /** Mã NV đã có trong hệ thống → tên người đang giữ mã */
+    existingCodes?: Map<string, string>;
   }
 ): { preview: ImportPreviewRow[]; prepared: Prepared[] } {
   const deptByCode = new Map(ctx.departments.map((d) => [d.code.toUpperCase(), d]));
@@ -94,6 +97,14 @@ export function classifyImportRows(
       }
     }
 
+    const codeOwner = r.employeeCode ? ctx.existingCodes?.get(r.employeeCode) : undefined;
+    if (codeOwner) {
+      issues.push({
+        column: "MA_NV",
+        message: `Mã NV "${r.employeeCode}" đã thuộc về ${codeOwner}.`,
+      });
+    }
+
     const exists = !!r.email && ctx.existingEmails.has(r.email);
     // Đã có tài khoản thì bỏ qua cả dòng — những chỗ sai còn lại của dòng đó
     // không còn ý nghĩa (đằng nào cũng không tạo), báo ra chỉ gây rối.
@@ -108,6 +119,7 @@ export function classifyImportRows(
       departmentName: dept?.name ?? null,
       jobTitle: r.jobTitle,
       productionRole: r.productionRole,
+      employeeCode: r.employeeCode,
       status,
       issues: exists
         ? [{ column: "EMAIL", message: "Email này đã có tài khoản — bỏ qua dòng này." }]
@@ -157,7 +169,8 @@ export async function importUsersFromFile(
 
   /* --------- Đối chiếu với database: phòng ban, email đã có --------- */
 
-  const [departments, existing] = await Promise.all([
+  const codes = rows.map((r) => r.employeeCode).filter((c): c is string => !!c);
+  const [departments, existing, codeOwners] = await Promise.all([
     prisma.department.findMany({ select: { id: true, code: true, name: true } }),
     rows.length > 0
       ? prisma.user.findMany({
@@ -165,11 +178,20 @@ export async function importUsersFromFile(
           select: { email: true },
         })
       : Promise.resolve([] as { email: string }[]),
+    codes.length > 0
+      ? prisma.user.findMany({
+          where: { employeeCode: { in: codes } },
+          select: { employeeCode: true, fullName: true },
+        })
+      : Promise.resolve([] as { employeeCode: string | null; fullName: string }[]),
   ]);
 
   const { preview, prepared } = classifyImportRows(rows, {
     departments,
     existingEmails: new Set(existing.map((e) => e.email)),
+    existingCodes: new Map(
+      codeOwners.map((u) => [u.employeeCode ?? "", u.fullName] as [string, string])
+    ),
   });
 
   const base = {
@@ -250,6 +272,7 @@ export async function importUsersFromFile(
         departmentId: r.departmentId,
         phone: r.phone,
         productionRole: r.productionRole,
+        employeeCode: r.employeeCode,
         passwordHash: r.passwordHash,
         // Mật khẩu tạm nằm trong file Excel mà nhiều người xem được.
         // Ai vào cũng phải tự đặt mật khẩu riêng trước khi làm gì khác.
@@ -261,7 +284,7 @@ export async function importUsersFromFile(
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
       throw new BusinessError(
         ERR.VALIDATION_FAILED,
-        "Có email trong file vừa được tạo tài khoản trong lúc đang nhập. Chưa ai được tạo — bấm xem trước lại rồi nhập.",
+        "Có email hoặc mã NV trong file vừa được dùng cho tài khoản khác trong lúc đang nhập. Chưa ai được tạo — bấm xem trước lại rồi nhập.",
         409
       );
     }

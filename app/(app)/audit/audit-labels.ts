@@ -173,6 +173,7 @@ export const FIELD_LABEL: Record<string, string> = {
   fullName: "Họ tên",
   email: "Email",
   jobTitle: "Chức danh",
+  employeeCode: "Mã NV",
   employmentType: "Loại hợp đồng",
   unit: "Đơn vị",
   severity: "Mức độ",
