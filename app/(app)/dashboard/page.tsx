@@ -233,7 +233,7 @@ export default async function DashboardPage() {
                     </div>
 
                     {d.myKpi.draftCount > 0 && (
-                      <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      <div className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
                         Còn <b>{d.myKpi.draftCount}</b> chỉ tiêu chưa tự khai.
                         Hạn chót{" "}
                         23:59 ngày {formatVnDate(d.myKpi.selfReviewDeadline)}.
@@ -251,13 +251,16 @@ export default async function DashboardPage() {
                           <span
                             className={`shrink-0 font-medium ${
                               d.myKpi.weakest.achievement >= 100
-                                ? "text-emerald-700"
+                                ? "text-leaf-700"
                                 : d.myKpi.weakest.achievement >= 80
-                                  ? "text-amber-700"
-                                  : "text-red-600"
+                                  ? "text-amber-800"
+                                  : "text-red-700"
                             }`}
                           >
-                            {d.myKpi.weakest.achievement}%
+                            {d.myKpi.weakest.achievement.toLocaleString("vi-VN", {
+                              maximumFractionDigits: 1,
+                            })}
+                            %
                           </span>
                         </div>
                         <div className="mt-1">
@@ -272,7 +275,7 @@ export default async function DashboardPage() {
                             }
                           />
                         </div>
-                        <p className="mt-1.5 text-[11px] text-ink-500">
+                        <p className="mt-1.5 text-xs text-ink-500">
                           {d.myKpi.weakest.achievement >= 100
                             ? "Chỉ tiêu thấp nhất của bạn — vẫn đang đạt."
                             : "Chỉ tiêu thấp nhất — đang kéo điểm tổng xuống."}
@@ -291,7 +294,7 @@ export default async function DashboardPage() {
               className="card block p-4 transition hover:shadow-md"
             >
               <div className="flex items-center gap-2 font-medium text-brand-700">
-                <Target size={16} strokeWidth={2} /> Mở Bảng điều hành Ban Giám đốc
+                <Target size={16} strokeWidth={2} /> Mở bảng điều hành Ban Giám đốc
               </div>
               <p className="mt-1 text-xs text-ink-500">
                 Toàn bộ cảnh báo ngoại lệ, lệch số liệu và KPI chờ duyệt gom về

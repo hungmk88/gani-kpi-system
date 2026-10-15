@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { vnDateKey } from "@/lib/vn-time";
 import { useRouter } from "next/navigation";
+import { Plus } from "lucide-react";
 import {
   PRODUCTION_ROLE_LABEL,
   PRODUCTION_STAGES,
@@ -10,6 +11,9 @@ import {
   SHIFT_TYPE_LABEL,
   STAGE_LABEL,
 } from "@/lib/production/constants";
+
+/** Số kiểu Việt Nam, tối đa 2 chữ số thập phân: 374,5 */
+const fmtNum = (n: number) => n.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
 
 type Sku = {
   id: string;
@@ -172,10 +176,10 @@ export default function ShiftDraftForm({
         </div>
 
         {sku && (
-          <div className="mt-3 rounded-lg border border-ink-200 bg-ink-50/60 px-3 py-2 text-xs text-ink-600">
-            Chuẩn của mã này: sản lượng <b>{sku.targetOutputKg} kg/ca</b>, hao hụt
-            định mức <b>{sku.stdMaterialLossRate}%</b> → định mức nguyên liệu{" "}
-            <b>{stdNorm} kg</b>.
+          <div className="mt-3 rounded-md bg-ink-50 px-3 py-2 text-xs text-ink-600 tabular-nums">
+            Chuẩn của mã này: sản lượng <b>{fmtNum(sku.targetOutputKg)} kg/ca</b>, hao hụt
+            định mức <b>{fmtNum(sku.stdMaterialLossRate)}%</b> → định mức nguyên liệu{" "}
+            <b>{fmtNum(stdNorm)} kg</b>.
           </div>
         )}
       </div>
@@ -194,7 +198,7 @@ export default function ShiftDraftForm({
               onChange={(e) => setRawOutputKg(e.target.value)}
               placeholder="vd 1030"
             />
-            <p className="mt-1 text-[11px] text-ink-500">
+            <p className="mt-1 text-xs text-ink-500">
               Toàn bộ hàng ra khỏi chuyền, chưa phân loại đạt hay hỏng.
             </p>
           </div>
@@ -210,13 +214,13 @@ export default function ShiftDraftForm({
             />
             {nvl > 0 && stdNorm > 0 && (
               <p
-                className={`mt-1 text-[11px] ${
-                  overrun > 0 ? "text-amber-700" : "text-emerald-700"
+                className={`mt-1 text-xs ${
+                  overrun > 0 ? "text-amber-800" : "text-ink-500"
                 }`}
               >
                 {overrun > 0
-                  ? `Vượt định mức ${overrun} kg`
-                  : `Dưới định mức ${Math.abs(overrun)} kg`}
+                  ? `Vượt định mức ${fmtNum(overrun)} kg`
+                  : `Dưới định mức ${fmtNum(Math.abs(overrun))} kg`}
               </p>
             )}
           </div>
@@ -248,7 +252,7 @@ export default function ShiftDraftForm({
         <div className="mb-3 flex items-center justify-between">
           <h3 className="section-title">3. Ai làm ca này</h3>
           <span className="text-xs text-ink-500">
-            Tổng giờ công: <b className="text-ink-800">{totalLaborHours}</b>
+            Tổng giờ công: <b className="text-ink-800 tabular-nums">{fmtNum(totalLaborHours)}</b>
           </span>
         </div>
 
@@ -262,7 +266,7 @@ export default function ShiftDraftForm({
           {rows.map((r, i) => (
             <div
               key={i}
-              className="grid gap-2 rounded-lg border border-ink-200 p-2 sm:grid-cols-[2fr_1.3fr_0.8fr_0.8fr_auto]"
+              className="grid gap-2 rounded-md bg-ink-50 p-2 sm:grid-cols-[2fr_1.3fr_0.8fr_0.8fr_auto]"
             >
               <select
                 className="input"
@@ -332,9 +336,9 @@ export default function ShiftDraftForm({
               ])
             }
           >
-            + Thêm người
+            <Plus size={16} aria-hidden /> Thêm người
           </button>
-          <span className="text-[11px] text-ink-500">
+          <span className="text-xs text-ink-500">
             Cột thứ 3 là giờ làm thực tế, cột thứ 4 là giờ đăng ký.
           </span>
         </div>
@@ -347,7 +351,10 @@ export default function ShiftDraftForm({
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div
+          role="alert"
+          className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
           {error}
         </div>
       )}

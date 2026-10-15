@@ -1,6 +1,6 @@
 import { vnDate, vnDateKey, vnParts } from "@/lib/vn-time";
 import Link from "next/link";
-import { Flame } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Flame } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { taskScopeWhere } from "@/lib/rbac";
@@ -94,7 +94,7 @@ export default async function CalendarPage({
             href={`/tasks/calendar?m=${prev.m}&y=${prev.y}`}
             className="btn-ghost btn-sm"
           >
-            ← Tháng trước
+            <ChevronLeft size={16} aria-hidden /> Tháng trước
           </Link>
           <Link href="/tasks/calendar" className="btn-ghost btn-sm">
             Hôm nay
@@ -103,7 +103,7 @@ export default async function CalendarPage({
             href={`/tasks/calendar?m=${next.m}&y=${next.y}`}
             className="btn-ghost btn-sm"
           >
-            Tháng sau →
+            Tháng sau <ChevronRight size={16} aria-hidden />
           </Link>
         </div>
         <div className="text-lg font-bold text-ink-900">
@@ -118,7 +118,7 @@ export default async function CalendarPage({
             {WEEKDAY_LABELS.map((w) => (
               <div
                 key={w}
-                className="px-2 py-2 text-center text-xs font-semibold tracking-wide text-ink-500 uppercase"
+                className="px-2 py-2 text-center text-xs font-semibold text-ink-500"
               >
                 {w}
               </div>
@@ -138,10 +138,10 @@ export default async function CalendarPage({
                 <div
                   key={k}
                   className={`min-h-28 border-r border-b border-ink-100 p-1.5 ${
-                    isOtherMonth
-                      ? "bg-ink-50/40"
-                      : isWeekend
-                        ? "bg-ink-50/25"
+                    isWeekend
+                      ? "bg-ink-50"
+                      : isOtherMonth
+                        ? "bg-ink-50/50"
                         : "bg-white"
                   }`}
                 >
@@ -158,7 +158,7 @@ export default async function CalendarPage({
                       {dp.day}
                     </span>
                     {list.length > 2 && (
-                      <span className="text-[10px] text-ink-400">
+                      <span className="text-xs text-ink-500 tabular-nums">
                         {list.length} việc
                       </span>
                     )}
@@ -167,16 +167,18 @@ export default async function CalendarPage({
                   <div className="space-y-1">
                     {list.slice(0, 3).map((t) => {
                       const late = t.dueDate < today && t.status !== "DONE";
+                      // Chỉ ngoại lệ (trễ, khẩn cấp, ưu tiên cao) mới tô nền;
+                      // việc bình thường và việc đã xong là ô trắng viền mảnh.
                       const tone =
                         t.status === "DONE"
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                          ? "border-ink-200 bg-white text-ink-500"
                           : late
                             ? "border-red-200 bg-red-50 text-red-800"
                             : t.priority === "CRITICAL"
                               ? "border-red-200 bg-red-50 text-red-800"
                               : t.priority === "HIGH"
                                 ? "border-amber-200 bg-amber-50 text-amber-800"
-                                : "border-brand-200 bg-brand-50 text-brand-800";
+                                : "border-ink-200 bg-white text-ink-800";
                       return (
                         <Link
                           key={t.id}
@@ -186,18 +188,28 @@ export default async function CalendarPage({
                           }\n${TASK_STATUS_LABEL[t.status]} · ${
                             TASK_PRIORITY_LABEL[t.priority]
                           }`}
-                          className={`flex items-center gap-0.5 truncate rounded border px-1.5 py-1 text-[11px] leading-tight ${tone} hover:brightness-95`}
+                          className={`flex min-w-0 items-center gap-1 rounded border px-1.5 py-1 text-xs leading-tight ${tone} hover:border-ink-300`}
                         >
-                          {t.priority === "CRITICAL" && (
-                            <Flame size={10} strokeWidth={2.5} className="shrink-0" />
+                          {t.status === "DONE" ? (
+                            <Check size={12} strokeWidth={2.5} className="shrink-0 text-leaf-600" aria-hidden />
+                          ) : (
+                            t.priority === "CRITICAL" && (
+                              <Flame size={12} strokeWidth={2.5} className="shrink-0" aria-hidden />
+                            )
                           )}
-                          {t.title}
+                          <span className="truncate">{t.title}</span>
                         </Link>
                       );
                     })}
                     {list.length > 3 && (
-                      <div className="px-1 text-[10px] text-ink-400">
-                        + {list.length - 3} việc nữa
+                      <div
+                        className="px-1 text-xs text-ink-500"
+                        title={list
+                          .slice(3)
+                          .map((t) => t.title)
+                          .join("\n")}
+                      >
+                        +{list.length - 3} việc nữa
                       </div>
                     )}
                   </div>

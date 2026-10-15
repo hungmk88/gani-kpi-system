@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Ban } from "lucide-react";
+import { Check, Ban, CircleCheck } from "lucide-react";
 
 /**
  * Hai thao tác trên một cảnh báo:
@@ -76,13 +76,17 @@ export default function AuditActions({
   return (
     <div className="border-t border-ink-100 pt-3">
       {error && (
-        <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div
+          role="alert"
+          className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
           {error}
         </div>
       )}
       {message && (
-        <div className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          {message}
+        <div role="status" className="mb-2 flex items-start gap-1.5 text-sm text-leaf-700">
+          <CircleCheck size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
+          <span>{message}</span>
         </div>
       )}
 
@@ -138,7 +142,7 @@ export default function AuditActions({
           />
           <div className="flex flex-wrap gap-2">
             <button
-              className="btn-success btn-sm inline-flex items-center gap-1.5"
+              className="btn-primary btn-sm"
               disabled={busy || note.trim().length < 10}
               onClick={() =>
                 call({ action: "REVIEW", approved: true, reviewNote: note })
@@ -147,7 +151,7 @@ export default function AuditActions({
               <Check size={14} strokeWidth={2.5} /> Đồng ý — mở khoá thưởng
             </button>
             <button
-              className="btn-danger btn-sm inline-flex items-center gap-1.5"
+              className="btn-danger btn-sm"
               disabled={busy || note.trim().length < 10}
               onClick={() =>
                 call({ action: "REVIEW", approved: false, reviewNote: note })
@@ -167,7 +171,7 @@ export default function AuditActions({
 
       <Link
         href={`/production/${shiftId}`}
-        className={`inline-block text-xs text-brand-600 hover:underline ${done ? "" : "mt-2"}`}
+        className={`inline-block text-sm text-brand-700 hover:underline ${done ? "" : "mt-2"}`}
       >
         Xem chi tiết ca sản xuất →
       </Link>

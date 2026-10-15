@@ -106,21 +106,27 @@ export default async function KpiTargetsPage({
       </div>
 
       <PageHeader
-        title={`Đặt mục tiêu · ${dept.name}`}
+        title={`${period.status === "FINALIZED" ? "Mục tiêu" : "Đặt mục tiêu"} · ${dept.name}`}
         subtitle={`${period.name} · mỗi nhân sự một mục tiêu riêng cho từng chỉ tiêu`}
       />
 
       {user.role !== "MANAGER" && (
-        <div className="card mb-6 flex flex-wrap items-center gap-2 p-4">
-          <span className="text-sm font-medium text-ink-600">Phòng ban:</span>
+        // Chọn phòng ban: dạng thẻ gạch chân (tab) của hệ thiết kế
+        <div
+          role="tablist"
+          aria-label="Phòng ban"
+          className="mb-6 flex gap-5 overflow-x-auto border-b border-ink-200"
+        >
           {departments.map((d) => (
             <Link
               key={d.id}
               href={`/kpi/${periodId}/targets?dept=${d.code}`}
-              className={`rounded-full px-3 py-1 text-sm ${
+              role="tab"
+              aria-selected={d.id === dept.id}
+              className={`-mb-px border-b-2 px-1 py-2.5 text-sm font-medium whitespace-nowrap ${
                 d.id === dept.id
-                  ? "bg-brand-600 text-white"
-                  : "bg-ink-100 text-ink-600 hover:bg-ink-200"
+                  ? "border-brand-600 text-brand-700"
+                  : "border-transparent text-ink-500 hover:text-ink-800"
               }`}
             >
               {d.name}

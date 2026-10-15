@@ -113,19 +113,20 @@ export default async function AuditsPage() {
         <StatCard
           label="Chờ giải trình"
           value={pendingTotal}
-          tone={pendingTotal > 0 ? "amber" : "green"}
+          tone={pendingTotal > 0 ? "amber" : "slate"}
           hint="quản đốc cần vào nói rõ"
         />
         <StatCard
           label="Chờ BGĐ quyết"
           value={explainedTotal}
-          tone={explainedTotal > 0 ? "violet" : "green"}
+          tone="slate"
           hint="đã có giải trình"
         />
         <StatCard
           label="Người đang khoá thưởng"
           value={lockedPeople}
-          tone={lockedPeople > 0 ? "red" : "green"}
+          tone={lockedPeople > 0 ? "red" : "slate"}
+          surface={lockedPeople > 0 ? "red" : undefined}
           hint={lockedPeople > 0 ? "chưa nhận được thưởng ca" : "không ai bị khoá"}
         />
         <StatCard label="Đã xử lý xong" value={doneTotal} hint="từ trước tới nay" />
@@ -176,21 +177,28 @@ export default async function AuditsPage() {
                     const lockedCount = a.shiftLog.kpiResults.filter(
                       (r) => r.isBonusLocked
                     ).length;
+                    // Đã xử lý xong thì không còn là ngoại lệ — thẻ trung tính
+                    const resolved =
+                      a.status === "CEO_APPROVED" || a.status === "REJECTED";
                     return (
                       <div
                         key={a.id}
                         className={`card overflow-hidden ${
-                          a.severity === "CRITICAL"
-                            ? "border-red-200"
-                            : "border-amber-200"
+                          resolved
+                            ? ""
+                            : a.severity === "CRITICAL"
+                              ? "border-red-200"
+                              : "border-amber-200"
                         }`}
                       >
                         {/* --- đầu thẻ --- */}
                         <div
                           className={`flex flex-wrap items-start justify-between gap-2 border-b px-4 py-3 ${
-                            a.severity === "CRITICAL"
-                              ? "border-red-200 bg-red-50/60"
-                              : "border-amber-200 bg-amber-50/60"
+                            resolved
+                              ? "border-ink-100"
+                              : a.severity === "CRITICAL"
+                                ? "border-red-200 bg-red-50/60"
+                                : "border-amber-200 bg-amber-50/60"
                           }`}
                         >
                           <div className="min-w-0">
@@ -209,7 +217,8 @@ export default async function AuditsPage() {
                             <div className="mt-1 text-xs text-ink-600">
                               {SHIFT_TYPE_LABEL[a.shiftLog.shiftType]} ·{" "}
                               {formatDate(a.shiftLog.shiftDate)} ·{" "}
-                              {a.shiftLog.sku.skuCode} — {a.shiftLog.sku.skuName}
+                              <span className="font-mono">{a.shiftLog.sku.skuCode}</span> —{" "}
+                              {a.shiftLog.sku.skuName}
                               {" · khai bởi "}
                               {a.shiftLog.createdBy.fullName}
                             </div>
@@ -220,7 +229,7 @@ export default async function AuditsPage() {
                             </Badge>
                             {lockedCount > 0 && (
                               <div className="mt-1 flex items-center gap-1 text-xs font-medium text-red-700">
-                                <Lock size={11} strokeWidth={2.5} /> {lockedCount} người đang khoá thưởng
+                                <Lock size={12} strokeWidth={2.5} /> {lockedCount} người đang khoá thưởng
                               </div>
                             )}
                           </div>
@@ -228,13 +237,13 @@ export default async function AuditsPage() {
 
                         {/* --- thân thẻ --- */}
                         <div className="space-y-3 p-4">
-                          <div className="rounded-lg border border-ink-200 bg-ink-50/60 px-3 py-2 text-sm text-ink-700">
+                          <div className="rounded-md bg-ink-50 px-3 py-2 text-sm text-ink-700">
                             {a.auditNote}
                           </div>
 
                           {a.explanationText && (
-                            <div className="rounded-lg border border-ink-200 bg-white px-3 py-2">
-                              <div className="text-[11px] font-semibold tracking-wide text-ink-500 uppercase">
+                            <div className="border-l-2 border-ink-200 py-1 pl-3">
+                              <div className="text-xs font-semibold text-ink-500">
                                 Giải trình — {a.explainedBy?.fullName} ·{" "}
                                 {formatDateTime(a.explainedAt)}
                               </div>
@@ -246,13 +255,13 @@ export default async function AuditsPage() {
 
                           {a.ceoReviewNote && (
                             <div
-                              className={`rounded-lg border px-3 py-2 ${
-                                a.status === "CEO_APPROVED"
-                                  ? "border-emerald-200 bg-emerald-50"
-                                  : "border-red-200 bg-red-50"
-                              }`}
+                              className={
+                                a.status === "REJECTED"
+                                  ? "rounded-md border border-red-200 bg-red-50 px-3 py-2"
+                                  : "border-l-2 border-brand-500 py-1 pl-3"
+                              }
                             >
-                              <div className="text-[11px] font-semibold tracking-wide text-ink-500 uppercase">
+                              <div className="text-xs font-semibold text-ink-500">
                                 Ý kiến Ban Giám đốc — {a.reviewedBy?.fullName} ·{" "}
                                 {formatDateTime(a.reviewedAt)}
                               </div>

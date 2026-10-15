@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { CircleCheck, CircleX } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Check, Circle, CircleCheck, CircleX, Plus } from "lucide-react";
 import { Badge, formatDateTime } from "@/components/ui";
 import {
   DATA_SOURCES,
@@ -53,6 +53,25 @@ const TABS = [
   { id: "integrations", label: "Tích hợp" },
   { id: "system", label: "Kết nối & cấu hình" },
 ] as const;
+type TabId = (typeof TABS)[number]["id"];
+
+/** Nhãn tiếng Việt cho mã nguồn số liệu — không hiện mã thô EXCEL/IPOS_API ra màn hình */
+const DATA_SOURCE_LABEL: Record<string, string> = {
+  MANUAL: "Nhập tay",
+  EXCEL: "Nạp từ Excel",
+  IPOS_API: "iPOS / API",
+  API: "API",
+  CSV: "File CSV",
+};
+const dataSourceLabel = (code: string) => DATA_SOURCE_LABEL[code] ?? code;
+
+/** Giá trị cấu hình kiểu đúng/sai hiện thành Có/Không thay vì true/false thô */
+function settingValueLabel(v: string) {
+  const t = v.trim().toLowerCase();
+  if (t === "true") return "Có";
+  if (t === "false") return "Không";
+  return v;
+}
 
 export default function AdminPanel({
   users,
@@ -86,19 +105,42 @@ export default function AdminPanel({
   telegramReady: { enabled: boolean; hasToken: boolean; hasWebhookSecret: boolean };
   zaloReady: { enabled: boolean; hasToken: boolean };
 }) {
-  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("users");
+  // Thẻ đang mở nằm trên URL (?tab=…): tải lại trang hay gửi đường dẫn cho
+  // người khác vẫn mở đúng thẻ, không bị đá về "Tài khoản".
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const fromUrl = searchParams.get("tab");
+  const tab: TabId = TABS.some((t) => t.id === fromUrl)
+    ? (fromUrl as TabId)
+    : "users";
+
+  function setTab(id: TabId) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (id === "users") params.delete("tab");
+    else params.set("tab", id);
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }
 
   return (
     <>
-      <div className="mb-5 flex flex-wrap gap-1 rounded-xl border border-ink-200 bg-white p-1">
+      <div
+        role="tablist"
+        aria-label="Mục quản trị"
+        className="mb-5 flex gap-5 overflow-x-auto border-b border-ink-200"
+      >
         {TABS.map((t) => (
           <button
             key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
             onClick={() => setTab(t.id)}
-            className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition ${
+            className={`-mb-px border-b-2 px-1 py-2.5 text-sm font-medium whitespace-nowrap transition ${
               tab === t.id
-                ? "bg-brand-600 text-white"
-                : "text-ink-600 hover:bg-ink-50"
+                ? "border-brand-600 text-brand-700"
+                : "border-transparent text-ink-500 hover:text-ink-800"
             }`}
           >
             {t.label}
@@ -283,11 +325,14 @@ function UsersTab({
       {notice && (
         <div
           role="status"
-          className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+          className="mb-3 flex items-center justify-between gap-3 text-sm text-leaf-700"
         >
-          <span>{notice}</span>
+          <span className="inline-flex items-center gap-1.5">
+            <CircleCheck size={16} strokeWidth={2} className="shrink-0" />
+            {notice}
+          </span>
           <button
-            className="text-xs text-emerald-700 hover:underline"
+            className="text-xs text-ink-500 hover:text-ink-800 hover:underline"
             onClick={() => setNotice(null)}
           >
             Đóng
@@ -435,9 +480,16 @@ function UsersTab({
                 {pwChecks.map((c) => (
                   <li
                     key={c.label}
-                    className={c.ok ? "text-emerald-700" : "text-ink-500"}
+                    className={`flex items-center gap-1.5 ${
+                      c.ok ? "text-leaf-700" : "text-ink-500"
+                    }`}
                   >
-                    {c.ok ? "✓" : "○"} {c.label}
+                    {c.ok ? (
+                      <Check size={14} strokeWidth={2.5} aria-hidden />
+                    ) : (
+                      <Circle size={12} aria-hidden className="mx-px text-ink-400" />
+                    )}
+                    {c.label}
                   </li>
                 ))}
               </ul>
@@ -447,9 +499,17 @@ function UsersTab({
       </ConfirmDialog>
 
       <div className="mb-3 flex items-center justify-between">
-        <div className="text-sm text-ink-500">{users.length} tài khoản</div>
+        <div className="text-sm text-ink-500 tabular-nums">
+          {users.length.toLocaleString("vi-VN")} tài khoản
+        </div>
         <button className="btn-primary btn-sm" onClick={() => setAdding(!adding)}>
-          {adding ? "Đóng" : "+ Thêm tài khoản"}
+          {adding ? (
+            "Đóng"
+          ) : (
+            <>
+              <Plus size={16} aria-hidden /> Thêm tài khoản
+            </>
+          )}
         </button>
       </div>
 
@@ -578,7 +638,7 @@ function UsersTab({
                       ))}
                     </select>
                   ) : (
-                    <Badge tone={u.role === "CEO" ? "violet" : "slate"}>
+                    <Badge tone={u.role === "CEO" ? "brand" : "slate"}>
                       {ROLE_LABEL[u.role]}
                     </Badge>
                   )}
@@ -640,7 +700,7 @@ function UsersTab({
                   </span>
                   {editing === u.id && u.role !== "CEO" && u.telegramChatId && (
                     <button
-                      className="ml-2 text-xs text-red-600 hover:underline"
+                      className="ml-2 text-xs text-red-700 hover:underline"
                       disabled={busy}
                       onClick={() => ask({ kind: "unlinkTelegram", user: u })}
                     >
@@ -663,7 +723,7 @@ function UsersTab({
                   className="sticky right-0 bg-white whitespace-nowrap shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.12)]"
                 >
                   <button
-                    className="text-xs text-brand-600 hover:underline"
+                    className="text-xs text-brand-700 hover:underline"
                     onClick={() => setEditing(editing === u.id ? null : u.id)}
                   >
                     {editing === u.id ? "Xong" : "Sửa"}
@@ -672,7 +732,7 @@ function UsersTab({
                     // Mật khẩu, Telegram, vai trò, khoá/mở của tài khoản Ban
                     // Giám đốc chỉ Ban Giám đốc đổi — API chặn quản trị.
                     <span
-                      className="ml-3 text-xs text-ink-400"
+                      className="ml-3 text-xs text-ink-500"
                       title="Mật khẩu, Telegram, vai trò và khoá/mở tài khoản Ban Giám đốc chỉ Ban Giám đốc thay đổi."
                     >
                       Chỉ BGĐ đổi MK/khoá
@@ -687,7 +747,7 @@ function UsersTab({
                       </button>
                       <button
                         className={`ml-3 text-xs hover:underline ${
-                          u.isActive ? "text-red-600" : "text-emerald-600"
+                          u.isActive ? "text-red-700" : "text-brand-700"
                         }`}
                         onClick={() =>
                           ask({ kind: u.isActive ? "lock" : "unlock", user: u })
@@ -764,7 +824,7 @@ function DepartmentsTab({ departments }: { departments: DeptRow[] }) {
           disabled={busy || !code || !name}
           onClick={create}
         >
-          + Thêm phòng ban
+          <Plus size={16} aria-hidden /> Thêm phòng ban
         </button>
       </div>
 
@@ -788,7 +848,9 @@ function DepartmentsTab({ departments }: { departments: DeptRow[] }) {
               <tr key={d.id}>
                 <td className="font-mono text-xs text-ink-600">{d.code}</td>
                 <td className="font-medium text-ink-800">{d.name}</td>
-                <td className="text-right text-ink-600">{d.userCount}</td>
+                <td className="text-right text-ink-600 tabular-nums">
+                  {d.userCount.toLocaleString("vi-VN")}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -876,12 +938,18 @@ function KpisTab({
   return (
     <>
       <div className="mb-3 flex items-center justify-between">
-        <div className="text-sm text-ink-500">
-          {definitions.length} chỉ tiêu ·{" "}
-          {definitions.filter((d) => d.isActive).length} đang dùng
+        <div className="text-sm text-ink-500 tabular-nums">
+          {definitions.length.toLocaleString("vi-VN")} chỉ tiêu ·{" "}
+          {definitions.filter((d) => d.isActive).length.toLocaleString("vi-VN")} đang dùng
         </div>
         <button className="btn-primary btn-sm" onClick={() => setAdding(!adding)}>
-          {adding ? "Đóng" : "+ Thêm chỉ tiêu"}
+          {adding ? (
+            "Đóng"
+          ) : (
+            <>
+              <Plus size={16} aria-hidden /> Thêm chỉ tiêu
+            </>
+          )}
         </button>
       </div>
 
@@ -967,11 +1035,7 @@ function KpisTab({
             >
               {DATA_SOURCES.map((s) => (
                 <option key={s} value={s}>
-                  {s === "MANUAL"
-                    ? "Nhập tay"
-                    : s === "EXCEL"
-                      ? "Nạp từ Excel"
-                      : "iPOS / API"}
+                  {dataSourceLabel(s)}
                 </option>
               ))}
             </select>
@@ -1009,16 +1073,14 @@ function KpisTab({
                   {d.isHigherBetter ? "↑ cao tốt" : "↓ thấp tốt"}
                 </td>
                 <td className="text-xs text-ink-600">
-                  {d.dataSource === "IPOS_API"
-                    ? "iPOS/API"
-                    : d.dataSource === "EXCEL"
-                      ? "Excel"
-                      : "nhập tay"}
+                  {dataSourceLabel(d.dataSource)}
                 </td>
-                <td className="text-right text-ink-600">{d.defaultWeight}%</td>
+                <td className="text-right text-ink-600 tabular-nums">
+                  {d.defaultWeight.toLocaleString("vi-VN")}%
+                </td>
                 <td>
                   <button
-                    className="text-xs text-brand-600 hover:underline"
+                    className="text-xs text-brand-700 hover:underline"
                     onClick={() => toggle(d.id, !d.isActive)}
                   >
                     {d.isActive ? "Ngưng dùng" : "Dùng lại"}
@@ -1084,9 +1146,7 @@ function SystemTab({
   return (
     <div className="space-y-6">
       <div className="card p-5">
-        <h3 className="mb-1 font-semibold text-ink-900">
-          Kiểm tra kết nối Telegram
-        </h3>
+        <h3 className="section-title mb-1">Kiểm tra kết nối Telegram</h3>
         <p className="mb-4 text-sm text-ink-500">
           Tạo bot bằng @BotFather, dán token vào <code>TELEGRAM_BOT_TOKEN</code>{" "}
           trong file .env, đặt <code>TELEGRAM_ENABLED=&quot;true&quot;</code>,
@@ -1103,22 +1163,24 @@ function SystemTab({
             {busy ? "Đang gửi..." : "Gửi tin thử"}
           </button>
         </div>
-        {result && <div className="mt-3 text-sm text-ink-700">{result}</div>}
+        {result && (
+          <div role="status" className="mt-3 text-sm text-ink-700">
+            {result}
+          </div>
+        )}
       </div>
 
       <div className="card p-5">
-        <h3 className="mb-3 font-semibold text-ink-900">
-          Quy tắc nghiệp vụ đang áp dụng
-        </h3>
+        <h3 className="section-title mb-3">Quy tắc nghiệp vụ đang áp dụng</h3>
         <div className="grid gap-2 sm:grid-cols-2">
           {settings.map((s) => (
             <div
               key={s.key}
-              className="flex items-center justify-between rounded-lg border border-ink-200 px-3 py-2"
+              className="flex items-center justify-between gap-3 rounded-md bg-ink-50 px-3 py-2"
             >
               <span className="text-sm text-ink-600">{s.label}</span>
-              <span className="font-mono text-sm font-medium text-ink-900">
-                {s.value}
+              <span className="text-sm font-medium text-ink-900 tabular-nums">
+                {settingValueLabel(s.value)}
               </span>
             </div>
           ))}
@@ -1132,29 +1194,27 @@ function SystemTab({
       </div>
 
       <div className="card p-5">
-        <h3 className="mb-3 font-semibold text-ink-900">
-          Lịch sử nạp dữ liệu gần đây
-        </h3>
+        <h3 className="section-title mb-3">Lịch sử nạp dữ liệu gần đây</h3>
         {importLogs.length === 0 ? (
           <p className="text-sm text-ink-500">Chưa có lần nạp nào.</p>
         ) : (
-          <div className="space-y-2">
+          <div className="divide-y divide-ink-100">
             {importLogs.map((l) => (
-              <div
-                key={l.id}
-                className="rounded-lg border border-ink-200 px-3 py-2 text-sm"
-              >
+              <div key={l.id} className="py-2.5 text-sm first:pt-0 last:pb-0">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-medium text-ink-800">{l.fileName}</span>
                   <span className="text-xs text-ink-500">
                     {formatDateTime(l.createdAt)} · {l.uploadedBy}
                   </span>
                 </div>
-                <div className="mt-1 text-xs">
-                  <span className="text-emerald-700">{l.rowsOk} dòng vào</span>
+                <div className="mt-1 text-xs tabular-nums">
+                  <span className="text-ink-500">{dataSourceLabel(l.source)} · </span>
+                  <span className="text-leaf-700">
+                    {l.rowsOk.toLocaleString("vi-VN")} dòng vào
+                  </span>
                   {l.rowsError > 0 && (
-                    <span className="ml-2 text-red-600">
-                      {l.rowsError} dòng lỗi
+                    <span className="ml-2 font-medium text-red-700">
+                      {l.rowsError.toLocaleString("vi-VN")} dòng lỗi
                     </span>
                   )}
                 </div>
@@ -1163,7 +1223,7 @@ function SystemTab({
                     <summary className="cursor-pointer text-xs text-ink-500">
                       Xem chi tiết lỗi
                     </summary>
-                    <pre className="mt-1 max-h-40 overflow-auto rounded bg-ink-50 p-2 text-[11px] whitespace-pre-wrap text-ink-600">
+                    <pre className="mt-1 max-h-40 overflow-auto rounded bg-ink-50 p-2 text-xs whitespace-pre-wrap text-ink-600">
                       {l.errorLog}
                     </pre>
                   </details>

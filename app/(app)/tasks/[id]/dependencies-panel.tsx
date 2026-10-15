@@ -95,7 +95,7 @@ export default function DependenciesPanel({
       </div>
 
       {lateBlockers.length > 0 && (
-        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+        <div className="mb-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-800">
           Việc này đang chờ {lateBlockers.length} việc <b>đã trễ hạn</b>. Hệ
           thống đã cộng điểm rủi ro tương ứng — gỡ mắt xích kia trước thì việc
           này mới chạy được.
@@ -103,7 +103,7 @@ export default function DependenciesPanel({
       )}
 
       {error && (
-        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+        <div className="mb-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
           {error}
         </div>
       )}
@@ -121,7 +121,7 @@ export default function DependenciesPanel({
             {blockedBy.map((b) => (
               <li
                 key={b.id}
-                className="flex items-center justify-between gap-2 rounded-lg border border-ink-200 px-2.5 py-1.5"
+                className="flex items-center justify-between gap-2 rounded-md bg-ink-50 px-2.5 py-1.5"
               >
                 <Link
                   href={`/tasks/${b.id}`}
@@ -131,16 +131,16 @@ export default function DependenciesPanel({
                     {b.title}
                   </span>
                   <span
-                    className={`block ${b.isLate ? "font-medium text-red-600" : "text-ink-400"}`}
+                    className={`block ${b.isLate ? "font-medium text-red-700" : "text-ink-500"}`}
                   >
                     {b.code} · hạn{" "}
                     {formatVnDate(b.dueDate)}
-                    {b.isLate && " · ĐÃ TRỄ"}
+                    {b.isLate && " · đã trễ"}
                   </span>
                 </Link>
                 {canEdit && (
                   <button
-                    className="shrink-0 text-xs text-red-600 hover:underline"
+                    className="shrink-0 text-xs text-red-700 hover:underline"
                     disabled={busy}
                     onClick={() => remove(b.id)}
                   >
@@ -163,12 +163,12 @@ export default function DependenciesPanel({
               <li key={b.id}>
                 <Link
                   href={`/tasks/${b.id}`}
-                  className="block rounded-lg border border-amber-200 bg-amber-50/60 px-2.5 py-1.5 text-xs hover:bg-amber-50"
+                  className="block rounded-md bg-amber-50 px-2.5 py-1.5 text-xs hover:bg-amber-100"
                 >
                   <span className="block truncate font-medium text-amber-900">
                     {b.title}
                   </span>
-                  <span className="block text-amber-700">
+                  <span className="block text-amber-800">
                     {b.code} · đang đợi việc này xong
                   </span>
                 </Link>

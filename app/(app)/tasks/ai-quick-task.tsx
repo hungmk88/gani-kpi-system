@@ -222,7 +222,7 @@ export default function AiQuickTask({
             {EXAMPLES.map((ex, i) => (
               <button
                 key={i}
-                className="rounded-md border border-ink-200 px-2 py-1 text-[11px] text-ink-500 hover:bg-ink-50"
+                className="rounded-md border border-ink-200 px-2 py-1 text-xs text-ink-500 hover:bg-ink-50"
                 onClick={() => setText(ex)}
               >
                 Thử câu {i + 1}
@@ -250,34 +250,36 @@ export default function AiQuickTask({
         <>
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <ConfidenceBadge value={res.confidencePercent} />
-            <span className="badge border-ink-200 bg-ink-50 text-ink-600">
+            <span className="badge border-transparent bg-ink-100 text-ink-700">
               {res.engine === "GEMINI"
                 ? `Gemini · ${res.modelName}`
                 : "Bộ đọc luật cứng (chưa cấu hình khoá AI)"}
             </span>
-            <span className="text-xs text-ink-400">{res.latencyMs}ms</span>
+            <span className="text-xs text-ink-500 tabular-nums">
+              {res.latencyMs.toLocaleString("vi-VN")} ms
+            </span>
           </div>
 
-          <div className="mb-3 rounded-lg border border-ink-200 bg-ink-50/60 px-3 py-2 text-xs text-ink-600">
+          <div className="mb-3 rounded-md bg-ink-50 px-3 py-2 text-xs text-ink-600">
             <b>Máy hiểu thế này:</b> {res.rationale}
           </div>
 
           {res.sanitizeFlagged && (
-            <div className="mb-3 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-800">
+            <div className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
               Câu lệnh có đoạn giống lệnh điều khiển AI. Hệ thống đã cắt bỏ đoạn
               đó trước khi xử lý.
             </div>
           )}
 
           {res.engineError && (
-            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
               {res.engineError}
             </div>
           )}
 
           {res.missingInfo.length > 0 && (
-            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              <b>CẦN XÁC NHẬN:</b>
+            <div className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <b>Cần xác nhận:</b>
               <ul className="mt-1 list-inside list-disc text-xs">
                 {res.missingInfo.map((m, i) => (
                   <li key={i}>{m}</li>
@@ -336,7 +338,7 @@ export default function AiQuickTask({
                 <label className="label">
                   Người phụ trách
                   {!res.draft.assigneeId && (
-                    <span className="ml-1 text-amber-600">· cần chọn</span>
+                    <span className="ml-1 text-amber-700">· cần chọn</span>
                   )}
                 </label>
                 <select
@@ -368,7 +370,7 @@ export default function AiQuickTask({
                 <label className="label">
                   Hạn chót
                   {!res.draft.dueDate && (
-                    <span className="ml-1 text-amber-600">· cần điền</span>
+                    <span className="ml-1 text-amber-700">· cần điền</span>
                   )}
                 </label>
                 <input
@@ -432,10 +434,10 @@ export default function AiQuickTask({
 function ConfidenceBadge({ value }: { value: number }) {
   const tone =
     value >= 75
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      ? "border-transparent px-0 text-leaf-700"
       : value >= 50
-        ? "border-amber-200 bg-amber-50 text-amber-700"
-        : "border-red-200 bg-red-50 text-red-700";
+        ? "border-transparent bg-amber-50 text-amber-800"
+        : "border-transparent bg-red-50 text-red-700";
   return (
     <span className={`badge ${tone}`}>Mức tự tin của máy: {value}%</span>
   );

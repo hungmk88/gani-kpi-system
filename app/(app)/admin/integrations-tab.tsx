@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { KeyRound, Check, Circle } from "lucide-react";
+import { KeyRound, Check, Circle, Plus } from "lucide-react";
 import { Badge, formatDateTime } from "@/components/ui";
 import ConfirmDialog from "@/components/confirm-dialog";
 
@@ -38,6 +38,10 @@ const KINDS = [
   { value: "SHEETS", label: "Google Sheets" },
   { value: "OTHER", label: "Khác" },
 ];
+/** Mã loại nguồn → nhãn tiếng Việt (bảng không hiện mã thô IPOS/SHEETS) */
+const KIND_LABEL: Record<string, string> = Object.fromEntries(
+  KINDS.map((k) => [k.value, k.label])
+);
 
 export default function IntegrationsTab({
   sources,
@@ -177,7 +181,7 @@ export default function IntegrationsTab({
 
       {/* ---------------- trạng thái kênh gửi tin ---------------- */}
       <div className="card p-5">
-        <h3 className="mb-3 font-semibold text-ink-900">Kênh gửi thông báo</h3>
+        <h3 className="section-title mb-3">Kênh gửi thông báo</h3>
         <div className="grid gap-3 sm:grid-cols-2">
           <ChannelCard
             title="Telegram"
@@ -210,13 +214,13 @@ export default function IntegrationsTab({
 
       {/* ---------------- khoá vừa tạo ---------------- */}
       {freshSecret && (
-        <div className="card border-amber-300 bg-amber-50 p-5">
+        <div role="alert" className="rounded-[10px] border border-amber-300 bg-amber-50 p-5">
           <div className="mb-2 flex items-start justify-between gap-3">
             <h3 className="flex items-center gap-1.5 font-semibold text-amber-900">
               <KeyRound size={15} strokeWidth={2} /> Khoá bí mật của nguồn &quot;{freshSecret.code}&quot;
             </h3>
             <button
-              className="text-sm text-amber-700 hover:underline"
+              className="text-sm font-medium text-amber-900 hover:underline"
               onClick={() => setFreshSecret(null)}
             >
               Tôi đã chép xong
@@ -236,25 +240,34 @@ export default function IntegrationsTab({
       {/* ---------------- danh sách nguồn ---------------- */}
       <div className="card p-5">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="font-semibold text-ink-900">
-            Nguồn dữ liệu bên ngoài ({sources.length})
+          <h3 className="section-title">
+            Nguồn dữ liệu bên ngoài ({sources.length.toLocaleString("vi-VN")})
           </h3>
           <button
             className="btn-primary btn-sm"
             onClick={() => setAdding(!adding)}
           >
-            {adding ? "Đóng" : "+ Thêm nguồn"}
+            {adding ? (
+              "Đóng"
+            ) : (
+              <>
+                <Plus size={16} aria-hidden /> Thêm nguồn
+              </>
+            )}
           </button>
         </div>
 
         {error && (
-          <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div
+            role="alert"
+            className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+          >
             {error}
           </div>
         )}
 
         {adding && (
-          <div className="mb-4 grid gap-3 rounded-lg border border-ink-200 bg-ink-50/60 p-4 sm:grid-cols-4">
+          <div className="mb-4 grid gap-3 rounded-md bg-ink-50 p-4 sm:grid-cols-4">
             <div>
               <label className="label">Mã nguồn</label>
               <input
@@ -265,7 +278,7 @@ export default function IntegrationsTab({
                 }
                 placeholder="ipos"
               />
-              <p className="mt-1 text-[11px] text-ink-500">
+              <p className="mt-1 text-xs text-ink-500">
                 Mã này nằm trong địa chỉ webhook.
               </p>
             </div>
@@ -302,7 +315,7 @@ export default function IntegrationsTab({
                   setF({ ...f, priority: Number(e.target.value) })
                 }
               />
-              <p className="mt-1 text-[11px] text-ink-500">
+              <p className="mt-1 text-xs text-ink-500">
                 Số nhỏ = tin hơn. Chỉ dùng khi các nguồn đã khớp nhau.
               </p>
             </div>
@@ -324,7 +337,7 @@ export default function IntegrationsTab({
             ở đây rồi đưa địa chỉ webhook và khoá bí mật cho bên kỹ thuật của họ.
           </p>
         ) : (
-          <div className="table-wrap">
+          <div className="-mx-5 overflow-x-auto border-t border-ink-200">
             <table className="tbl">
               <thead>
                 <tr>
@@ -342,12 +355,14 @@ export default function IntegrationsTab({
                   <tr key={s.id} className={s.isActive ? "" : "opacity-50"}>
                     <td className="font-mono text-xs text-ink-600">{s.code}</td>
                     <td className="font-medium text-ink-800">{s.name}</td>
-                    <td className="text-ink-600">{s.kind}</td>
-                    <td className="text-right text-ink-600">{s.priority}</td>
+                    <td className="text-ink-600">{KIND_LABEL[s.kind] ?? s.kind}</td>
+                    <td className="text-right text-ink-600 tabular-nums">
+                      {s.priority.toLocaleString("vi-VN")}
+                    </td>
                     <td className="text-xs text-ink-500">
                       {s.lastSeenAt ? formatDateTime(s.lastSeenAt) : "chưa gọi bao giờ"}
                       {s.lastStatus && (
-                        <div className="text-[11px]">{s.lastStatus}</div>
+                        <div className="text-xs">{s.lastStatus}</div>
                       )}
                     </td>
                     <td>
@@ -359,7 +374,7 @@ export default function IntegrationsTab({
                     </td>
                     <td className="whitespace-nowrap">
                       <button
-                        className="text-xs text-amber-600 hover:underline"
+                        className="text-xs text-brand-700 hover:underline"
                         disabled={busy}
                         onClick={() =>
                           setPendingSrc({ kind: "rotate", id: s.id, name: s.name, isActive: s.isActive })
@@ -369,7 +384,7 @@ export default function IntegrationsTab({
                       </button>
                       <button
                         className={`ml-3 text-xs hover:underline ${
-                          s.isActive ? "text-red-600" : "text-emerald-600"
+                          s.isActive ? "text-red-700" : "text-brand-700"
                         }`}
                         disabled={busy}
                         onClick={() =>
@@ -389,9 +404,7 @@ export default function IntegrationsTab({
 
       {/* ---------------- nhật ký webhook ---------------- */}
       <div className="card p-5">
-        <h3 className="mb-1 font-semibold text-ink-900">
-          Nhật ký hệ thống bên ngoài gọi vào
-        </h3>
+        <h3 className="section-title mb-1">Nhật ký hệ thống bên ngoài gọi vào</h3>
         <p className="mb-3 text-xs text-ink-500">
           Ghi cả những lần bị chặn vì sai chữ ký — nhiều dòng đỏ liên tiếp nghĩa
           là bên kia cấu hình sai, hoặc có người đang dò khoá.
@@ -400,7 +413,7 @@ export default function IntegrationsTab({
         {logs.length === 0 ? (
           <p className="text-sm text-ink-500">Chưa có lần gọi nào.</p>
         ) : (
-          <div className="table-wrap">
+          <div className="-mx-5 overflow-x-auto border-t border-ink-200">
             <table className="tbl">
               <thead>
                 <tr>
@@ -429,9 +442,10 @@ export default function IntegrationsTab({
                         <Badge tone="red">Bị chặn</Badge>
                       )}
                     </td>
-                    <td className="text-right text-ink-600">{l.httpStatus}</td>
-                    <td className="text-right text-ink-600">
-                      {l.itemsReceived} / {l.itemsApplied}
+                    <td className="text-right text-ink-600 tabular-nums">{l.httpStatus}</td>
+                    <td className="text-right text-ink-600 tabular-nums">
+                      {l.itemsReceived.toLocaleString("vi-VN")} /{" "}
+                      {l.itemsApplied.toLocaleString("vi-VN")}
                     </td>
                     <td className="max-w-xs text-xs text-ink-600">
                       {l.error ? (
@@ -440,7 +454,7 @@ export default function IntegrationsTab({
                         "—"
                       )}
                     </td>
-                    <td className="font-mono text-[11px] text-ink-400">
+                    <td className="font-mono text-xs text-ink-500">
                       {l.ipAddress ?? "—"}
                     </td>
                   </tr>
@@ -466,11 +480,7 @@ function ChannelCard({
   note: string;
 }) {
   return (
-    <div
-      className={`rounded-lg border p-3 ${
-        enabled ? "border-emerald-200 bg-emerald-50/50" : "border-ink-200"
-      }`}
-    >
+    <div className="rounded-md bg-ink-50 p-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="font-medium text-ink-800">{title}</span>
         {enabled ? (
@@ -482,16 +492,16 @@ function ChannelCard({
       <ul className="space-y-1 text-xs">
         {checks.map((c) => (
           <li key={c.label} className="flex items-center gap-1.5">
-            <span className={c.ok ? "text-emerald-600" : "text-ink-400"}>
+            <span className={c.ok ? "text-leaf-700" : "text-ink-400"}>
               {c.ok ? <Check size={13} strokeWidth={2.5} /> : <Circle size={13} strokeWidth={2} />}
             </span>
-            <code className={c.ok ? "text-ink-700" : "text-ink-400"}>
+            <code className={c.ok ? "text-ink-700" : "text-ink-500"}>
               {c.label}
             </code>
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-[11px] text-ink-500">{note}</p>
+      <p className="mt-2 text-xs text-ink-500">{note}</p>
     </div>
   );
 }
@@ -508,7 +518,7 @@ function CopyRow({
   const [copied, setCopied] = useState(false);
   return (
     <div>
-      <div className="mb-1 text-xs font-semibold text-amber-800">{label}</div>
+      <div className="mb-1 text-xs font-semibold text-amber-900">{label}</div>
       <div className="flex gap-2">
         <input
           readOnly

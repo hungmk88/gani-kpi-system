@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { CalendarCheck, TriangleAlert } from "lucide-react";
+import { CalendarCheck, Triangle, TriangleAlert } from "lucide-react";
 import type { GanttResult } from "@/lib/gantt";
 import { TASK_STATUS_LABEL } from "@/lib/constants";
 import { formatVnDate, vnDateKey, vnParts } from "@/lib/vn-time";
@@ -211,14 +211,16 @@ export default function GanttChart({
 
       {/* ------------------ tóm tắt ------------------ */}
       <div className="mb-4 flex flex-wrap gap-3 text-sm">
-        <Chip tone="red">Trễ hạn: {overdueCount} việc</Chip>
+        <Chip tone={overdueCount > 0 ? "red" : "slate"}>
+          Trễ hạn: {overdueCount} việc
+        </Chip>
         <Chip tone="critical">
           Đường găng: {data.criticalCount} việc · {data.criticalDurationDays} ngày
         </Chip>
         <Chip tone="slate">Tổng {data.items.length} việc</Chip>
         {data.cycleDetected && (
           <Chip tone="red">
-            <TriangleAlert size={11} strokeWidth={2.5} className="mr-1 inline -mt-0.5" />
+            <TriangleAlert size={12} strokeWidth={2.5} className="mr-1 inline -mt-0.5" />
             Có vòng lặp phụ thuộc ở {data.cycleTaskIds.length} việc — phải gỡ
             mới tính được đường găng
           </Chip>
@@ -245,7 +247,7 @@ export default function GanttChart({
               <div className="flex border-b border-ink-200 bg-ink-50/70">
                 <div
                   ref={labelRef}
-                  className="sticky left-0 z-10 shrink-0 border-r border-ink-200 bg-ink-50 px-3 py-2 text-xs font-semibold tracking-wide text-ink-500 uppercase"
+                  className="sticky left-0 z-10 shrink-0 border-r border-ink-200 bg-ink-50 px-3 py-2 text-xs font-semibold text-ink-600"
                   style={{ width: LABEL_W }}
                 >
                   Công việc
@@ -254,7 +256,7 @@ export default function GanttChart({
                   {ticks.map((t, i) => (
                     <div
                       key={i}
-                      className={`absolute top-0 bottom-0 border-l text-[10px] ${
+                      className={`absolute top-0 bottom-0 border-l text-xs ${
                         t.isToday
                           ? "border-brand-400 bg-brand-50"
                           : t.isWeekend
@@ -304,10 +306,10 @@ export default function GanttChart({
                       >
                         {it.isCritical && (
                           <span
-                            className="shrink-0 text-xs text-red-800"
+                            className="shrink-0 text-red-800"
                             title="Nằm trên đường găng"
                           >
-                            ▲
+                            <Triangle size={12} strokeWidth={2.5} className="fill-current" aria-label="Nằm trên đường găng" />
                           </span>
                         )}
                         <span className="min-w-0 flex-1">
@@ -322,7 +324,7 @@ export default function GanttChart({
                           >
                             {it.title}
                           </span>
-                          <span className="block truncate text-[11px] text-ink-400">
+                          <span className="block truncate text-xs text-ink-400">
                             {it.isOverdue && (
                               <span className="font-medium text-red-600">
                                 Trễ hạn ·{" "}
@@ -421,8 +423,8 @@ export default function GanttChart({
                           it.start
                         )} → ${formatVnDate(it.end)} (${it.durationDays} ngày)\n${
                           isDone ? "Đã hoàn thành" : `Tiến độ ${it.progress}%`
-                        }${it.isOverdue ? "\nĐÃ TRỄ HẠN" : ""}${
-                          it.isCritical ? "\nNẰM TRÊN ĐƯỜNG GĂNG" : ""
+                        }${it.isOverdue ? "\nĐã trễ hạn" : ""}${
+                          it.isCritical ? "\nNằm trên đường găng" : ""
                         }${showSlack ? `\nDư địa ${it.slackDays} ngày` : ""}`}
                         className="absolute flex items-center"
                         style={{
@@ -433,7 +435,7 @@ export default function GanttChart({
                         }}
                       >
                         <span
-                          className={`relative h-full w-full overflow-hidden rounded-md ${fill} ${ring} shadow-sm transition hover:brightness-110`}
+                          className={`relative h-full w-full overflow-hidden rounded-md ${fill} ${ring} transition hover:brightness-110`}
                         >
                           {!isDone && (
                             <span
@@ -442,7 +444,7 @@ export default function GanttChart({
                             />
                           )}
                           {!isDone && width > 60 && (
-                            <span className="absolute inset-0 flex items-center px-2 text-[11px] font-medium text-white">
+                            <span className="absolute inset-0 flex items-center px-2 text-xs font-medium text-white">
                               {it.progress}%
                             </span>
                           )}

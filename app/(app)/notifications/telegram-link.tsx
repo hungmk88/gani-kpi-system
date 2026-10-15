@@ -67,12 +67,13 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
 
   if (linked && !info) {
     return (
-      <div className="card mb-4 flex flex-wrap items-center justify-between gap-3 border-emerald-200 bg-emerald-50/50 p-4">
+      <div className="card mb-4 flex flex-wrap items-center justify-between gap-3 p-4">
         <div>
-          <div className="flex items-center gap-1.5 font-medium text-emerald-900">
-            <CircleCheck size={15} strokeWidth={2} /> Đã nối Telegram
+          <div className="flex items-center gap-1.5 font-medium text-ink-900">
+            <CircleCheck size={16} strokeWidth={2} className="text-leaf-600" aria-hidden />{" "}
+            Đã nối Telegram
           </div>
-          <div className="mt-0.5 text-xs text-emerald-700">
+          <div className="mt-0.5 text-xs text-ink-500">
             Thông báo sẽ về cả trong ứng dụng lẫn Telegram. Trong Telegram gõ
             /trogiup để xem các lệnh dùng được.
           </div>
@@ -111,7 +112,7 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
       <div className="card mb-4 flex flex-wrap items-center justify-between gap-3 p-4">
         <div>
           <div className="flex items-center gap-1.5 font-medium text-ink-900">
-            <Smartphone size={15} strokeWidth={2} /> Nhận thông báo qua Telegram
+            <Smartphone size={16} strokeWidth={2} aria-hidden /> Nhận thông báo qua Telegram
           </div>
           <div className="mt-0.5 text-xs text-ink-500">
             Nối một lần, sau đó việc giao cho bạn và hạn KPI sẽ báo thẳng vào
@@ -134,7 +135,7 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
     <div className="card mb-4 p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="flex items-center gap-1.5 font-medium text-ink-900">
-          <Smartphone size={15} strokeWidth={2} /> Nối Telegram — 3 bước
+          <Smartphone size={16} strokeWidth={2} aria-hidden /> Nối Telegram — 3 bước
         </div>
         <button className="btn-ghost btn-sm" onClick={() => setInfo(null)}>
           Đóng
@@ -142,10 +143,9 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
       </div>
 
       {!info.telegramEnabled && (
-        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          Hệ thống chưa bật Telegram (<code>TELEGRAM_ENABLED</code> trong .env).
-          Bạn vẫn lấy mã được, nhưng bot chưa chạy nên chưa nối được. Báo quản trị
-          bật giúp.
+        <div className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Hệ thống chưa bật gửi thông báo qua Telegram. Bạn vẫn lấy mã được,
+          nhưng bot chưa chạy nên chưa nối được. Báo quản trị bật giúp.
         </div>
       )}
 
@@ -179,7 +179,7 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
         </li>
       </ol>
 
-      <div className="mb-3 rounded-lg border border-ink-200 bg-ink-50 px-4 py-3 text-center">
+      <div className="mb-3 rounded-md bg-ink-50 px-4 py-3 text-center">
         <code className="font-mono text-lg font-bold tracking-wider text-ink-900">
           /start {info.code}
         </code>

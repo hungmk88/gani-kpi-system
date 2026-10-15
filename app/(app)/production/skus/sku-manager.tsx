@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Plus } from "lucide-react";
 import { Badge } from "@/components/ui";
+
+/** Số kiểu Việt Nam, tối đa 2 chữ số thập phân: 374,5 */
+const fmtNum = (n: number) => n.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
 import ConfirmDialog from "@/components/confirm-dialog";
 
 type Sku = {
@@ -159,12 +163,20 @@ export default function SkuManager({
     <>
       {canEdit && (
         <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm text-ink-500">{skus.length} mã sản phẩm</div>
+          <div className="text-sm text-ink-500 tabular-nums">
+            {fmtNum(skus.length)} mã sản phẩm
+          </div>
           <button
             className="btn-primary btn-sm"
             onClick={() => setAdding(!adding)}
           >
-            {adding ? "Đóng" : "+ Thêm mã sản phẩm"}
+            {adding ? (
+              "Đóng"
+            ) : (
+              <>
+                <Plus size={16} aria-hidden /> Thêm mã sản phẩm
+              </>
+            )}
           </button>
         </div>
       )}
@@ -213,8 +225,8 @@ export default function SkuManager({
           <ul className="space-y-1">
             {targetChanged && (
               <li>
-                Sản lượng chuẩn: <b>{confirm.sku.targetOutputKg} kg</b> →{" "}
-                <b>{draftTarget} kg</b> mỗi ca. Đây là thước đo chấm điểm cho cả
+                Sản lượng chuẩn: <b>{fmtNum(confirm.sku.targetOutputKg)} kg</b> →{" "}
+                <b>{fmtNum(draftTarget)} kg</b> mỗi ca. Đây là thước đo chấm điểm cho cả
                 xưởng — các ca khai từ nay dùng chuẩn mới.
               </li>
             )}
@@ -233,7 +245,10 @@ export default function SkuManager({
       </ConfirmDialog>
 
       {error && (
-        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div
+          role="alert"
+          className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
           {error}
         </div>
       )}
@@ -271,7 +286,7 @@ export default function SkuManager({
                 setF({ ...f, targetOutputKg: Number(e.target.value) })
               }
             />
-            <p className="mt-1 text-[11px] text-ink-500">
+            <p className="mt-1 text-xs text-ink-500">
               Trần của xưởng HCM01 là 500 kg/ca (nút thắt máy hút chân không 50
               kg/giờ × 10 giờ).
             </p>
@@ -287,8 +302,8 @@ export default function SkuManager({
                 setF({ ...f, stdMaterialLossRate: Number(e.target.value) })
               }
             />
-            <p className="mt-1 text-[11px] text-ink-500">
-              Định mức NVL = {norm(f.targetOutputKg, f.stdMaterialLossRate)} kg
+            <p className="mt-1 text-xs text-ink-500">
+              Định mức NVL = {fmtNum(norm(f.targetOutputKg, f.stdMaterialLossRate))} kg
             </p>
           </div>
           {showMoney && (
@@ -304,7 +319,7 @@ export default function SkuManager({
                 setF({ ...f, unitPriceVnd: Math.round(Number(e.target.value)) })
               }
             />
-            <p className="mt-1 text-[11px] text-ink-500">
+            <p className="mt-1 text-xs text-ink-500">
               Dùng để quy tổn thất ra tiền. Chỉ BGĐ xem được số đó.
             </p>
           </div>
@@ -347,7 +362,7 @@ export default function SkuManager({
                 <tr key={s.id} className={s.isActive ? "" : "opacity-50"}>
                   <td className="font-mono text-xs text-ink-600">{s.skuCode}</td>
                   <td data-label="Tên sản phẩm" className="font-medium text-ink-800">{s.skuName}</td>
-                  <td data-label="Sản lượng chuẩn" className="text-right text-ink-700">
+                  <td data-label="Sản lượng chuẩn" className="text-right text-ink-700 tabular-nums">
                     {editing === s.id ? (
                       <input
                         type="number"
@@ -364,14 +379,14 @@ export default function SkuManager({
                         }
                       />
                     ) : (
-                      `${s.targetOutputKg} kg`
+                      `${fmtNum(s.targetOutputKg)} kg`
                     )}
                   </td>
-                  <td data-label="Hao hụt ĐM" className="text-right text-ink-700">
-                    {s.stdMaterialLossRate}%
+                  <td data-label="Hao hụt ĐM" className="text-right text-ink-700 tabular-nums">
+                    {fmtNum(s.stdMaterialLossRate)}%
                   </td>
-                  <td data-label="Định mức NVL" className="text-right font-medium text-ink-900">
-                    {norm(s.targetOutputKg, s.stdMaterialLossRate)} kg
+                  <td data-label="Định mức NVL" className="text-right font-medium text-ink-900 tabular-nums">
+                    {fmtNum(norm(s.targetOutputKg, s.stdMaterialLossRate))} kg
                   </td>
                   <td data-label="NVL chính (kho)">
                     {editing === s.id ? (
@@ -395,17 +410,19 @@ export default function SkuManager({
                         {s.rawMaterialName}
                       </span>
                     ) : (
-                      <span className="text-xs text-ink-400">
+                      <span className="text-xs text-ink-500">
                         chưa gán — không trừ kho
                       </span>
                     )}
                   </td>
                   {showMoney && (
-                    <td data-label="Đơn giá" className="text-right text-ink-600">
+                    <td data-label="Đơn giá" className="text-right text-ink-600 tabular-nums">
                       {new Intl.NumberFormat("vi-VN").format(s.unitPriceVnd ?? 0)} ₫
                     </td>
                   )}
-                  <td data-label="Số ca" className="text-right text-ink-600">{s.shiftCount}</td>
+                  <td data-label="Số ca" className="text-right text-ink-600 tabular-nums">
+                    {fmtNum(s.shiftCount)}
+                  </td>
                   <td data-label="Trạng thái">
                     {s.isActive ? (
                       <Badge tone="green">Đang dùng</Badge>
@@ -437,14 +454,14 @@ export default function SkuManager({
                       ) : (
                         <>
                           <button
-                            className="text-xs text-brand-600 hover:underline"
+                            className="text-xs text-brand-700 hover:underline"
                             onClick={() => startEdit(s)}
                           >
                             Sửa chuẩn
                           </button>
                           <button
                             className={`ml-3 text-xs hover:underline ${
-                              s.isActive ? "text-red-600" : "text-emerald-700"
+                              s.isActive ? "text-red-700" : "text-brand-700"
                             }`}
                             disabled={busy}
                             onClick={() => {

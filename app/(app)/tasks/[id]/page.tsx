@@ -271,7 +271,7 @@ export default async function TaskDetailPage({
             <dl className="space-y-2.5 text-sm">
               <Row label="Người phụ trách">
                 {task.assignee?.fullName ?? (
-                  <span className="text-amber-600">Chưa giao</span>
+                  <span className="text-amber-800">Chưa giao</span>
                 )}
               </Row>
               <Row label="Người giao việc">{task.creator.fullName}</Row>
@@ -281,7 +281,7 @@ export default async function TaskDetailPage({
                   className={
                     new Date(task.dueDate) < new Date() &&
                     task.status !== "DONE"
-                      ? "font-medium text-red-600"
+                      ? "font-medium text-red-700"
                       : ""
                   }
                 >

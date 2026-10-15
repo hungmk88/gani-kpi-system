@@ -22,12 +22,58 @@ const ACTION_LABEL: Record<string, string> = {
   KPI_MANAGER_APPROVE: "Trưởng phòng duyệt",
   KPI_MANAGER_ADJUST: "Trưởng phòng điều chỉnh",
   KPI_CEO_APPROVE_LOCK: "Ban Giám đốc chốt & khoá",
-  KPI_EDIT_AFTER_LOCK: "SỬA KPI ĐÃ KHOÁ",
+  KPI_EDIT_AFTER_LOCK: "Sửa KPI đã khoá",
   KPI_IMPORT_EXCEL: "Nạp số từ Excel",
   IPOS_WEBHOOK_INGEST: "Đồng bộ dữ liệu iPOS",
   CRON_RUN: "Bộ máy nền chạy",
   USER_CREATE: "Tạo tài khoản",
   USER_UPDATE: "Sửa tài khoản",
+};
+
+/**
+ * Tên trường trong dữ liệu trước/sau → nhãn tiếng Việt cho người đọc nhật ký.
+ * Trường chưa có trong bảng thì hiện nguyên tên gốc (không giấu thông tin).
+ */
+const FIELD_LABEL: Record<string, string> = {
+  actualSystem: "Số hệ thống",
+  actualSelf: "Số tự khai",
+  actualFinal: "Số chốt",
+  targetValue: "Chỉ tiêu giao",
+  weightPercent: "Trọng số (%)",
+  weightedScore: "Điểm",
+  achievementPercent: "Mức đạt (%)",
+  mismatchPercent: "Mức lệch (%)",
+  hasMismatch: "Lệch số",
+  isCapped: "Chạm trần",
+  selfNote: "Giải trình nhân viên",
+  managerNote: "Ghi chú trưởng phòng",
+  status: "Trạng thái",
+  reason: "Lý do",
+  title: "Tiêu đề",
+  name: "Tên",
+  code: "Mã",
+  priority: "Ưu tiên",
+  progress: "Tiến độ (%)",
+  dueDate: "Hạn chót",
+  startDate: "Ngày bắt đầu",
+  assigneeId: "Người phụ trách",
+  departmentId: "Phòng ban",
+  role: "Vai trò",
+  isActive: "Đang hoạt động",
+  fullName: "Họ tên",
+  email: "Email",
+  jobTitle: "Chức danh",
+  employmentType: "Loại hợp đồng",
+  unit: "Đơn vị",
+  severity: "Mức độ",
+  confidence: "Độ tin cậy",
+  sampleSize: "Số kỳ dữ liệu",
+  rowsOk: "Dòng nạp được",
+  rowsError: "Dòng lỗi",
+  totalRows: "Tổng số dòng",
+  taskCode: "Mã việc",
+  ipAddress: "Địa chỉ IP",
+  userAgent: "Trình duyệt",
 };
 
 const HIGH_RISK = new Set([
@@ -71,8 +117,9 @@ export default async function AuditPage({
       <div className="card mb-4 flex flex-wrap gap-2 p-3">
         <a
           href="/audit"
-          className={`btn-sm rounded-lg px-3 py-1.5 text-sm ${
-            !filter ? "bg-brand-600 text-white" : "bg-ink-100 text-ink-700"
+          aria-current={!filter ? "true" : undefined}
+          className={`btn-sm rounded-md px-3 py-1.5 text-sm ${
+            !filter ? "bg-ink-900 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200"
           }`}
         >
           Tất cả
@@ -81,13 +128,15 @@ export default async function AuditPage({
           <a
             key={a.action}
             href={`/audit?action=${a.action}`}
-            className={`btn-sm rounded-lg px-3 py-1.5 text-sm ${
+            aria-current={filter === a.action ? "true" : undefined}
+            className={`btn-sm rounded-md px-3 py-1.5 text-sm ${
               filter === a.action
-                ? "bg-brand-600 text-white"
-                : "bg-ink-100 text-ink-700"
+                ? "bg-ink-900 text-white"
+                : "bg-ink-100 text-ink-700 hover:bg-ink-200"
             }`}
           >
-            {ACTION_LABEL[a.action] ?? a.action} ({a._count.action})
+            {ACTION_LABEL[a.action] ?? a.action} (
+            {a._count.action.toLocaleString("vi-VN")})
           </a>
         ))}
       </div>
@@ -125,9 +174,11 @@ export default async function AuditPage({
                     </span>
                   )}
                 </td>
-                <td data-label="Đối tượng" className="font-mono text-xs text-ink-500">
+                <td data-label="Đối tượng" className="text-xs text-ink-500">
                   {l.entityName}
-                  <div className="text-[10px]">{l.entityId.slice(0, 8)}</div>
+                  <div className="text-xs" title={l.entityId}>
+                    Mã <span className="font-mono">{l.entityId.slice(0, 8)}</span>
+                  </div>
                 </td>
                 <td data-label="Thay đổi" className="max-w-sm">
                   <Diff before={l.beforePayload} after={l.afterPayload} />
@@ -135,7 +186,7 @@ export default async function AuditPage({
                 <td data-label="Lý do" className="max-w-xs text-xs text-ink-600">
                   {l.reason ?? "—"}
                 </td>
-                <td data-label="IP" className="font-mono text-xs text-ink-400">
+                <td data-label="IP" className="font-mono text-xs text-ink-500">
                   {l.ipAddress ?? "—"}
                 </td>
               </tr>
@@ -179,13 +230,15 @@ function Diff({
         if (JSON.stringify(ov) === JSON.stringify(nv)) return null;
         return (
           <div key={k}>
-            <span className="text-ink-500">{k}: </span>
+            <span className="text-ink-500" title={k}>
+              {FIELD_LABEL[k] ?? k}:{" "}
+            </span>
             {ov !== undefined && (
-              <span className="text-red-600 line-through">{short(ov)}</span>
+              <span className="text-red-700 line-through">{short(ov)}</span>
             )}
             {ov !== undefined && nv !== undefined && " → "}
             {nv !== undefined && (
-              <span className="font-medium text-emerald-700">{short(nv)}</span>
+              <span className="font-medium text-leaf-700">{short(nv)}</span>
             )}
           </div>
         );

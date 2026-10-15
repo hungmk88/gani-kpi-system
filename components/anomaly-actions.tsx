@@ -103,7 +103,7 @@ export default function AnomalyActions({
             />
             <div className="flex flex-wrap gap-2">
               <button
-                className="btn-success btn-sm inline-flex items-center gap-1.5"
+                className="btn-primary btn-sm inline-flex items-center gap-1.5"
                 disabled={busy || note.trim().length < 10}
                 onClick={() =>
                   call({ action: "REVIEW", accepted: true, reviewNote: note })
@@ -121,7 +121,7 @@ export default function AnomalyActions({
                 Bỏ qua cảnh báo này
               </button>
             </div>
-            <p className="text-[11px] text-ink-500">
+            <p className="text-xs text-ink-500">
               &quot;Bỏ qua&quot; nghĩa là bạn xem rồi và thấy không cần làm gì —
               không phải là kết tội ai.
             </p>

@@ -9,8 +9,12 @@ import {
   AlertTriangle,
   LockOpen,
   Upload,
+  Check,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import {
+  Badge,
   KpiStatusBadge,
   ProgressBar,
   ScoreBadge,
@@ -251,8 +255,10 @@ export default function KpiWorkTable({
         </div>
       )}
       {message && (
-        <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          {message}
+        // Báo thành công: thẻ trung tính + dấu tích màu lá, không tô nền xanh
+        <div className="card mb-4 flex items-start gap-2 px-3 py-2 text-sm text-ink-700">
+          <Check size={16} strokeWidth={2.5} className="mt-0.5 shrink-0 text-leaf-600" aria-hidden />
+          <span>{message}</span>
         </div>
       )}
 
@@ -284,6 +290,7 @@ export default function KpiWorkTable({
             <div key={g.employeeId} className="card overflow-hidden">
               <button
                 onClick={() => setOpenEmp(isOpen ? null : g.employeeId)}
+                aria-expanded={isOpen}
                 className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-ink-50/60"
               >
                 <div className="min-w-0">
@@ -292,13 +299,13 @@ export default function KpiWorkTable({
                       {g.employeeName}
                     </span>
                     {g.employeeId === currentUserId && (
-                      <span className="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-bold text-brand-700">
-                        BẠN
+                      <span className="text-xs font-medium text-brand-700">
+                        Bạn
                       </span>
                     )}
                     {mismatches > 0 && (
-                      <span className="inline-flex items-center gap-1 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
-                        <AlertTriangle size={10} strokeWidth={2.5} /> LỆCH SỐ {mismatches}
+                      <span className="badge border-transparent bg-red-50 text-red-700">
+                        <AlertTriangle size={12} strokeWidth={2.5} aria-hidden /> Lệch số {mismatches}
                       </span>
                     )}
                   </div>
@@ -307,25 +314,25 @@ export default function KpiWorkTable({
                     chỉ tiêu · trọng số {g.summary.totalWeight}%
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                {/* Đếm trạng thái: trung tính; chỉ "chờ <vai trò của mình>" mang
+                    màu thương hiệu — đó là phần việc của người đang xem. */}
+                <div className="flex flex-wrap items-center gap-2">
                   {pendingSelf > 0 && (
-                    <span className="badge border border-ink-200 bg-ink-100 text-ink-700">
-                      {pendingSelf} chưa khai
-                    </span>
+                    <Badge tone="slate">{pendingSelf} chưa khai</Badge>
                   )}
                   {pendingManager > 0 && (
-                    <span className="badge border border-sky-200 bg-sky-50 text-sky-700">
-                      {pendingManager} chờ TP
-                    </span>
+                    <Badge tone={role === "MANAGER" ? "brand" : "slate"}>
+                      {pendingManager} chờ trưởng phòng
+                    </Badge>
                   )}
                   {pendingCeo > 0 && (
-                    <span className="badge border border-violet-200 bg-violet-50 text-violet-700">
-                      {pendingCeo} chờ BGĐ
-                    </span>
+                    <Badge tone={role === "CEO" ? "brand" : "slate"}>
+                      {pendingCeo} chờ Ban Giám đốc
+                    </Badge>
                   )}
                   <ScoreBadge score={g.summary.totalScore} state={state} />
                   <span className="text-ink-400" aria-hidden>
-                    {isOpen ? "▲" : "▼"}
+                    {isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </span>
                 </div>
               </button>
@@ -392,7 +399,7 @@ export default function KpiWorkTable({
                             <span
                               className={
                                 g.summary.totalWeight !== 100
-                                  ? "text-amber-600"
+                                  ? "text-amber-700"
                                   : ""
                               }
                             >
@@ -572,7 +579,7 @@ function RowEditor({
             />
           )}
           <button
-            className="btn-success btn-sm w-full"
+            className="btn-primary btn-sm w-full"
             disabled={
               busy || finalValue === "" || (needsReason && reason.trim() === "")
             }
@@ -639,7 +646,7 @@ function RowEditor({
           </div>
         ) : (
           <button
-            className="btn-ghost btn-sm inline-flex items-center gap-1.5"
+            className="btn btn-sm inline-flex items-center gap-1.5"
             onClick={() => setEditing(true)}
           >
             <LockOpen size={14} strokeWidth={2} /> Sửa điểm đã khoá
@@ -659,7 +666,7 @@ function RowEditor({
       <>
         <div className="mb-1 text-xs text-ink-600">
           {pct(row.achievementPercent)}
-          {row.isCapped && <span className="ml-1 text-amber-700">· chạm trần</span>}
+          {row.isCapped && <span className="ml-1 text-amber-800">· chạm trần</span>}
         </div>
         <ProgressBar
           value={(row.achievementPercent / 150) * 100}
@@ -683,10 +690,10 @@ function RowEditor({
         </div>
       )}
       {row.selfNote && (
-        <div className="mt-1 text-xs text-ink-500">NV: {row.selfNote}</div>
+        <div className="mt-1 text-xs text-ink-500">Nhân viên: {row.selfNote}</div>
       )}
       {row.managerNote && (
-        <div className="mt-1 text-xs text-violet-700">TP: {row.managerNote}</div>
+        <div className="mt-1 text-xs text-brand-700">Trưởng phòng: {row.managerNote}</div>
       )}
     </>
   );
@@ -705,12 +712,12 @@ function RowEditor({
           <KpiStatusBadge status={row.status} />
         </div>
         {notes}
-        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm tabular-nums">
           <dt className="text-ink-500">Giao</dt>
           <dd className="text-right text-ink-700">
             {fmt(row.targetValue)} {row.unit}
           </dd>
-          <dt className="text-ink-500">Hệ thống / NV khai</dt>
+          <dt className="text-ink-500">Hệ thống / nhân viên khai</dt>
           <dd className="text-right text-ink-700">
             {fmt(row.actualSystem)} / {fmt(row.actualSelf)}
           </dd>
@@ -736,18 +743,18 @@ function RowEditor({
         </div>
         {notes}
       </td>
-      <td className="text-right text-ink-600">{row.weightPercent}%</td>
-      <td className="text-right whitespace-nowrap text-ink-600">
+      <td className="text-right text-ink-600 tabular-nums">{row.weightPercent}%</td>
+      <td className="text-right whitespace-nowrap text-ink-600 tabular-nums">
         {fmt(row.targetValue)}
       </td>
-      <td className="text-right text-xs whitespace-nowrap">
-        <div className="text-ink-500">
+      <td className="text-right text-xs whitespace-nowrap tabular-nums">
+        <div className="text-ink-500" title="Số hệ thống">
           HT <span className="text-ink-700">{fmt(row.actualSystem)}</span>
         </div>
-        <div className="text-ink-500">
+        <div className="text-ink-500" title="Nhân viên tự khai">
           NV <span className="text-ink-700">{fmt(row.actualSelf)}</span>
         </div>
-        <div className="text-ink-500">
+        <div className="text-ink-500" title="Số chốt">
           Chốt{" "}
           <span className="text-sm font-semibold text-ink-900">
             {fmt(row.actualFinal)}

@@ -53,7 +53,7 @@ export default function LeaveRequestActions({
   if (mode === "cancel") {
     return (
       <div>
-        {error && <div className="mb-1 text-xs text-red-600">{error}</div>}
+        {error && <div className="mb-1 text-xs text-red-700">{error}</div>}
         <button
           className="btn-ghost btn-sm"
           disabled={busy}
@@ -85,7 +85,7 @@ export default function LeaveRequestActions({
   if (mode === "cancel-other") {
     return (
       <div>
-        {error && <div className="mb-1 text-xs text-red-600">{error}</div>}
+        {error && <div className="mb-1 text-xs text-red-700">{error}</div>}
         {cancelling ? (
           <div className="space-y-2">
             <input
@@ -148,7 +148,7 @@ export default function LeaveRequestActions({
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <button
-            className="btn-success btn-sm inline-flex items-center gap-1.5"
+            className="btn-primary btn-sm inline-flex items-center gap-1.5"
             disabled={busy}
             onClick={() => send("APPROVE")}
           >

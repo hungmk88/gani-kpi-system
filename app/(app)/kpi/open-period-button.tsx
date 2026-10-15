@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Plus } from "lucide-react";
 import { vnParts } from "@/lib/vn-time";
 
 export default function OpenPeriodButton() {
@@ -39,7 +40,7 @@ export default function OpenPeriodButton() {
   if (!open) {
     return (
       <button className="btn-primary" onClick={() => setOpen(true)}>
-        + Mở kỳ KPI mới
+        <Plus size={16} aria-hidden /> Mở kỳ KPI mới
       </button>
     );
   }
@@ -80,7 +81,7 @@ export default function OpenPeriodButton() {
           </div>
         </div>
 
-        <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+        <div className="mb-4 rounded-md bg-ink-50 px-3 py-2 text-xs text-ink-700">
           Toàn bộ nhân sự sẽ được gán sẵn bộ chỉ tiêu của phòng ban mình. Chỉ
           tiêu giao (target) lấy theo kỳ gần nhất, trưởng phòng chỉnh lại nếu
           cần.

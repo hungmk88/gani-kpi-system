@@ -28,21 +28,25 @@ export default async function LoginPage() {
               height={169}
               priority
             />
-            <div className="mt-4 text-sm font-medium tracking-wide text-brand-500 uppercase">
-              Hệ thống Quản lý Công việc &amp; KPI
+            <div className="mt-4 text-sm font-medium text-brand-700">
+              Hệ thống quản lý công việc &amp; KPI
             </div>
 
             <div className="mt-10 space-y-6">
-                <h1 className="text-3xl leading-snug font-bold text-brand-800">
-                  Ban Giám đốc chỉ cần nhìn vào chỗ đang có vấn đề.
-                </h1>
-                <p className="text-brand-600">
+                <div>
+                  <h1 className="text-3xl leading-snug font-bold text-brand-800">
+                    Ban Giám đốc chỉ cần nhìn vào chỗ đang có vấn đề.
+                  </h1>
+                  {/* Vạch lá xanh — để trang mang đủ hai màu của logo */}
+                  <div aria-hidden className="mt-4 h-1 w-12 rounded-full bg-leaf-500" />
+                </div>
+                <p className="text-ink-600">
                   Hệ thống vận hành theo nguyên tắc quản trị ngoại lệ: việc chạy đúng
                   thì im lặng, việc trục trặc thì nổi lên đầu bảng.
                 </p>
-                <ul className="space-y-3 text-sm text-brand-700">
+                <ul className="space-y-3 text-sm text-ink-700">
                   <li className="flex gap-3">
-                    <span className="mt-0.5 text-brand-600">
+                    <span className="mt-0.5 text-leaf-600">
                       <Check size={16} strokeWidth={2.5} />
                     </span>
                     <span>
@@ -50,7 +54,7 @@ export default async function LoginPage() {
                     </span>
                   </li>
                   <li className="flex gap-3">
-                    <span className="mt-0.5 text-brand-600">
+                    <span className="mt-0.5 text-leaf-600">
                       <Check size={16} strokeWidth={2.5} />
                     </span>
                     <span>
@@ -58,7 +62,7 @@ export default async function LoginPage() {
                     </span>
                   </li>
                   <li className="flex gap-3">
-                    <span className="mt-0.5 text-brand-600">
+                    <span className="mt-0.5 text-leaf-600">
                       <Check size={16} strokeWidth={2.5} />
                     </span>
                     <span>
@@ -67,7 +71,7 @@ export default async function LoginPage() {
                     </span>
                   </li>
                   <li className="flex gap-3">
-                    <span className="mt-0.5 text-brand-600">
+                    <span className="mt-0.5 text-leaf-600">
                       <Check size={16} strokeWidth={2.5} />
                     </span>
                     <span>
@@ -79,9 +83,7 @@ export default async function LoginPage() {
           </div>
         </div>
 
-        <div className="text-xs text-brand-400">
-          Phase 1 — MVP Core · Bản triển khai nội bộ
-        </div>
+        <div className="text-xs text-ink-500">© GANI FOODY</div>
       </section>
 
       {/* Cột phải: form đăng nhập */}
@@ -92,7 +94,7 @@ export default async function LoginPage() {
             <div>
               <div className="text-xl font-bold text-brand-700">GANI FOODY</div>
               <div className="text-sm text-ink-500">
-                Quản lý Công việc &amp; KPI
+                Quản lý công việc &amp; KPI
               </div>
             </div>
           </div>

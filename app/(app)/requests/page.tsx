@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { CircleCheck } from "lucide-react";
+import { CircleCheck, Plus } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Badge, EmptyState, PageHeader, PriorityBadge, formatDateTime } from "@/components/ui";
@@ -55,7 +55,7 @@ export default async function RequestsPage() {
         actions={
           // Mở thẳng tab "Nhờ phòng ban khác" — không để rơi vào tab giao việc trong phòng
           <Link href="/tasks/new?mode=request" className="btn-primary">
-            + Gửi yêu cầu mới
+            <Plus size={16} aria-hidden /> Gửi yêu cầu mới
           </Link>
         }
       />
@@ -131,7 +131,7 @@ export default async function RequestsPage() {
                     <td className="font-medium text-ink-800">
                       {r.title}
                       {r.rejectReason && (
-                        <div className="mt-1 text-xs text-red-600">
+                        <div className="mt-1 text-xs text-red-700">
                           Lý do từ chối: {r.rejectReason}
                         </div>
                       )}

@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { formatVnDateTime } from "@/lib/vn-time";
 import { useRouter } from "next/navigation";
+import { Plus } from "lucide-react";
 import { Badge } from "@/components/ui";
+
+/** Số kiểu Việt Nam, tối đa 2 chữ số thập phân: 374,5 */
+const fmtNum = (n: number) => n.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
 
 type Transaction = {
   id: string;
@@ -133,18 +137,29 @@ export default function RawMaterialManager({
     <>
       {canEdit && (
         <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm text-ink-500">{materials.length} mã NVL</div>
+          <div className="text-sm text-ink-500 tabular-nums">
+            {fmtNum(materials.length)} mã NVL
+          </div>
           <button
             className="btn-primary btn-sm"
             onClick={() => setAdding(!adding)}
           >
-            {adding ? "Đóng" : "+ Thêm mã NVL"}
+            {adding ? (
+              "Đóng"
+            ) : (
+              <>
+                <Plus size={16} aria-hidden /> Thêm mã NVL
+              </>
+            )}
           </button>
         </div>
       )}
 
       {error && (
-        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div
+          role="alert"
+          className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
           {error}
         </div>
       )}
@@ -222,8 +237,8 @@ export default function RawMaterialManager({
                     <span className="font-medium text-ink-900">{m.name}</span>
                     {!m.isActive && <Badge tone="slate">Ngưng</Badge>}
                   </div>
-                  <div className="mt-1 text-2xl font-bold text-ink-900">
-                    {new Intl.NumberFormat("vi-VN").format(m.currentStockKg)}{" "}
+                  <div className="mt-1 text-2xl font-bold text-ink-900 tabular-nums">
+                    {fmtNum(m.currentStockKg)}{" "}
                     <span className="text-sm font-normal text-ink-500">
                       {m.unit}
                     </span>
@@ -231,7 +246,7 @@ export default function RawMaterialManager({
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
-                    className="text-xs text-brand-600 hover:underline"
+                    className="text-xs text-brand-700 hover:underline"
                     onClick={() => setExpanded(expanded === m.id ? null : m.id)}
                   >
                     {expanded === m.id ? "Ẩn lịch sử" : "Xem lịch sử"}
@@ -239,17 +254,23 @@ export default function RawMaterialManager({
                   {canEdit && (
                     <>
                       <button
-                        className="text-xs text-brand-600 hover:underline"
+                        className="inline-flex items-center gap-1 text-xs text-brand-700 hover:underline"
                         onClick={() => {
                           setTxForm(txForm === m.id ? null : m.id);
                           setTf({ action: "STOCK_IN", quantityKg: 0, note: "" });
                         }}
                       >
-                        {txForm === m.id ? "Đóng" : "+ Nhập kho / Chỉnh tay"}
+                        {txForm === m.id ? (
+                          "Đóng"
+                        ) : (
+                          <>
+                            <Plus size={16} aria-hidden /> Nhập kho / Chỉnh tay
+                          </>
+                        )}
                       </button>
                       <button
                         className={`text-xs hover:underline ${
-                          m.isActive ? "text-red-600" : "text-emerald-600"
+                          m.isActive ? "text-red-700" : "text-brand-700"
                         }`}
                         disabled={busy}
                         onClick={() => toggleActive(m.id, !m.isActive)}
@@ -262,7 +283,7 @@ export default function RawMaterialManager({
               </div>
 
               {txForm === m.id && (
-                <div className="grid gap-3 border-t border-ink-100 bg-ink-50/50 p-4 sm:grid-cols-4">
+                <div className="grid gap-3 border-t border-ink-100 bg-ink-50 p-4 sm:grid-cols-4">
                   <div>
                     <label className="label">Loại</label>
                     <select
@@ -318,11 +339,12 @@ export default function RawMaterialManager({
               )}
 
               {expanded === m.id && (
-                <div className="border-t border-ink-100 p-4">
+                <div className="border-t border-ink-100">
                   {m.transactions.length === 0 ? (
-                    <p className="text-sm text-ink-400">Chưa có giao dịch nào.</p>
+                    <p className="p-4 text-sm text-ink-500">Chưa có giao dịch nào.</p>
                   ) : (
-                    <div className="table-wrap">
+                    // Bảng trải hết bề ngang thẻ — không lồng thêm một khung viền
+                    <div className="overflow-x-auto">
                       <table className="tbl">
                         <thead>
                           <tr>
@@ -343,16 +365,17 @@ export default function RawMaterialManager({
                               <td className="text-xs">
                                 {TX_TYPE_LABEL[t.type] ?? t.type}
                               </td>
+                              {/* Xuất kho theo ca là luồng bình thường — không tô đỏ */}
                               <td
-                                className={`text-right font-medium ${
-                                  t.quantityKg < 0 ? "text-red-600" : "text-emerald-600"
+                                className={`text-right font-medium tabular-nums ${
+                                  t.quantityKg < 0 ? "text-ink-700" : "text-leaf-700"
                                 }`}
                               >
                                 {t.quantityKg > 0 ? "+" : ""}
-                                {t.quantityKg} {m.unit}
+                                {fmtNum(t.quantityKg)} {m.unit}
                               </td>
-                              <td className="text-right text-ink-600">
-                                {t.balanceAfterKg} {m.unit}
+                              <td className="text-right text-ink-600 tabular-nums">
+                                {fmtNum(t.balanceAfterKg)} {m.unit}
                               </td>
                               <td className="max-w-xs truncate text-xs text-ink-500">
                                 {t.note ?? "—"}

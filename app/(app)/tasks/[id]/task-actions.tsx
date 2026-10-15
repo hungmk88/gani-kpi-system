@@ -24,7 +24,7 @@ const QUICK: Record<
     { label: "Báo tắc", icon: Ban, status: "BLOCKED", cls: "btn-ghost" },
   ],
   IN_PROGRESS: [
-    { label: "Xong, xin nghiệm thu", icon: Check, status: "REVIEW", cls: "btn-success" },
+    { label: "Xong, xin nghiệm thu", icon: Check, status: "REVIEW", cls: "btn-primary" },
     { label: "Báo tắc", icon: Ban, status: "BLOCKED", cls: "btn-ghost" },
   ],
   BLOCKED: [
@@ -129,7 +129,7 @@ export default function TaskActions({
           <button
             disabled={busy}
             onClick={() => patch({ status: "DONE" })}
-            className="btn-success inline-flex w-full items-center justify-center gap-1.5"
+            className="btn-primary inline-flex w-full items-center justify-center gap-1.5"
           >
             <CircleCheck size={14} strokeWidth={2} /> Nghiệm thu · Hoàn thành
           </button>
