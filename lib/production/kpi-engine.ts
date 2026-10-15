@@ -481,10 +481,10 @@ export function computeFinalScore(
  * Hệ số thưởng theo bậc. BONUS_TIERS xếp giảm dần và bậc cuối minScore = 0
  * nên mọi điểm hợp lệ (≥ 0) đều rơi vào đúng một bậc; NaN/âm → 0.
  *
- * LƯU Ý: điểm cuối tối đa thực tế = 0.6 × 100 (Tầng 1 trần 100) + 0.4 × 130
+ * Điểm cuối tối đa thực tế = 0.6 × 100 (Tầng 1 trần 100) + 0.4 × 130
  * (Tầng 2: Sản lượng & NVL trần 150, Chất lượng & An toàn trần 100) = 112;
- * thử việc/thời vụ 0.8 × 100 + 0.2 × 130 = 106. Bậc 1.5× (≥ 120) hiện KHÔNG
- * THỂ đạt, bậc 1.2× (≥ 110) chỉ người chính thức mới chạm được.
+ * thử việc/thời vụ 0.8 × 100 + 0.2 × 130 = 106. Ngưỡng BONUS_TIERS đặt theo
+ * đúng dải này (≥ 110 → 1,5×), xem lib/production/constants.ts.
  */
 export function bonusMultiplierFor(score: number) {
   if (!Number.isFinite(score) || score < 0) return 0;

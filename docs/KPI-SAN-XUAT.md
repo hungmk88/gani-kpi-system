@@ -189,11 +189,16 @@ màn hình.
 
 | Điểm cuối | Hệ số |
 | --- | --- |
-| ≥ 120 | 1,5 |
-| 110–119 | 1,2 |
-| 100–109 | 1,0 |
+| ≥ 110 | 1,5 |
+| 105–109 | 1,2 |
+| 100–104 | 1,0 |
 | 90–99 | 0,7 |
 | < 90 | 0 |
+
+Ngưỡng chốt 15/10/2026, đặt theo dải điểm thực tế của công thức 2 tầng. Điểm cuối
+tối đa: người chính thức **112** (0,6 × 100 + 0,4 × 130), thử việc / thời vụ **106**
+(0,8 × 100 + 0,2 × 130). Vì vậy người chính thức làm xuất sắc đạt được 1,5×, thử
+việc / thời vụ tối đa 1,2×. Bản cũ để 1,5× ở ≥ 120 nên không ai chạm tới được.
 
 Tiền thưởng nền một ca đang để **0 đồng** (`BASE_BONUS_PER_SHIFT_VND`) — tức là
 phần thưởng đang tắt, hệ thống chỉ chấm điểm. Anh điền số vào đó là thưởng chạy.
