@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { TASK_PRIORITIES, TASK_PRIORITY_LABEL } from "@/lib/constants";
+import { addDays, vnDate, vnDateKey } from "@/lib/vn-time";
 
 type Opt = { id: string; name: string };
 
@@ -78,7 +79,7 @@ export default function NewTaskForm({
           departmentId,
           assigneeId: assigneeId || null,
           projectId: projectId || null,
-          dueDate: new Date(dueDate).toISOString(),
+          dueDate: vnLocalToIso(dueDate),
           priority,
         }),
       });
@@ -108,7 +109,7 @@ export default function NewTaskForm({
           title,
           description: description || undefined,
           targetDeptId,
-          dueDate: new Date(dueDate).toISOString(),
+          dueDate: vnLocalToIso(dueDate),
           priority,
         }),
       });
@@ -327,12 +328,26 @@ export default function NewTaskForm({
   );
 }
 
+/**
+ * Hạn mặc định: 17:00 giờ VN, 3 ngày sau. Tính bằng lib/vn-time để server (UTC)
+ * và trình duyệt render ra cùng một chuỗi — tránh lỗi hydration và lệch ngày.
+ */
 function defaultDue() {
-  const d = new Date();
-  d.setDate(d.getDate() + 3);
-  d.setHours(17, 0, 0, 0);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours()
-  )}:${pad(d.getMinutes())}`;
+  return `${vnDateKey(addDays(new Date(), 3))}T17:00`;
+}
+
+/**
+ * Ô datetime-local trả "YYYY-MM-DDTHH:mm" không kèm múi giờ. Hệ thống quy ước
+ * đó là giờ VN — không để trình duyệt tự hiểu theo múi giờ của máy.
+ */
+function vnLocalToIso(value: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
+  if (!m) return new Date(value).toISOString();
+  return vnDate(
+    Number(m[1]),
+    Number(m[2]),
+    Number(m[3]),
+    Number(m[4]),
+    Number(m[5])
+  ).toISOString();
 }

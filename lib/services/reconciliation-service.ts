@@ -32,28 +32,26 @@ export type SourceValue = {
   at: string;
 };
 
-/** Gom số mới nhất của từng nguồn cho một ô KPI cụ thể. */
-export async function collectSources(
-  employeeEmail: string,
-  kpiDefinitionId: string,
-  month: number,
-  year: number,
-  actualSelf: number | null
-): Promise<SourceValue[]> {
-  const feeds = await prisma.kpiActualFeed.findMany({
-    where: {
-      employeeEmail,
-      kpiDefinitionId,
-      periodMonth: month,
-      periodYear: year,
-    },
-    orderBy: { createdAt: "desc" },
-  });
+/** Bản ghi feed tối thiểu cần cho đối soát (không kéo rawPayload). */
+export type FeedLite = {
+  value: number;
+  source: string;
+  sourceCode: string | null;
+  createdAt: Date;
+};
 
+/**
+ * Gom số mới nhất của từng nguồn từ danh sách feed ĐÃ SẮP XẾP mới → cũ.
+ * Hàm thuần — dùng chung cho đối soát từng ô và quét hàng loạt.
+ */
+export function latestSources(
+  feedsNewestFirst: FeedLite[],
+  actualSelf: number | null | undefined
+): SourceValue[] {
   // Mỗi nguồn chỉ lấy bản ghi mới nhất — nạp lại file Excel lần hai thì lần đầu
   // không còn tính nữa.
   const latestBySource = new Map<string, SourceValue>();
-  for (const f of feeds) {
+  for (const f of feedsNewestFirst) {
     const code = f.sourceCode ?? f.source;
     if (latestBySource.has(code)) continue;
     latestBySource.set(code, {
@@ -77,6 +75,34 @@ export async function collectSources(
   }
 
   return out;
+}
+
+const FEED_SELECT = {
+  value: true,
+  source: true,
+  sourceCode: true,
+  createdAt: true,
+} as const;
+
+/** Gom số mới nhất của từng nguồn cho một ô KPI cụ thể. */
+export async function collectSources(
+  employeeEmail: string,
+  kpiDefinitionId: string,
+  month: number,
+  year: number,
+  actualSelf: number | null
+): Promise<SourceValue[]> {
+  const feeds = await prisma.kpiActualFeed.findMany({
+    where: {
+      employeeEmail,
+      kpiDefinitionId,
+      periodMonth: month,
+      periodYear: year,
+    },
+    orderBy: { createdAt: "desc" },
+    select: FEED_SELECT,
+  });
+  return latestSources(feeds, actualSelf);
 }
 
 /** Dấu vân tay của bộ nguồn: chỉ mã + giá trị, sắp xếp ổn định. */
