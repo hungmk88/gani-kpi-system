@@ -5,9 +5,12 @@ import { assertPermission, BusinessError } from "@/lib/rbac";
 import { hashPassword } from "@/lib/auth";
 import { checkPasswordStrength } from "@/lib/password";
 import { clientMeta, writeAudit } from "@/lib/audit";
-import { ERR, ROLES } from "@/lib/constants";
+import { ERR, ROLE_LABEL, ROLES } from "@/lib/constants";
 import { EMPLOYMENT_TYPES } from "@/lib/production/constants";
 import { alertCeos } from "@/lib/services/user-security";
+
+/** Vai trò có quyền duyệt KPI — đổi mật khẩu/vai trò của họ phải báo Ban Giám đốc. */
+const SENSITIVE_ROLES = new Set<string>(["MANAGER", "CEO"]);
 
 const schema = z.object({
   fullName: z.string().min(2).max(255).optional(),
@@ -28,12 +31,64 @@ export async function PATCH(
   return handle(async () => {
     const { id } = await ctx.params;
     const actor = await requireUser();
-    assertPermission(actor, "admin.users");
+    // Quản trị (admin.users) quản lý tài khoản thường. Tài khoản Ban Giám đốc
+    // thì ngược lại: chỉ Ban Giám đốc được đụng vào (xem chặn bên dưới). Ban
+    // Giám đốc KHÔNG có quyền admin.users — họ chỉ đi qua đường này cho đúng
+    // các thao tác trên tài khoản Ban Giám đốc / nâng người lên Ban Giám đốc.
+    const actorIsCeo = actor.role === "CEO";
+    if (!actorIsCeo) assertPermission(actor, "admin.users");
     const body = schema.parse(await req.json());
 
     const target = await prisma.user.findUnique({ where: { id } });
     if (!target) {
       throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy tài khoản.", 404);
+    }
+
+    const promotingToCeo = body.role === "CEO" && target.role !== "CEO";
+    const touchesCeoAccount = target.role === "CEO" || promotingToCeo;
+
+    if (actorIsCeo && !touchesCeoAccount) {
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Tài khoản này do Quản trị hệ thống quản lý. Ban Giám đốc chỉ sửa ở đây các tài khoản Ban Giám đốc.",
+        403
+      );
+    }
+
+    // CHỐNG CHIẾM TÀI KHOẢN BAN GIÁM ĐỐC: quản trị đặt lại mật khẩu / đổi
+    // Telegram / đổi quyền / khoá một tài khoản CEO là đủ để đăng nhập thay
+    // CEO rồi "Duyệt & khoá" KPI toàn công ty. Những việc này chỉ Ban Giám đốc
+    // làm. CEO quên mật khẩu thì một CEO khác đặt lại; CEO tự đổi mật khẩu của
+    // mình ở /doi-mat-khau. (Schema PATCH không có email nên không đổi được.)
+    if (!actorIsCeo) {
+      if (promotingToCeo) {
+        throw new BusinessError(
+          ERR.FORBIDDEN,
+          "Quản trị không được nâng tài khoản lên Ban Giám đốc. Việc này do Ban Giám đốc thực hiện.",
+          403
+        );
+      }
+      if (target.role === "CEO") {
+        const blocked: string[] = [];
+        if (body.newPassword) blocked.push("đặt lại mật khẩu");
+        if (body.role !== undefined && body.role !== target.role) blocked.push("đổi vai trò");
+        if (body.isActive !== undefined && body.isActive !== target.isActive) {
+          blocked.push(body.isActive ? "mở khoá" : "khoá");
+        }
+        if (
+          body.telegramChatId !== undefined &&
+          body.telegramChatId !== target.telegramChatId
+        ) {
+          blocked.push("đổi Telegram");
+        }
+        if (blocked.length > 0) {
+          throw new BusinessError(
+            ERR.FORBIDDEN,
+            `Quản trị không được ${blocked.join(", ")} tài khoản Ban Giám đốc. Việc này chỉ Ban Giám đốc thực hiện.`,
+            403
+          );
+        }
+      }
     }
 
     // Không cho tự khoá chính mình -> tránh mất lối vào hệ thống
@@ -56,10 +111,12 @@ export async function PATCH(
     }
 
     // Telegram của Ban Giám đốc là kênh bấm "Duyệt & khoá" KPI — chỉ chính chủ
-    // được liên kết (qua mã liên kết trong trang Thông báo), quản trị không
-    // được trỏ nó sang tài khoản Telegram khác.
+    // được liên kết (qua mã liên kết trong trang Thông báo), không ai khác
+    // được trỏ nó sang tài khoản Telegram khác. Xét cả vai trò HIỆN TẠI lẫn
+    // vai trò SAU khi sửa: một lệnh {role:"CEO", telegramChatId} không được lọt.
+    const roleAfter = body.role ?? target.role;
     if (
-      target.role === "CEO" &&
+      (target.role === "CEO" || roleAfter === "CEO") &&
       target.id !== actor.id &&
       body.telegramChatId !== undefined &&
       body.telegramChatId !== target.telegramChatId
@@ -116,9 +173,21 @@ export async function PATCH(
       // Mốc đổi mật khẩu = bây giờ -> mọi phiên cũ của người này mất hiệu lực
       // (lib/auth.ts loadActiveUser).
       data.passwordChangedAt = new Date();
+      // Đặt lại mật khẩu = coi như tài khoản có thể đã lọt. Cắt luôn Telegram:
+      // chat đang nối vẫn bấm "Duyệt & khoá" / nhận thông báo được, và người
+      // đang cầm chat đó chưa chắc là chính chủ. Chính chủ tự nối lại bằng mã
+      // mới sau khi đổi mật khẩu.
+      data.telegramChatId = null;
     }
 
-    const updated = await prisma.user.update({ where: { id }, data });
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.user.update({ where: { id }, data });
+      if (body.newPassword) {
+        // Mã nối Telegram đang chờ (lấy trước lúc đặt lại) cũng huỷ luôn.
+        await tx.telegramLink.deleteMany({ where: { userId: id, usedAt: null } });
+      }
+      return u;
+    });
 
     await writeAudit({
       actor,
@@ -143,10 +212,25 @@ export async function PATCH(
       ...clientMeta(req),
     });
 
-    if (body.role === "CEO" && target.role !== "CEO") {
+    if (promotingToCeo) {
       await alertCeos(
         `Tài khoản ${updated.email} vừa được nâng lên Ban Giám đốc`,
         `Người thực hiện: ${actor.email}. Nếu không phải chủ ý của Ban Giám đốc, khoá tài khoản này ngay.`
+      );
+    } else if (
+      updated.role !== target.role &&
+      (SENSITIVE_ROLES.has(target.role) || SENSITIVE_ROLES.has(updated.role))
+    ) {
+      await alertCeos(
+        `Đổi vai trò ${updated.email}: ${ROLE_LABEL[target.role] ?? target.role} → ${ROLE_LABEL[updated.role] ?? updated.role}`,
+        `Người thực hiện: ${actor.email}. Nếu không phải chủ ý của Ban Giám đốc, kiểm tra lại ngay.`
+      );
+    }
+
+    if (body.newPassword && SENSITIVE_ROLES.has(target.role)) {
+      await alertCeos(
+        `Mật khẩu của ${updated.email} (${ROLE_LABEL[target.role] ?? target.role}) vừa bị đặt lại`,
+        `Người thực hiện: ${actor.email}. Telegram của tài khoản này đã bị ngắt. Nếu không phải yêu cầu của chính chủ, khoá tài khoản này ngay.`
       );
     }
 

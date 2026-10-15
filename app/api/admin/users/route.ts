@@ -22,8 +22,35 @@ const schema = z.object({
 export async function POST(req: Request) {
   return handle(async () => {
     const actor = await requireUser();
-    assertPermission(actor, "admin.users");
+    // Quản trị (admin.users) tạo được mọi vai trò TRỪ Ban Giám đốc. Ban Giám
+    // đốc không có admin.users — chỉ đi qua đường này để tạo tài khoản CEO.
+    const actorIsCeo = actor.role === "CEO";
+    if (!actorIsCeo) assertPermission(actor, "admin.users");
     const body = schema.parse(await req.json());
+
+    if (body.role === "CEO" && !actorIsCeo) {
+      // Tạo CEO là trao quyền "Duyệt & khoá" KPI toàn công ty.
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Quản trị không được tạo tài khoản Ban Giám đốc. Việc này do Ban Giám đốc thực hiện.",
+        403
+      );
+    }
+    if (body.role !== "CEO" && actorIsCeo) {
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Tài khoản vai trò khác do Quản trị hệ thống tạo. Ban Giám đốc chỉ tạo ở đây tài khoản Ban Giám đốc.",
+        403
+      );
+    }
+    // Telegram của Ban Giám đốc chỉ chính chủ tự nối bằng mã liên kết.
+    if (body.role === "CEO" && body.telegramChatId) {
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Không đặt sẵn Telegram cho tài khoản Ban Giám đốc. Người đó tự liên kết trong trang Thông báo.",
+        403
+      );
+    }
 
     const check = checkPasswordStrength(body.password, {
       fullName: body.fullName,
