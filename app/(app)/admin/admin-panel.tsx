@@ -257,7 +257,8 @@ function UsersTab({
               value={form.role}
               onChange={(e) => setForm({ ...form, role: e.target.value })}
             >
-              {ROLES.map((r) => (
+              {/* Tài khoản Ban Giám đốc chỉ Ban Giám đốc tạo — API chặn quản trị. */}
+              {ROLES.filter((r) => r !== "CEO").map((r) => (
                 <option key={r} value={r}>
                   {ROLE_LABEL[r]}
                 </option>
@@ -323,13 +324,13 @@ function UsersTab({
                 </td>
                 <td className="font-mono text-xs text-ink-600">{u.email}</td>
                 <td>
-                  {editing === u.id ? (
+                  {editing === u.id && u.role !== "CEO" ? (
                     <select
                       className="input py-1 text-xs"
                       defaultValue={u.role}
                       onChange={(e) => patch(u.id, { role: e.target.value })}
                     >
-                      {ROLES.map((r) => (
+                      {ROLES.filter((r) => r !== "CEO").map((r) => (
                         <option key={r} value={r}>
                           {ROLE_LABEL[r]}
                         </option>
@@ -389,7 +390,7 @@ function UsersTab({
                   )}
                 </td>
                 <td>
-                  {editing === u.id ? (
+                  {editing === u.id && u.role !== "CEO" ? (
                     <input
                       className="input py-1 text-xs"
                       defaultValue={u.telegramChatId ?? ""}
@@ -423,25 +424,38 @@ function UsersTab({
                   >
                     {editing === u.id ? "Xong" : "Sửa"}
                   </button>
-                  <button
-                    className="ml-3 text-xs text-ink-500 hover:underline"
-                    onClick={() => {
-                      const p = prompt(
-                        `Đặt lại mật khẩu cho ${u.fullName} (tối thiểu 8 ký tự):`
-                      );
-                      if (p) patch(u.id, { newPassword: p });
-                    }}
-                  >
-                    Đặt lại MK
-                  </button>
-                  <button
-                    className={`ml-3 text-xs hover:underline ${
-                      u.isActive ? "text-red-600" : "text-emerald-600"
-                    }`}
-                    onClick={() => patch(u.id, { isActive: !u.isActive })}
-                  >
-                    {u.isActive ? "Khoá" : "Mở"}
-                  </button>
+                  {u.role === "CEO" ? (
+                    // Mật khẩu, Telegram, vai trò, khoá/mở của tài khoản Ban
+                    // Giám đốc chỉ Ban Giám đốc đổi — API chặn quản trị.
+                    <span
+                      className="ml-3 text-xs text-ink-400"
+                      title="Mật khẩu, Telegram, vai trò và khoá/mở tài khoản Ban Giám đốc chỉ Ban Giám đốc thay đổi."
+                    >
+                      Chỉ BGĐ đổi MK/khoá
+                    </span>
+                  ) : (
+                    <>
+                      <button
+                        className="ml-3 text-xs text-ink-500 hover:underline"
+                        onClick={() => {
+                          const p = prompt(
+                            `Đặt lại mật khẩu cho ${u.fullName} (tối thiểu 8 ký tự). Telegram của người này sẽ bị ngắt, họ tự nối lại sau khi đổi mật khẩu:`
+                          );
+                          if (p) patch(u.id, { newPassword: p });
+                        }}
+                      >
+                        Đặt lại MK
+                      </button>
+                      <button
+                        className={`ml-3 text-xs hover:underline ${
+                          u.isActive ? "text-red-600" : "text-emerald-600"
+                        }`}
+                        onClick={() => patch(u.id, { isActive: !u.isActive })}
+                      >
+                        {u.isActive ? "Khoá" : "Mở"}
+                      </button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}

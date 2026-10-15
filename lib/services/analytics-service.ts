@@ -23,7 +23,7 @@ import {
 import { buildExecutiveBriefing, type BriefingFacts } from "../ai/executive-advisor";
 import { round2, summarizeResults } from "../kpi";
 import { vnDateKey, vnStartOfDay } from "../vn-time";
-import { getPeriodWithCeoDeadlineToday } from "./period-service";
+import { getDeadlinePeriod, getPeriodWithCeoDeadlineToday } from "./period-service";
 import type { SessionUser } from "../auth";
 
 /**
@@ -690,10 +690,19 @@ export async function reviewAnomaly(
 /* SỨC KHOẺ VẬN HÀNH                                                    */
 /* ==================================================================== */
 
-export async function buildHealthSnapshot(now = new Date()) {
-  const period = await prisma.kpiPeriod.findFirst({
-    orderBy: [{ year: "desc" }, { month: "desc" }],
-  });
+/**
+ * Kỳ dùng cho ảnh chụp sức khoẻ / báo cáo giao ban: kỳ chỉ định nếu có, không
+ * thì kỳ đang "nóng" (ngày 1–5 là kỳ đang chốt, sau đó là kỳ tháng này) —
+ * không lấy kỳ mới nhất, vì đầu tháng kỳ mới vừa mở chưa có số.
+ */
+async function resolveReportPeriod(now: Date, periodId?: string) {
+  return periodId
+    ? prisma.kpiPeriod.findUnique({ where: { id: periodId } })
+    : getDeadlinePeriod(now);
+}
+
+export async function buildHealthSnapshot(now = new Date(), periodId?: string) {
+  const period = await resolveReportPeriod(now, periodId);
 
   const [
     openTasks,
@@ -758,16 +767,14 @@ export async function buildHealthSnapshot(now = new Date()) {
  * ngày 5). Tách riêng để hai đường luôn đọc đúng một bộ dữ liệu, không tính
  * lại theo hai cách khác nhau.
  */
-export async function gatherExecutiveBriefingFacts(now = new Date()) {
+export async function gatherExecutiveBriefingFacts(now = new Date(), periodId?: string) {
   const [snapshot, scan, accuracy] = await Promise.all([
-    buildHealthSnapshot(now),
+    buildHealthSnapshot(now, periodId),
     runPredictiveScan({ persist: false, now }),
     getPredictionAccuracy(),
   ]);
 
-  const period = await prisma.kpiPeriod.findFirst({
-    orderBy: [{ year: "desc" }, { month: "desc" }],
-  });
+  const period = await resolveReportPeriod(now, periodId);
 
   /* --- Phòng ban yếu nhất theo điểm KPI --- */
   const weakest: { name: string; avgScore: number }[] = [];
@@ -882,7 +889,8 @@ export async function runMonthlyExecutiveBriefingIfDue(now = new Date()) {
   });
   if (!ceo) return { sent: false, reason: "NO_CEO" };
 
-  const { health, facts } = await gatherExecutiveBriefingFacts(now);
+  // Số liệu của ĐÚNG kỳ đang chốt hôm nay, khớp tiêu đề tin gửi Ban Giám đốc
+  const { health, facts } = await gatherExecutiveBriefingFacts(now, period.id);
   const briefing = await buildExecutiveBriefing(health, facts);
 
   const saved = await prisma.aiSuggestion.create({
