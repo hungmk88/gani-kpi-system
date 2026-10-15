@@ -2,11 +2,17 @@ import { vnDate, vnDayRange, vnParts } from "../vn-time";
 import { prisma } from "@/lib/db";
 import type { SessionUser } from "@/lib/auth";
 import { taskScopeWhere } from "@/lib/rbac";
-import { summarizeResults, classifyScore } from "@/lib/kpi";
+import {
+  classifyScoreFor,
+  isCountedKpiRow,
+  scoreStateOf,
+  summarizeResults,
+} from "@/lib/kpi";
 import { periodName } from "@/lib/codes";
 import { getCapacityReports } from "@/lib/services/analytics-service";
 import { CONFIDENCE_LABEL } from "@/lib/analytics/constants";
 import { getDeadlinePeriod } from "@/lib/services/period-service";
+import { LOCK_JUMP_MS, urgencyTone } from "@/lib/urgency";
 
 /**
  * GOM DỮ LIỆU CHO BẢNG ĐIỀU HÀNH.
@@ -309,7 +315,7 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
     overdueCountWeekAgo,
     overdueTasks,
     todayTasks,
-    myResults,
+    myResultsAll,
     pendingReview,
     trendPeriods,
     anomalies,
@@ -363,7 +369,10 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
           })
         : Promise.resolve(0),
 
+    // Xu hướng điểm chỉ lấy các kỳ ĐÃ CHỐT. Kỳ đang mở có điểm 0 (chưa ai
+    // chấm) — vẽ vào sparkline là thành một vạch tụt giả.
     prisma.kpiPeriod.findMany({
+      where: { status: "FINALIZED" },
       orderBy: [{ year: "desc" }, { month: "desc" }],
       take: TREND_PERIODS,
       select: { id: true, name: true },
@@ -501,9 +510,10 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
     });
 
   const withScore = trend.filter((t) => t.score > 0);
-  const kpiScore: TrendStat | null =
+  const kpiScore: (TrendStat & { periodName: string }) | null =
     withScore.length > 0
       ? {
+          periodName: withScore[withScore.length - 1].name,
           value: withScore[withScore.length - 1].score,
           delta:
             withScore.length >= 2
@@ -518,13 +528,23 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
 
   /* ------------------------------------------------ KPI của chính tôi */
 
+  // Bỏ chỉ tiêu đã ngưng dùng, trọng số 0 — đếm giống hệt trang KPI
+  const myResults = myResultsAll.filter(isCountedKpiRow);
   const mySummary = summarizeResults(myResults);
-  const myClass = classifyScore(mySummary.totalScore);
+  const myState = scoreStateOf(period?.status, myResults);
+  const myClass = classifyScoreFor(mySummary.totalScore, myState);
   const myDraft = myResults.filter((r) => r.status === "DRAFT").length;
-  // Chỉ tiêu đang kéo tụt: thấp nhất và dưới ngưỡng đạt
+  // Chỉ tiêu đang kéo tụt: thấp nhất trong số chỉ tiêu ĐÃ CÓ SỐ và có trọng
+  // số. Chưa ai khai thì không có gì "kéo tụt" — nêu ra là báo động giả;
+  // chỉ tiêu trọng số 0 (đã ngưng, gatekeeper) không kéo điểm tổng.
+  const scoredRows = myResults.filter(
+    (r) =>
+      (r.weightPercent ?? 0) > 0 &&
+      (r.actualFinal ?? r.actualSelf ?? r.actualSystem) !== null,
+  );
   const myWeakest =
-    myResults.length > 0
-      ? [...myResults].sort(
+    myState !== "UNSCORED" && scoredRows.length > 0
+      ? [...scoredRows].sort(
           (a, b) => a.achievementPercent - b.achievementPercent,
         )[0]
       : null;
@@ -542,7 +562,8 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
 
   // 1. Cửa KPI của chính mình, nếu còn việc chưa xong
   if (gate?.openLeg && gate.isMyTurn) {
-    const remaining = gate.remaining ?? "";
+    const remaining = gate.remaining ? `còn ${gate.remaining}` : "";
+    const gateTone = urgencyTone(gate.openLeg.deadline, now);
     if (user.role === "EMPLOYEE" && myDraft > 0) {
       queue.push({
         id: "gate-self",
@@ -551,7 +572,7 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
           "Quá 23:59 là khoá, không khai bù được — chỉ tiêu chưa khai bị tính 0.",
         href: "/kpi",
         cta: "Khai ngay",
-        tone: "red",
+        tone: gateTone,
         when: remaining,
         hardLock: true,
         dueAt: gate.openLeg.deadline,
@@ -568,7 +589,7 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
             : "Quá hạn chốt thì kỳ treo lại, phòng ban không xem được điểm cuối.",
         href: "/kpi",
         cta: "Duyệt ngay",
-        tone: "red",
+        tone: gateTone,
         when: remaining,
         hardLock: true,
         dueAt: gate.openLeg.deadline,
@@ -588,8 +609,8 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
       detail: `Sớm nhất: ${oldest.code} trễ ${days} ngày, tiến độ mới ${oldest.progress}%.`,
       href: "/tasks?filter=overdue",
       cta: "Xem",
-      tone: "amber",
-      when: `${days} ngày`,
+      tone: "red",
+      when: `trễ ${days} ngày`,
       hardLock: false,
       dueAt: new Date(oldest.dueDate),
     });
@@ -680,8 +701,20 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
    * Không xếp thuần theo thời gian, vì việc trễ 4 ngày sẽ luôn đứng trên cửa
    * KPI đóng tối nay — mà việc trễ thì làm bù được, còn cửa đóng thì thôi.
    */
+  // "Khoá cứng" chỉ được chen lên đầu khi còn dưới 72 giờ. Hạn còn 18 ngày
+  // mà ghim trên một việc đã trễ là đảo ngược mức khẩn.
+  const urgentLock = (i: ActionItem) =>
+    i.hardLock &&
+    !!i.dueAt &&
+    i.dueAt.getTime() - now.getTime() < LOCK_JUMP_MS;
   queue.sort((a, b) => {
-    if (a.hardLock !== b.hardLock) return a.hardLock ? -1 : 1;
+    const ua = urgentLock(a);
+    const ub = urgentLock(b);
+    if (ua !== ub) return ua ? -1 : 1;
+    // Việc đã trễ (tông đỏ, không khoá) đứng trước mọi thứ chưa tới hạn
+    const la = !a.hardLock && a.tone === "red";
+    const lb = !b.hardLock && b.tone === "red";
+    if (la !== lb) return la ? -1 : 1;
     if (a.dueAt && b.dueAt) return a.dueAt.getTime() - b.dueAt.getTime();
     if (a.dueAt) return -1;
     if (b.dueAt) return 1;
@@ -825,6 +858,7 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
           periodName: period.name,
           hasResults: myResults.length > 0,
           totalScore: mySummary.totalScore,
+          scoreState: myState,
           classLabel: myClass.label,
           classTone: myClass.tone,
           draftCount: myDraft,

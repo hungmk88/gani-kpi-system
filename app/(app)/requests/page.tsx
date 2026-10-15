@@ -114,7 +114,7 @@ export default async function RequestsPage() {
           </div>
         ) : (
           <div className="table-wrap">
-            <table className="tbl">
+            <table className="tbl tbl-stack">
               <thead>
                 <tr>
                   <th>Nội dung</th>
@@ -135,12 +135,12 @@ export default async function RequestsPage() {
                         </div>
                       )}
                     </td>
-                    <td className="text-ink-600">{r.targetDept.name}</td>
-                    <td className="text-ink-600">{formatDateTime(r.dueDate)}</td>
-                    <td>
+                    <td data-label="Gửi tới" className="text-ink-600">{r.targetDept.name}</td>
+                    <td data-label="Hạn" className="text-ink-600">{formatDateTime(r.dueDate)}</td>
+                    <td data-label="Ưu tiên">
                       <PriorityBadge priority={r.priority} />
                     </td>
-                    <td>
+                    <td data-label="Trạng thái">
                       <StatusBadge status={r.status} />
                       {r.createdTaskId && (
                         <Link
@@ -163,7 +163,7 @@ export default async function RequestsPage() {
         <section>
           <h2 className="section-title mb-3">Lịch sử đã xử lý</h2>
           <div className="table-wrap">
-            <table className="tbl">
+            <table className="tbl tbl-stack">
               <thead>
                 <tr>
                   <th>Nội dung</th>
@@ -177,12 +177,12 @@ export default async function RequestsPage() {
                 {history.map((r) => (
                   <tr key={r.id}>
                     <td className="text-ink-800">{r.title}</td>
-                    <td className="text-ink-600">{r.requester.fullName}</td>
-                    <td className="text-ink-600">{r.targetDept.name}</td>
-                    <td className="text-ink-600">
+                    <td data-label="Người gửi" className="text-ink-600">{r.requester.fullName}</td>
+                    <td data-label="Phòng nhận" className="text-ink-600">{r.targetDept.name}</td>
+                    <td data-label="Người xử lý" className="text-ink-600">
                       {r.approver?.fullName ?? "—"}
                     </td>
-                    <td>
+                    <td data-label="Kết quả">
                       <StatusBadge status={r.status} />
                     </td>
                   </tr>

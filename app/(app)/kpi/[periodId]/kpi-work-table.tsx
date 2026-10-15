@@ -10,7 +10,13 @@ import {
   LockOpen,
   Upload,
 } from "lucide-react";
-import { KpiStatusBadge, ProgressBar, ScoreBadge } from "@/components/ui";
+import {
+  KpiStatusBadge,
+  ProgressBar,
+  ScoreBadge,
+  fmtScore,
+} from "@/components/ui";
+import { scoreStateOf } from "@/lib/kpi";
 import KpiAdvisoryPanel from "@/components/kpi-advisory";
 
 export type KpiRow = {
@@ -65,8 +71,20 @@ export default function KpiWorkTable({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Mở sẵn người ĐANG CẦN mình xử lý (lệch số, chờ mình duyệt) — không phải
+  // dòng của chính mình. Quản trị ngoại lệ: việc cần làm nổi lên trước.
+  const waitingStatus =
+    role === "CEO" ? "MANAGER_REVIEWED" : role === "MANAGER" ? "SELF_REVIEWED" : null;
   const [openEmp, setOpenEmp] = useState<string | null>(
-    groups.find((g) => g.employeeId === currentUserId)?.employeeId ??
+    groups.find((g) => g.rows.some((r) => r.hasMismatch))?.employeeId ??
+      (waitingStatus
+        ? groups.find(
+            (g) =>
+              g.employeeId !== currentUserId &&
+              g.rows.some((r) => r.status === waitingStatus)
+          )?.employeeId
+        : undefined) ??
+      groups.find((g) => g.employeeId === currentUserId)?.employeeId ??
       groups[0]?.employeeId ??
       null
   );
@@ -186,6 +204,11 @@ export default function KpiWorkTable({
             (r) => r.status === "MANAGER_REVIEWED"
           ).length;
           const mismatches = g.rows.filter((r) => r.hasMismatch).length;
+          const state = scoreStateOf(periodStatus, g.rows);
+          // Dòng lệch số lên đầu — đó là thứ phải quyết trước khi chốt
+          const rows = [...g.rows].sort(
+            (a, b) => Number(b.hasMismatch) - Number(a.hasMismatch)
+          );
 
           return (
             <div key={g.employeeId} className="card overflow-hidden">
@@ -230,33 +253,60 @@ export default function KpiWorkTable({
                       {pendingCeo} chờ BGĐ
                     </span>
                   )}
-                  <ScoreBadge score={g.summary.totalScore} />
-                  <span className="text-ink-400">{isOpen ? "▲" : "▼"}</span>
+                  <ScoreBadge score={g.summary.totalScore} state={state} />
+                  <span className="text-ink-400" aria-hidden>
+                    {isOpen ? "▲" : "▼"}
+                  </span>
                 </div>
               </button>
 
               {isOpen && (
                 <div className="border-t border-ink-100">
-                  <div className="overflow-x-auto">
-                    <table className="tbl min-w-[900px]">
+                  {/* Điện thoại: mỗi chỉ tiêu một thẻ, ô nhập nằm ngay trong
+                      thẻ — không phải kéo ngang 900px mới thấy chỗ nhập. */}
+                  <ul className="divide-y divide-ink-100 md:hidden">
+                    {rows.map((r) => (
+                      <RowEditor
+                        key={r.id}
+                        layout="card"
+                        row={r}
+                        role={role}
+                        isMine={g.employeeId === currentUserId}
+                        selfOpen={selfOpen}
+                        managerOpen={managerOpen}
+                        busy={busy}
+                        onCall={call}
+                      />
+                    ))}
+                    <li className="flex items-center justify-between bg-ink-50/70 px-4 py-3 text-sm font-semibold">
+                      <span>Tổng · trọng số {g.summary.totalWeight}%</span>
+                      <ScoreBadge score={g.summary.totalScore} state={state} />
+                    </li>
+                  </ul>
+
+                  {/* Máy tính: cột Thao tác ghim bên phải, luôn nhìn thấy kể
+                      cả khi bảng phải cuộn ngang. Ba cột số gộp thành một ô. */}
+                  <div className="hidden overflow-x-auto md:block">
+                    <table className="tbl">
                       <thead>
                         <tr>
-                          <th className="min-w-56">Chỉ tiêu</th>
+                          <th className="min-w-52">Chỉ tiêu</th>
                           <th className="text-right">Trọng số</th>
                           <th className="text-right">Giao</th>
-                          <th className="text-right">Số hệ thống</th>
-                          <th className="text-right">NV khai</th>
-                          <th className="text-right">Số chốt</th>
-                          <th className="min-w-32">Mức đạt</th>
+                          <th className="text-right">Số liệu</th>
+                          <th className="min-w-28">Mức đạt</th>
                           <th className="text-right">Điểm</th>
                           <th>Trạng thái</th>
-                          <th className="min-w-64">Thao tác</th>
+                          <th className="sticky right-0 z-10 w-60 min-w-60 bg-ink-50 shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.12)]">
+                            Thao tác
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
-                        {g.rows.map((r) => (
+                        {rows.map((r) => (
                           <RowEditor
                             key={r.id}
+                            layout="row"
                             row={r}
                             role={role}
                             isMine={g.employeeId === currentUserId}
@@ -279,12 +329,18 @@ export default function KpiWorkTable({
                               {g.summary.totalWeight}%
                             </span>
                           </td>
-                          <td colSpan={5}></td>
+                          <td colSpan={3}></td>
                           <td className="text-right">
-                            {g.summary.totalScore.toFixed(2)}
+                            {state === "UNSCORED"
+                              ? "—"
+                              : fmtScore(g.summary.totalScore)}
                           </td>
-                          <td colSpan={2}>
-                            <ScoreBadge score={g.summary.totalScore} />
+                          <td></td>
+                          <td className="sticky right-0 bg-ink-50">
+                            <ScoreBadge
+                              score={g.summary.totalScore}
+                              state={state}
+                            />
                           </td>
                         </tr>
                       </tbody>
@@ -317,6 +373,7 @@ export default function KpiWorkTable({
 /* ------------------------------------------------------------------ 1 dòng */
 
 function RowEditor({
+  layout,
   row,
   role,
   isMine,
@@ -325,6 +382,7 @@ function RowEditor({
   busy,
   onCall,
 }: {
+  layout: "row" | "card";
   row: KpiRow;
   role: string;
   isMine: boolean;
@@ -348,7 +406,8 @@ function RowEditor({
   // Trưởng phòng chỉ vào cuộc sau khi nhân viên đã khai, và phải trong hạn ngày 4.
   // Ban Giám đốc thì vào được bất cứ lúc nào, kể cả dòng nhân viên chưa khai —
   // để không bị kẹt khi có người nghỉ việc hoặc bỏ khai giữa chừng.
-  const canManager = locked
+  // Không ai tự duyệt KPI của chính mình (máy chủ cũng chặn) — không hiện nút.
+  const canManager = locked || isMine
     ? false
     : role === "CEO"
       ? true
@@ -356,42 +415,176 @@ function RowEditor({
   const canEditLocked = role === "CEO" && locked;
 
   const url = `/api/kpi/results/${row.id}`;
+  const actual = row.actualFinal ?? row.actualSelf ?? row.actualSystem;
+  const needsReason =
+    row.actualSelf !== null &&
+    finalValue !== "" &&
+    Number(finalValue) !== row.actualSelf;
 
-  return (
-    <tr className={row.hasMismatch ? "bg-red-50/40" : undefined}>
-      <td>
-        <div className="font-medium text-ink-800">{row.kpiName}</div>
-        <div className="text-xs text-ink-500">
-          {row.isHigherBetter ? "↑ càng cao càng tốt" : "↓ càng thấp càng tốt"} ·{" "}
-          {row.unit} · nguồn {sourceLabel(row.dataSource)}
+  // Vì sao dòng này không có ô nhập — nói đúng lý do, không chung chung.
+  const idleText = locked
+    ? "Đã khoá"
+    : isMine && !selfOpen
+      ? role === "EMPLOYEE"
+        ? "Hết hạn tự khai"
+        : "Ban Giám đốc duyệt KPI của bạn"
+      : isMine && role === "MANAGER"
+        ? "Ban Giám đốc duyệt KPI của bạn"
+        : role === "MANAGER" && !managerOpen
+          ? "Hết hạn duyệt (ngày 4)"
+          : row.status === "DRAFT"
+            ? "Chờ nhân viên tự khai"
+            : "Chờ bước trước";
+
+  const actions = (
+    <>
+      {/* Nhân viên tự khai */}
+      {canSelf && (
+        <div className="space-y-1.5">
+          <input
+            type="number"
+            step="any"
+            inputMode="decimal"
+            className="input py-1.5 text-sm"
+            aria-label={`Số thực tế (${row.unit})`}
+            placeholder={`Số thực tế (${row.unit})`}
+            value={selfValue}
+            onChange={(e) => setSelfValue(e.target.value)}
+          />
+          <input
+            className="input py-1.5 text-sm"
+            aria-label="Giải trình ngắn"
+            placeholder="Giải trình ngắn (tuỳ chọn)"
+            value={selfNote}
+            onChange={(e) => setSelfNote(e.target.value)}
+          />
+          <button
+            className="btn-primary btn-sm w-full"
+            disabled={busy || selfValue === ""}
+            onClick={() =>
+              onCall(url, {
+                action: "SELF_REVIEW",
+                actualSelf: Number(selfValue),
+                selfNote: selfNote || undefined,
+              })
+            }
+          >
+            Gửi số tự khai
+          </button>
         </div>
-        {row.hasMismatch && (
-          <div className="mt-1 flex items-center gap-1 text-xs font-medium text-red-600">
-            <AlertTriangle size={11} strokeWidth={2.5} /> Lệch {row.mismatchPercent}% so với số hệ thống
-          </div>
-        )}
-        {row.selfNote && (
-          <div className="mt-1 text-xs text-ink-500">NV: {row.selfNote}</div>
-        )}
-        {row.managerNote && (
-          <div className="mt-1 text-xs text-violet-600">
-            TP: {row.managerNote}
-          </div>
-        )}
-      </td>
-      <td className="text-right text-ink-600">{row.weightPercent}%</td>
-      <td className="text-right text-ink-600">{fmt(row.targetValue)}</td>
-      <td className="text-right text-ink-500">{fmt(row.actualSystem)}</td>
-      <td className="text-right text-ink-700">{fmt(row.actualSelf)}</td>
-      <td className="text-right font-medium text-ink-900">
-        {fmt(row.actualFinal)}
-      </td>
-      <td>
-        <div className="mb-1 text-xs text-ink-600">
-          {row.achievementPercent}%
-          {row.isCapped && (
-            <span className="ml-1 text-amber-600">· trần 150%</span>
+      )}
+
+      {/* Trưởng phòng / BGĐ duyệt */}
+      {canManager && (
+        <div className="space-y-1.5">
+          <input
+            type="number"
+            step="any"
+            inputMode="decimal"
+            className="input py-1.5 text-sm"
+            aria-label="Số chốt"
+            placeholder="Số chốt"
+            value={finalValue}
+            onChange={(e) => setFinalValue(e.target.value)}
+          />
+          {needsReason && (
+            <input
+              className="input py-1.5 text-sm"
+              aria-label="Lý do điều chỉnh"
+              placeholder="Lý do điều chỉnh (bắt buộc)"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
           )}
+          <button
+            className="btn-success btn-sm w-full"
+            disabled={
+              busy || finalValue === "" || (needsReason && reason.trim() === "")
+            }
+            onClick={() =>
+              onCall(url, {
+                action: "MANAGER_REVIEW",
+                actualFinal: Number(finalValue),
+                reason: reason || undefined,
+              })
+            }
+          >
+            {needsReason ? "Điều chỉnh & duyệt" : "Duyệt số này"}
+          </button>
+
+          {/* Cố vấn chỉ gợi ý mức đạt %, không phải số tuyệt đối, nên chỉ
+              hiện phân tích chứ không tự điền vào ô số chốt. */}
+          <KpiAdvisoryPanel kpiResultId={row.id} />
+        </div>
+      )}
+
+      {/* CEO sửa sau khi đã khoá */}
+      {canEditLocked &&
+        (editing ? (
+          <div className="space-y-1.5">
+            <input
+              type="number"
+              step="any"
+              inputMode="decimal"
+              className="input py-1.5 text-sm"
+              aria-label="Số chốt mới"
+              value={finalValue}
+              onChange={(e) => setFinalValue(e.target.value)}
+            />
+            <input
+              className="input py-1.5 text-sm"
+              aria-label="Lý do sửa"
+              placeholder="Lý do sửa (tối thiểu 10 ký tự)"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
+            <div className="flex gap-1.5">
+              <button
+                className="btn-danger btn-sm flex-1"
+                disabled={busy || reason.trim().length < 10}
+                onClick={async () => {
+                  const ok = await onCall(url, {
+                    action: "EDIT_LOCKED",
+                    actualFinal: Number(finalValue),
+                    reason,
+                  });
+                  // Lỗi thì giữ khung sửa (và lý do đã gõ) để sửa lại
+                  if (ok) setEditing(false);
+                }}
+              >
+                Xác nhận sửa
+              </button>
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => setEditing(false)}
+              >
+                Huỷ
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            className="btn-ghost btn-sm inline-flex items-center gap-1.5"
+            onClick={() => setEditing(true)}
+          >
+            <LockOpen size={14} strokeWidth={2} /> Sửa điểm đã khoá
+          </button>
+        ))}
+
+      {!canSelf && !canManager && !canEditLocked && (
+        <span className="text-xs text-ink-500">{idleText}</span>
+      )}
+    </>
+  );
+
+  const achievement =
+    actual === null ? (
+      <span className="text-xs text-ink-500">chưa có số</span>
+    ) : (
+      <>
+        <div className="mb-1 text-xs text-ink-600">
+          {pct(row.achievementPercent)}
+          {row.isCapped && <span className="ml-1 text-amber-700">· chạm trần</span>}
         </div>
         <ProgressBar
           value={(row.achievementPercent / 150) * 100}
@@ -403,147 +596,102 @@ function RowEditor({
                 : "red"
           }
         />
+      </>
+    );
+
+  const notes = (
+    <>
+      {row.hasMismatch && (
+        <div className="mt-1 flex items-center gap-1 text-xs font-medium text-red-600">
+          <AlertTriangle size={11} strokeWidth={2.5} /> Lệch{" "}
+          {pct(row.mismatchPercent ?? 0)} so với số hệ thống
+        </div>
+      )}
+      {row.selfNote && (
+        <div className="mt-1 text-xs text-ink-500">NV: {row.selfNote}</div>
+      )}
+      {row.managerNote && (
+        <div className="mt-1 text-xs text-violet-700">TP: {row.managerNote}</div>
+      )}
+    </>
+  );
+
+  if (layout === "card") {
+    return (
+      <li className={`px-4 py-3.5 ${row.hasMismatch ? "bg-red-50/50" : ""}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-medium text-ink-800">{row.kpiName}</div>
+            <div className="text-xs text-ink-500">
+              Trọng số {row.weightPercent}% ·{" "}
+              {row.isHigherBetter ? "càng cao càng tốt" : "càng thấp càng tốt"}
+            </div>
+          </div>
+          <KpiStatusBadge status={row.status} />
+        </div>
+        {notes}
+        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+          <dt className="text-ink-500">Giao</dt>
+          <dd className="text-right text-ink-700">
+            {fmt(row.targetValue)} {row.unit}
+          </dd>
+          <dt className="text-ink-500">Hệ thống / NV khai</dt>
+          <dd className="text-right text-ink-700">
+            {fmt(row.actualSystem)} / {fmt(row.actualSelf)}
+          </dd>
+          <dt className="text-ink-500">Số chốt · Điểm</dt>
+          <dd className="text-right font-medium text-ink-900">
+            {fmt(row.actualFinal)} ·{" "}
+            {actual === null ? "—" : fmtScore(row.weightedScore)}
+          </dd>
+        </dl>
+        <div className="mt-2">{achievement}</div>
+        <div className="mt-3">{actions}</div>
+      </li>
+    );
+  }
+
+  return (
+    <tr className={row.hasMismatch ? "bg-red-50/40" : undefined}>
+      <td>
+        <div className="font-medium text-ink-800">{row.kpiName}</div>
+        <div className="text-xs text-ink-500">
+          {row.isHigherBetter ? "↑ càng cao càng tốt" : "↓ càng thấp càng tốt"} ·{" "}
+          {row.unit} · nguồn {sourceLabel(row.dataSource)}
+        </div>
+        {notes}
       </td>
+      <td className="text-right text-ink-600">{row.weightPercent}%</td>
+      <td className="text-right whitespace-nowrap text-ink-600">
+        {fmt(row.targetValue)}
+      </td>
+      <td className="text-right text-xs whitespace-nowrap">
+        <div className="text-ink-500">
+          HT <span className="text-ink-700">{fmt(row.actualSystem)}</span>
+        </div>
+        <div className="text-ink-500">
+          NV <span className="text-ink-700">{fmt(row.actualSelf)}</span>
+        </div>
+        <div className="text-ink-500">
+          Chốt{" "}
+          <span className="text-sm font-semibold text-ink-900">
+            {fmt(row.actualFinal)}
+          </span>
+        </div>
+      </td>
+      <td>{achievement}</td>
       <td className="text-right font-semibold text-ink-900">
-        {row.weightedScore.toFixed(2)}
+        {actual === null ? "—" : fmtScore(row.weightedScore)}
       </td>
       <td>
         <KpiStatusBadge status={row.status} />
       </td>
-      <td>
-        {/* Nhân viên tự khai */}
-        {canSelf && (
-          <div className="space-y-1.5">
-            <input
-              type="number"
-              step="any"
-              className="input py-1.5 text-sm"
-              placeholder={`Số thực tế (${row.unit})`}
-              value={selfValue}
-              onChange={(e) => setSelfValue(e.target.value)}
-            />
-            <input
-              className="input py-1.5 text-sm"
-              placeholder="Giải trình ngắn (tuỳ chọn)"
-              value={selfNote}
-              onChange={(e) => setSelfNote(e.target.value)}
-            />
-            <button
-              className="btn-primary btn-sm w-full"
-              disabled={busy || selfValue === ""}
-              onClick={() =>
-                onCall(url, {
-                  action: "SELF_REVIEW",
-                  actualSelf: Number(selfValue),
-                  selfNote: selfNote || undefined,
-                })
-              }
-            >
-              Gửi số tự khai
-            </button>
-          </div>
-        )}
-
-        {/* Trưởng phòng / BGĐ duyệt */}
-        {canManager && (
-          <div className="space-y-1.5">
-            <input
-              type="number"
-              step="any"
-              className="input py-1.5 text-sm"
-              placeholder="Số chốt"
-              value={finalValue}
-              onChange={(e) => setFinalValue(e.target.value)}
-            />
-            {row.actualSelf !== null &&
-              Number(finalValue) !== row.actualSelf && (
-                <input
-                  className="input py-1.5 text-sm"
-                  placeholder="Lý do điều chỉnh (bắt buộc)"
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                />
-              )}
-            <button
-              className="btn-success btn-sm w-full"
-              disabled={busy || finalValue === ""}
-              onClick={() =>
-                onCall(url, {
-                  action: "MANAGER_REVIEW",
-                  actualFinal: Number(finalValue),
-                  reason: reason || undefined,
-                })
-              }
-            >
-              {row.actualSelf !== null && Number(finalValue) !== row.actualSelf
-                ? "Điều chỉnh & duyệt"
-                : "Duyệt số này"}
-            </button>
-
-            {/* Cố vấn chỉ gợi ý mức đạt %, không phải số tuyệt đối, nên chỉ
-                hiện phân tích chứ không tự điền vào ô số chốt. */}
-            <KpiAdvisoryPanel kpiResultId={row.id} />
-          </div>
-        )}
-
-        {/* CEO sửa sau khi đã khoá */}
-        {canEditLocked &&
-          (editing ? (
-            <div className="space-y-1.5">
-              <input
-                type="number"
-                step="any"
-                className="input py-1.5 text-sm"
-                value={finalValue}
-                onChange={(e) => setFinalValue(e.target.value)}
-              />
-              <input
-                className="input py-1.5 text-sm"
-                placeholder="Lý do sửa (tối thiểu 10 ký tự)"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-              />
-              <div className="flex gap-1.5">
-                <button
-                  className="btn-danger btn-sm flex-1"
-                  disabled={busy || reason.trim().length < 10}
-                  onClick={async () => {
-                    await onCall(url, {
-                      action: "EDIT_LOCKED",
-                      actualFinal: Number(finalValue),
-                      reason,
-                    });
-                    setEditing(false);
-                  }}
-                >
-                  Xác nhận sửa
-                </button>
-                <button
-                  className="btn-ghost btn-sm"
-                  onClick={() => setEditing(false)}
-                >
-                  Huỷ
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              className="btn-ghost btn-sm inline-flex items-center gap-1.5"
-              onClick={() => setEditing(true)}
-            >
-              <LockOpen size={14} strokeWidth={2} /> Sửa điểm đã khoá
-            </button>
-          ))}
-
-        {!canSelf && !canManager && !canEditLocked && (
-          <span className="text-xs text-ink-400">
-            {locked
-              ? "Đã khoá"
-              : isMine && !selfOpen
-                ? "Hết hạn tự khai"
-                : "Chờ bước trước"}
-          </span>
-        )}
+      <td
+        className={`sticky right-0 z-10 shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.12)] ${
+          row.hasMismatch ? "bg-red-50" : "bg-white"
+        }`}
+      >
+        {actions}
       </td>
     </tr>
   );
@@ -608,6 +756,10 @@ function ImportButton({ periodId }: { periodId: string }) {
 }
 
 /* ------------------------------------------------------------------ tiện ích */
+
+function pct(n: number) {
+  return `${n.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%`;
+}
 
 function fmt(n: number | null | undefined) {
   if (n === null || n === undefined) return "—";

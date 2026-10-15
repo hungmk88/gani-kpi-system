@@ -301,29 +301,32 @@ function UsersTab({
       )}
 
       <div className="table-wrap">
-        <table className="tbl">
+        <table className="tbl tbl-stack">
           <thead>
             <tr>
-              <th>Họ tên</th>
-              <th>Email</th>
+              <th>Họ tên · email</th>
               <th>Vai trò</th>
               <th>Loại nhân sự</th>
               <th>Phòng ban</th>
               <th>Telegram Chat ID</th>
               <th>Đăng nhập gần nhất</th>
               <th>Trạng thái</th>
-              <th></th>
+              <th className="sticky right-0 bg-ink-50">Thao tác</th>
             </tr>
           </thead>
           <tbody>
             {users.map((u) => (
               <tr key={u.id}>
-                <td>
-                  <div className="font-medium text-ink-800">{u.fullName}</div>
-                  <div className="text-xs text-ink-500">{u.jobTitle}</div>
+                <td className="min-w-52">
+                  <div className="font-medium whitespace-nowrap text-ink-800">
+                    {u.fullName}
+                  </div>
+                  <div className="text-xs break-all text-ink-500">{u.email}</div>
+                  {u.jobTitle && (
+                    <div className="text-xs text-ink-500">{u.jobTitle}</div>
+                  )}
                 </td>
-                <td className="font-mono text-xs text-ink-600">{u.email}</td>
-                <td>
+                <td data-label="Vai trò">
                   {editing === u.id && u.role !== "CEO" ? (
                     <select
                       className="input py-1 text-xs"
@@ -342,7 +345,7 @@ function UsersTab({
                     </Badge>
                   )}
                 </td>
-                <td>
+                <td data-label="Loại nhân sự">
                   {editing === u.id ? (
                     <select
                       className="input py-1 text-xs"
@@ -367,7 +370,7 @@ function UsersTab({
                     </Badge>
                   )}
                 </td>
-                <td>
+                <td data-label="Phòng ban">
                   {editing === u.id ? (
                     <select
                       className="input py-1 text-xs"
@@ -389,7 +392,7 @@ function UsersTab({
                     </span>
                   )}
                 </td>
-                <td>
+                <td data-label="Telegram">
                   {/* Quản trị KHÔNG được điền sẵn Chat ID: ai trỏ được Telegram
                       của người khác về chat của mình là nhận thông báo / bấm
                       nút thay họ. Chính chủ tự nối bằng mã liên kết ở trang
@@ -415,17 +418,20 @@ function UsersTab({
                     </button>
                   )}
                 </td>
-                <td className="text-xs text-ink-500">
+                <td data-label="Đăng nhập gần nhất" className="text-xs text-ink-500">
                   {u.lastLoginAt ? formatDateTime(u.lastLoginAt) : "chưa bao giờ"}
                 </td>
-                <td>
+                <td data-label="Trạng thái">
                   {u.isActive ? (
                     <Badge tone="green">Đang dùng</Badge>
                   ) : (
                     <Badge tone="red">Đã khoá</Badge>
                   )}
                 </td>
-                <td className="whitespace-nowrap">
+                <td
+                  data-label=""
+                  className="sticky right-0 bg-white whitespace-nowrap shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.12)]"
+                >
                   <button
                     className="text-xs text-brand-600 hover:underline"
                     onClick={() => setEditing(editing === u.id ? null : u.id)}
@@ -447,7 +453,7 @@ function UsersTab({
                         className="ml-3 text-xs text-ink-500 hover:underline"
                         onClick={() => {
                           const p = prompt(
-                            `Đặt lại mật khẩu cho ${u.fullName} (tối thiểu 8 ký tự). Telegram của người này sẽ bị ngắt, họ tự nối lại sau khi đổi mật khẩu:`
+                            `Đặt lại mật khẩu cho ${u.fullName} (tối thiểu 10 ký tự, có cả chữ và số). Telegram của người này sẽ bị ngắt, họ tự nối lại sau khi đổi mật khẩu:`
                           );
                           if (p) patch(u.id, { newPassword: p });
                         }}

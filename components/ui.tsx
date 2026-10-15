@@ -382,7 +382,29 @@ export function PeriodStatusBadge({ status }: { status: string }) {
   return <Badge tone={tone}>{PERIOD_STATUS_LABEL[status] ?? status}</Badge>;
 }
 
-export function ScoreBadge({ score }: { score: number }) {
+/** Điểm thang 100, 2 chữ số thập phân, định dạng Việt Nam ("98,50"). */
+export function fmtScore(n: number) {
+  return n.toLocaleString("vi-VN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/**
+ * Huy hiệu tổng điểm. Kỳ chưa chấm/chưa chốt thì KHÔNG tô màu xếp loại —
+ * "0,00 điểm" đỏ khi nhân viên còn chưa tới hạn tự khai là báo động giả.
+ */
+export function ScoreBadge({
+  score,
+  state = "FINAL",
+}: {
+  score: number;
+  state?: "UNSCORED" | "PROVISIONAL" | "FINAL";
+}) {
+  if (state === "UNSCORED") return <Badge tone="slate">Chưa chấm</Badge>;
+  if (state === "PROVISIONAL") {
+    return <Badge tone="slate">{fmtScore(score)} điểm · tạm tính</Badge>;
+  }
   const tone: keyof typeof TONE =
     score >= 120
       ? "emerald"
@@ -393,7 +415,7 @@ export function ScoreBadge({ score }: { score: number }) {
           : score >= 70
             ? "amber"
             : "red";
-  return <Badge tone={tone}>{score.toFixed(2)} điểm</Badge>;
+  return <Badge tone={tone}>{fmtScore(score)} điểm</Badge>;
 }
 
 /* ------------------------------------------------------------------ ngày giờ */

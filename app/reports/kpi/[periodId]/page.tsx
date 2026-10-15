@@ -118,9 +118,26 @@ export default async function KpiReportPage({
   ];
   const maxBucket = Math.max(1, ...buckets.map((b) => b.n));
 
+  // Kỳ chưa chốt: điểm chỉ là tạm tính, KHÔNG xếp loại — in ra "Không đạt"
+  // cho cả công ty khi nhân viên còn chưa tới hạn tự khai là báo động giả.
+  const isFinal = period.status === "FINALIZED";
+  const rankLabel = (score: number) =>
+    isFinal ? classifyScore(score).label : "Tạm tính";
+
   return (
     <div className="report mx-auto max-w-[900px] bg-white p-8 text-ink-900 print:max-w-none print:p-0">
       <PrintButton />
+
+      {!isFinal && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-0 flex items-center justify-center"
+        >
+          <span className="-rotate-30 text-[110px] font-black tracking-widest text-ink-900/[0.06] select-none">
+            BẢN TẠM TÍNH
+          </span>
+        </div>
+      )}
 
       {/* ---------------- trang bìa ---------------- */}
       <header className="mb-8 border-b-4 border-brand-600 pb-5">
@@ -173,6 +190,11 @@ export default async function KpiReportPage({
         <h3 className="mb-2 text-sm font-semibold text-ink-700">
           Phân bố xếp loại
         </h3>
+        {!isFinal ? (
+          <p className="text-sm text-ink-600">
+            Chưa xếp loại — kỳ chưa chốt nên điểm hiện tại chỉ là tạm tính.
+          </p>
+        ) : (
         <table className="w-full text-sm">
           <tbody>
             {buckets.map((b) => (
@@ -193,11 +215,14 @@ export default async function KpiReportPage({
             ))}
           </tbody>
         </table>
+        )}
       </section>
 
       {/* ---------------- xếp hạng phòng ban ---------------- */}
       <section className="mb-8 break-inside-avoid">
-        <h2 className="mb-3 text-lg font-bold">2. Xếp hạng phòng ban</h2>
+        <h2 className="mb-3 text-lg font-bold">
+          {isFinal ? "2. Xếp hạng phòng ban" : "2. Điểm tạm tính theo phòng ban"}
+        </h2>
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="bg-ink-100">
@@ -230,7 +255,7 @@ export default async function KpiReportPage({
                   {d.avgScore.toFixed(2)}
                 </td>
                 <td className="border border-ink-200 px-2 py-1.5">
-                  {classifyScore(d.avgScore).label}
+                  {rankLabel(d.avgScore)}
                 </td>
               </tr>
             ))}
@@ -324,7 +349,7 @@ export default async function KpiReportPage({
         </h2>
 
         {departments.map((d) => (
-          <div key={d.name} className="mb-6 break-inside-avoid">
+          <div key={d.name} className="mb-6">
             <h3 className="mb-2 border-b border-ink-200 pb-1 text-base font-semibold">
               {d.name}
               <span className="ml-2 text-sm font-normal text-ink-500">
@@ -345,7 +370,7 @@ export default async function KpiReportPage({
                   </span>
                   <span className="text-sm font-bold">
                     {e.totalScore.toFixed(2)} điểm ·{" "}
-                    {classifyScore(e.totalScore).label}
+                    {rankLabel(e.totalScore)}
                   </span>
                 </div>
                 <table className="w-full border-collapse text-xs">

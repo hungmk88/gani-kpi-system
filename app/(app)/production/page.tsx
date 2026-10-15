@@ -137,7 +137,7 @@ export default async function ProductionPage() {
         />
       ) : (
         <div className="table-wrap">
-          <table className="tbl min-w-[900px]">
+          <table className="tbl tbl-stack sm:min-w-[900px]">
             <thead>
               <tr>
                 <th>Ngày · Ca</th>
@@ -164,17 +164,17 @@ export default async function ProductionPage() {
                       {SHIFT_TYPE_LABEL[s.shiftType] ?? s.shiftType}
                     </div>
                   </td>
-                  <td>
+                  <td data-label="Sản phẩm">
                     <div className="text-ink-800">{s.sku.skuName}</div>
                     <div className="font-mono text-xs text-ink-500">
                       {s.sku.skuCode}
                     </div>
                   </td>
-                  <td className="text-right text-ink-600">{s.rawOutputKg}</td>
-                  <td className="text-right font-medium text-ink-900">
+                  <td data-label="Thô (kg)" className="text-right text-ink-600">{s.rawOutputKg}</td>
+                  <td data-label="Đạt QC (kg)" className="text-right font-medium text-ink-900">
                     {s.status === "DRAFT" ? "—" : s.qcPassedKg}
                   </td>
-                  <td className="text-right">
+                  <td data-label="Phế (kg)" className="text-right">
                     {s.status === "DRAFT" ? (
                       <span className="text-ink-400">—</span>
                     ) : (
@@ -187,10 +187,10 @@ export default async function ProductionPage() {
                       </span>
                     )}
                   </td>
-                  <td className="text-right text-ink-600">
+                  <td data-label="Người" className="text-right text-ink-600">
                     {s.participants.length}
                   </td>
-                  <td>
+                  <td data-label="Trạng thái">
                     <StatusBadge status={s.status} />
                     {s._count.audits > 0 && (
                       <div className="mt-1">
@@ -201,7 +201,7 @@ export default async function ProductionPage() {
                       </div>
                     )}
                   </td>
-                  <td>
+                  <td data-label="Đường đi">
                     <StepTrail status={s.status} />
                   </td>
                 </tr>

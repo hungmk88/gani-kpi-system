@@ -93,7 +93,8 @@ body {
   }
 
   .input {
-    @apply w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900
+    /* 16px trên điện thoại: ô nhập dưới 16px làm iPhone tự phóng to mỗi lần chạm */
+    @apply w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-base text-ink-900 sm:text-sm
            outline-none transition placeholder:text-ink-400
            focus:border-brand-400 focus:ring-2 focus:ring-brand-100;
   }
@@ -127,6 +128,56 @@ body {
   }
 }
 
+/* ------------------------------------------------- BẢNG XẾP CHỒNG (MOBILE) */
+/*
+ * Thêm class `tbl-stack` cạnh `tbl` và gắn `data-label="…"` cho từng <td>:
+ * dưới 640px mỗi dòng thành một thẻ, mỗi ô thành một hàng "nhãn — giá trị".
+ * Bảng 720–900px trên màn 390px thì cột tín hiệu (trạng thái, điểm, mức tải)
+ * luôn nằm ngoài màn hình — xếp chồng thì cột nào cũng thấy.
+ * Ô đầu tiên (tên) chiếm cả hàng, không nhãn. `data-label=""` cũng ẩn nhãn.
+ */
+@media (max-width: 639.98px) {
+  .tbl.tbl-stack {
+    min-width: 0;
+  }
+  .tbl.tbl-stack thead {
+    display: none;
+  }
+  .tbl.tbl-stack tbody tr {
+    display: block;
+    border-bottom: 1px solid var(--color-ink-200);
+    padding: 0.625rem 0;
+  }
+  .tbl.tbl-stack tbody td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border: 0;
+    padding: 0.2rem 1rem;
+    text-align: right;
+  }
+  .tbl.tbl-stack tbody td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: var(--color-ink-500);
+    text-align: left;
+  }
+  .tbl.tbl-stack tbody td:first-child,
+  .tbl.tbl-stack tbody td[data-label=""] {
+    display: block;
+    text-align: left;
+  }
+  .tbl.tbl-stack tbody td:first-child::before,
+  .tbl.tbl-stack tbody td[data-label=""]::before {
+    content: none;
+  }
+  .tbl.tbl-stack tbody td:empty {
+    display: none;
+  }
+}
+
 /* ------------------------------------------------------------------ IN ẤN */
 /* Dùng cho trang /reports — bấm In rồi chọn "Save as PDF" là ra file PDF. */
 @media print {
@@ -146,8 +197,9 @@ body {
     print-color-adjust: exact;
   }
 
-  /* Không cắt ngang bảng hay khối nhân sự giữa hai trang giấy */
-  table,
+  /* Không cắt ngang một DÒNG hay khối nhân sự giữa hai trang giấy. Không
+     đặt cho cả <table>: bảng dài hơn một trang thì để trống nửa trang hoặc bị
+     cắt cụt — để nó tự sang trang, tiêu đề cột lặp lại (thead bên dưới). */
   tr,
   .break-inside-avoid {
     break-inside: avoid;

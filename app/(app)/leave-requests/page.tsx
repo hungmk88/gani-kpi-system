@@ -141,7 +141,7 @@ export default async function LeaveRequestsPage() {
           </div>
         ) : (
           <div className="table-wrap">
-            <table className="tbl">
+            <table className="tbl tbl-stack">
               <thead>
                 <tr>
                   <th>Thời gian nghỉ</th>
@@ -162,7 +162,7 @@ export default async function LeaveRequestsPage() {
                         </span>
                       )}
                     </td>
-                    <td className="text-ink-600">
+                    <td data-label="Lý do" className="text-ink-600">
                       {r.reason}
                       {r.reviewNote && (
                         <div className="mt-1 text-xs text-ink-500">
@@ -170,13 +170,13 @@ export default async function LeaveRequestsPage() {
                         </div>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Trạng thái">
                       <StatusBadge status={r.status} />
                     </td>
-                    <td className="text-ink-600">
+                    <td data-label="Ngày phép còn lại" className="text-ink-600">
                       {quota.remaining}/{quota.total} ngày
                     </td>
-                    <td>
+                    <td data-label="">
                       {canCancelLeave(user, r, now) && (
                         <LeaveRequestActions
                           requestId={r.id}
@@ -197,7 +197,7 @@ export default async function LeaveRequestsPage() {
         <section>
           <h2 className="section-title mb-3">Lịch sử phòng ban</h2>
           <div className="table-wrap">
-            <table className="tbl">
+            <table className="tbl tbl-stack">
               <thead>
                 <tr>
                   <th>Người xin nghỉ</th>
@@ -211,16 +211,16 @@ export default async function LeaveRequestsPage() {
                 {history.map((r) => (
                   <tr key={r.id}>
                     <td className="text-ink-800">{r.employee.fullName}</td>
-                    <td className="text-ink-600">
+                    <td data-label="Thời gian nghỉ" className="text-ink-600">
                       {formatVnDate(r.startDate)} → {formatVnDate(r.endDate)}
                     </td>
-                    <td className="text-ink-600">
+                    <td data-label="Người duyệt" className="text-ink-600">
                       {r.reviewedBy?.fullName ?? "—"}
                     </td>
-                    <td>
+                    <td data-label="Trạng thái">
                       <StatusBadge status={r.status} />
                     </td>
-                    <td>
+                    <td data-label="">
                       {/* Đơn đã duyệt, chưa tới ngày nghỉ: người có quyền duyệt được huỷ hộ */}
                       {canCancelLeave(user, r, now) && (
                         <LeaveRequestActions requestId={r.id} mode="cancel-other" />

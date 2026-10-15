@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { CircleCheck } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { classifyScore, round2 } from "@/lib/kpi";
+import { round2, scoreStateOf, type ScoreState } from "@/lib/kpi";
+import { getDeadlinePeriod } from "@/lib/services/period-service";
 import { BLOCKED_ALERT_HOURS } from "@/lib/constants";
 import {
   Badge,
@@ -14,6 +15,7 @@ import {
   RiskBadge,
   ScoreBadge,
   StatCard,
+  fmtScore,
   formatDate,
 } from "@/components/ui";
 import RunScanButton from "./run-scan-button";
@@ -31,9 +33,14 @@ export default async function CeoDashboard() {
     now.getTime() - BLOCKED_ALERT_HOURS * 3600_000
   );
 
-  const period = await prisma.kpiPeriod.findFirst({
-    orderBy: [{ year: "desc" }, { month: "desc" }],
-  });
+  // Kỳ ĐANG TỚI HẠN, không phải kỳ mới nhất: ngày 1–5 Ban Giám đốc đang chốt
+  // kỳ tháng trước (xem period-service). Lấy kỳ mới nhất thì trang này và
+  // trang chủ nói về hai kỳ khác nhau.
+  const period =
+    (await getDeadlinePeriod(now)) ??
+    (await prisma.kpiPeriod.findFirst({
+      orderBy: [{ year: "desc" }, { month: "desc" }],
+    }));
 
   const [
     openTasks,
@@ -130,7 +137,7 @@ export default async function CeoDashboard() {
                 periodId: period.id,
                 employee: { departmentId: d.id },
               },
-              select: { weightedScore: true, employeeId: true },
+              select: { weightedScore: true, employeeId: true, status: true },
             })
           : Promise.resolve([]),
       ]);
@@ -148,6 +155,9 @@ export default async function CeoDashboard() {
         ? round2(scores.reduce((a, b) => a + b, 0) / scores.length)
         : 0;
 
+      const state: ScoreState = scoreStateOf(period?.status, results);
+      const selfReviewed = results.filter((r) => r.status !== "DRAFT").length;
+
       return {
         id: d.id,
         name: d.name,
@@ -156,13 +166,25 @@ export default async function CeoDashboard() {
         tasksDone,
         headcount: perEmployee.size,
         avgScore,
+        state,
+        selfReviewed,
+        totalRows: results.length,
       };
     })
   );
 
+  // Kỳ đã chốt: phòng điểm thấp nhất lên đầu. Kỳ chưa chốt thì điểm chưa
+  // có nghĩa — xếp theo việc trễ rồi tới phòng khai chậm nhất.
+  const allFinal = deptStats.every((d) => d.headcount === 0 || d.state === "FINAL");
   const worstDepts = [...deptStats]
     .filter((d) => d.headcount > 0)
-    .sort((a, b) => a.avgScore - b.avgScore);
+    .sort((a, b) =>
+      allFinal
+        ? a.avgScore - b.avgScore
+        : b.tasksLate - a.tasksLate ||
+          a.selfReviewed / Math.max(a.totalRows, 1) -
+            b.selfReviewed / Math.max(b.totalRows, 1),
+    );
 
   const exceptionCount =
     criticalTasks.length +
@@ -379,7 +401,7 @@ export default async function CeoDashboard() {
       <section>
         <h2 className="section-title mb-3">Hiệu suất theo phòng ban</h2>
         <div className="table-wrap">
-          <table className="tbl">
+          <table className="tbl tbl-stack">
             <thead>
               <tr>
                 <th>Phòng ban</th>
@@ -387,19 +409,20 @@ export default async function CeoDashboard() {
                 <th className="text-right">Việc đang mở</th>
                 <th className="text-right">Việc trễ</th>
                 <th className="text-right">Xong trong tháng</th>
-                <th className="w-48">Điểm KPI trung bình</th>
+                <th className="w-48">
+                  {allFinal ? "Điểm KPI trung bình" : "Tiến độ tự khai KPI"}
+                </th>
                 <th>Xếp loại</th>
               </tr>
             </thead>
             <tbody>
               {worstDepts.map((d) => {
-                const cls = classifyScore(d.avgScore);
                 return (
                   <tr key={d.id}>
                     <td className="font-medium text-ink-800">{d.name}</td>
-                    <td className="text-right text-ink-600">{d.headcount}</td>
-                    <td className="text-right text-ink-600">{d.tasksOpen}</td>
-                    <td className="text-right">
+                    <td data-label="Nhân sự có KPI" className="text-right text-ink-600">{d.headcount}</td>
+                    <td data-label="Việc đang mở" className="text-right text-ink-600">{d.tasksOpen}</td>
+                    <td data-label="Việc trễ" className="text-right">
                       <span
                         className={
                           d.tasksLate > 0
@@ -410,27 +433,38 @@ export default async function CeoDashboard() {
                         {d.tasksLate}
                       </span>
                     </td>
-                    <td className="text-right text-ink-600">{d.tasksDone}</td>
-                    <td>
-                      <div className="mb-1 text-xs text-ink-600">
-                        {d.avgScore.toFixed(2)} / 100
-                      </div>
-                      <ProgressBar
-                        value={(d.avgScore / 150) * 100}
-                        tone={
-                          d.avgScore >= 100
-                            ? "green"
-                            : d.avgScore >= 80
-                              ? "amber"
-                              : "red"
-                        }
-                      />
+                    <td data-label="Xong trong tháng" className="text-right text-ink-600">{d.tasksDone}</td>
+                    <td data-label={allFinal ? "Điểm TB" : "Tự khai"}>
+                      {d.state === "FINAL" ? (
+                        <>
+                          <div className="mb-1 text-xs text-ink-600">
+                            {fmtScore(d.avgScore)} / 100
+                          </div>
+                          <ProgressBar
+                            value={(d.avgScore / 150) * 100}
+                            tone={
+                              d.avgScore >= 100
+                                ? "green"
+                                : d.avgScore >= 80
+                                  ? "amber"
+                                  : "red"
+                            }
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <div className="mb-1 text-xs text-ink-600">
+                            Đã tự khai {d.selfReviewed}/{d.totalRows} chỉ tiêu
+                          </div>
+                          <ProgressBar
+                            value={(d.selfReviewed / Math.max(d.totalRows, 1)) * 100}
+                            tone="brand"
+                          />
+                        </>
+                      )}
                     </td>
-                    <td>
-                      <ScoreBadge score={d.avgScore} />
-                      <span className="ml-2 text-xs text-ink-500">
-                        {cls.label}
-                      </span>
+                    <td data-label="Xếp loại">
+                      <ScoreBadge score={d.avgScore} state={d.state} />
                     </td>
                   </tr>
                 );
@@ -446,8 +480,9 @@ export default async function CeoDashboard() {
           </table>
         </div>
         <p className="mt-2 text-xs text-ink-500">
-          Bảng xếp theo điểm KPI trung bình từ thấp lên cao — phòng ban đang yếu
-          nhất nằm trên cùng.
+          {allFinal
+            ? "Bảng xếp theo điểm KPI trung bình từ thấp lên cao — phòng ban đang yếu nhất nằm trên cùng."
+            : "Kỳ chưa chốt nên chưa xếp loại — bảng xếp theo việc trễ, rồi tới phòng tự khai chậm nhất."}
         </p>
       </section>
     </>

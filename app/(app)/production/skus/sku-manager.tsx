@@ -209,7 +209,7 @@ export default function SkuManager({
         </div>
       ) : (
         <div className="table-wrap">
-          <table className="tbl">
+          <table className="tbl tbl-stack">
             <thead>
               <tr>
                 <th>Mã</th>
@@ -228,8 +228,8 @@ export default function SkuManager({
               {skus.map((s) => (
                 <tr key={s.id} className={s.isActive ? "" : "opacity-50"}>
                   <td className="font-mono text-xs text-ink-600">{s.skuCode}</td>
-                  <td className="font-medium text-ink-800">{s.skuName}</td>
-                  <td className="text-right text-ink-700">
+                  <td data-label="Tên sản phẩm" className="font-medium text-ink-800">{s.skuName}</td>
+                  <td data-label="Sản lượng chuẩn" className="text-right text-ink-700">
                     {editing === s.id ? (
                       <input
                         type="number"
@@ -252,13 +252,13 @@ export default function SkuManager({
                       `${s.targetOutputKg} kg`
                     )}
                   </td>
-                  <td className="text-right text-ink-700">
+                  <td data-label="Hao hụt ĐM" className="text-right text-ink-700">
                     {s.stdMaterialLossRate}%
                   </td>
-                  <td className="text-right font-medium text-ink-900">
+                  <td data-label="Định mức NVL" className="text-right font-medium text-ink-900">
                     {norm(s.targetOutputKg, s.stdMaterialLossRate)} kg
                   </td>
-                  <td>
+                  <td data-label="NVL chính (kho)">
                     {editing === s.id ? (
                       <select
                         className="input py-1 text-xs"
@@ -285,12 +285,12 @@ export default function SkuManager({
                     )}
                   </td>
                   {showMoney && (
-                    <td className="text-right text-ink-600">
+                    <td data-label="Đơn giá" className="text-right text-ink-600">
                       {new Intl.NumberFormat("vi-VN").format(s.unitPriceVnd ?? 0)} ₫
                     </td>
                   )}
-                  <td className="text-right text-ink-600">{s.shiftCount}</td>
-                  <td>
+                  <td data-label="Số ca" className="text-right text-ink-600">{s.shiftCount}</td>
+                  <td data-label="Trạng thái">
                     {s.isActive ? (
                       <Badge tone="green">Đang dùng</Badge>
                     ) : (
@@ -298,7 +298,7 @@ export default function SkuManager({
                     )}
                   </td>
                   {canEdit && (
-                    <td className="whitespace-nowrap">
+                    <td data-label="" className="whitespace-nowrap">
                       <button
                         className="text-xs text-brand-600 hover:underline"
                         onClick={() =>

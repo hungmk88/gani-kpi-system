@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { fail, handle, requireUser } from "@/lib/api";
 import { kpiScopeWhere } from "@/lib/rbac";
 import { buildKpiReport, type ExportRow } from "@/lib/excel";
-import { classifyScore, summarizeResults } from "@/lib/kpi";
+import { classifyScoreFor, scoreStateOf, summarizeResults } from "@/lib/kpi";
 import { KPI_STATUS_LABEL } from "@/lib/constants";
 
 export const runtime = "nodejs";
@@ -77,7 +77,7 @@ async function exportKpi(req: Request): Promise<Response> {
         department: list[0].employee.department?.name ?? "—",
         weight: s.totalWeight,
         score: s.totalScore,
-        rank: classifyScore(s.totalScore).label,
+        rank: classifyScoreFor(s.totalScore, scoreStateOf(period.status, list)).label,
       };
     })
     .sort((a, b) => b.score - a.score);

@@ -7,6 +7,7 @@ import { can, kpiScopeWhere } from "@/lib/rbac";
 import {
   isManagerReviewOpen,
   isSelfReviewOpen,
+  isCountedKpiRow,
   summarizeResults,
 } from "@/lib/kpi";
 import { PageHeader, PeriodStatusBadge, formatDate } from "@/components/ui";
@@ -47,6 +48,9 @@ export default async function KpiPeriodPage({
   >();
 
   for (const r of results) {
+    // Chỉ tiêu đã ngưng dùng, trọng số 0: không tính điểm, không cần khai —
+    // hiện ra chỉ làm nhiễu bảng và đội số "chưa khai" lên.
+    if (!isCountedKpiRow(r)) continue;
     const key = r.employeeId;
     if (!groupsMap.has(key)) {
       groupsMap.set(key, {
