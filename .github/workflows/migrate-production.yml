@@ -1,0 +1,57 @@
+name: Migrate production
+
+# Chạy migration Prisma lên database production (README mục 0, bước 1–3).
+# Chỉ chạy tay: Actions → Migrate production → Run workflow.
+#   - Để trống ô xác nhận: CHỈ KIỂM — liệt kê migration còn thiếu và dữ liệu sẽ
+#     làm migration hỏng. Không ghi gì.
+#   - Gõ MIGRATE: kiểm như trên, sạch thì chạy `prisma migrate deploy`.
+# Chạy workflow "Backup database" TRƯỚC khi gõ MIGRATE.
+# Cần secret BACKUP_DATABASE_URL = DIRECT_URL (cổng 5432, KHÔNG phải pooler 6543).
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Gõ MIGRATE để chạy migration thật (để trống = chỉ kiểm)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrate-production
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+    steps:
+      - name: Kiểm tra cấu hình
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "::error::Chưa đặt secret BACKUP_DATABASE_URL"; exit 1; fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Migration còn thiếu
+        run: npx prisma migrate status || true
+      - name: Kiểm dữ liệu trước khi migrate (chỉ đọc)
+        run: |
+          node scripts/validate-db-checks.mjs --preflight | tee preflight.log || true
+          # Chỉ cột tiền vượt giới hạn INTEGER làm migration hỏng. Giá trị lạ ở
+          # cột trạng thái/vai trò không chặn (CHECK thêm ở chế độ NOT VALID).
+          if grep -q "migration tiền sẽ hỏng" preflight.log; then
+            echo "::error::Có cột tiền vượt giới hạn INTEGER — sửa dữ liệu trước khi migrate."
+            exit 1
+          fi
+      - name: Chạy migration
+        if: ${{ inputs.confirm == 'MIGRATE' }}
+        run: npx prisma migrate deploy
+      - name: Kiểm CHECK constraint sau migrate (chỉ báo, không ghi)
+        if: ${{ inputs.confirm == 'MIGRATE' }}
+        run: node scripts/validate-db-checks.mjs || echo "::warning::Còn dữ liệu cũ sai giá trị — xem log, sửa tay rồi chạy npm run db:validate-checks -- --apply."

@@ -20,7 +20,9 @@ chạy trên máy có `.env` trỏ `DATABASE_URL`/`DIRECT_URL` vào **production
    Giá trị lạ (vd ca "MORNING") không làm migration hỏng (constraint thêm ở chế
    độ NOT VALID) nhưng nên sửa luôn để bước 3 qua gọn.
 2. **Chạy migration TRƯỚC, hoặc ngay cùng lúc, với lần deploy Vercel:**
-   `npx prisma migrate deploy`. Code mới đọc bảng `job_locks` và cột
+   `npx prisma migrate deploy` — hoặc GitHub → Actions → *Migrate production*
+   (để trống ô xác nhận = chỉ kiểm; gõ `MIGRATE` = chạy thật; dùng secret
+   `BACKUP_DATABASE_URL`). Code mới đọc bảng `job_locks` và cột
    `users.sessionsRevokedAt` — deploy code trước migration thì mọi cron trả 500
    (chưa có `job_locks`) và đăng nhập/các trang lỗi vì thiếu cột. Code cũ chạy
    được với schema mới (migration chỉ thêm), nên migrate trước là an toàn.
