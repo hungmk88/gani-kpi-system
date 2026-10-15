@@ -59,6 +59,12 @@ export const PERIOD_STATUSES = [
 ] as const;
 export type PeriodStatus = (typeof PERIOD_STATUSES)[number];
 
+export const LEAVE_STATUSES = ["PENDING", "APPROVED", "REJECTED", "CANCELLED"] as const;
+export type LeaveStatus = (typeof LEAVE_STATUSES)[number];
+
+export const CROSS_DEPT_REQUEST_STATUSES = ["PENDING", "ACCEPTED", "REJECTED"] as const;
+export type CrossDeptRequestStatus = (typeof CROSS_DEPT_REQUEST_STATUSES)[number];
+
 export const DATA_SOURCES = ["MANUAL", "EXCEL", "IPOS_API"] as const;
 
 /** Nguồn số liệu của KpiConfig (6 chỉ tiêu KPI sản xuất) — enum riêng, khác DATA_SOURCES ở trên. */

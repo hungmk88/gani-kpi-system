@@ -174,11 +174,12 @@ export default function SkuManager({
             <label className="label">Đơn giá quy đổi (₫/kg)</label>
             <input
               type="number"
-              step="any"
+              step="1"
+              min="0"
               className="input"
               value={f.unitPriceVnd}
               onChange={(e) =>
-                setF({ ...f, unitPriceVnd: Number(e.target.value) })
+                setF({ ...f, unitPriceVnd: Math.round(Number(e.target.value)) })
               }
             />
             <p className="mt-1 text-[11px] text-ink-500">

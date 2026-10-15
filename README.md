@@ -75,6 +75,11 @@ Làm đúng thứ tự:
    `GET` và `?secret=` trên URL không còn được nhận.
 4. **Chạy migration** (máy có `DIRECT_URL` của production):
    `npx prisma migrate deploy` — thêm bảng `job_locks` và các index.
+   Migration `20261016090000_money_int_and_checks` đổi các cột tiền sang số
+   nguyên VND (làm tròn đến đồng) và thêm CHECK constraint cho vai trò / trạng
+   thái / ca. Sau đó chạy `npm run db:validate-checks` — nó liệt kê dòng CŨ nào
+   mang giá trị lạ (vd ca "MORNING"); sửa các dòng đó rồi chạy
+   `npm run db:validate-checks -- --apply` để xác nhận constraint.
 5. **Sửa dữ liệu ngày giờ cũ** — sao lưu trước, chạy thử, xem kỹ rồi mới sửa thật:
    `npm run fix:dates` rồi `npm run fix:dates -- --apply`.
    Sửa hạn chốt 2-4-5 của các kỳ chưa chốt (trước lệch 7–14 tiếng) và ngày ca
