@@ -57,6 +57,11 @@ chạy trên máy có `.env` trỏ `DATABASE_URL`/`DIRECT_URL` vào **production
    `BACKUP_PASSPHRASE` vào GitHub → Settings → Secrets → Actions. Workflow
    `.github/workflows/backup.yml` chạy mỗi đêm, bản sao được mã hoá; chạy hỏng
    thì workflow đỏ kèm thông báo lỗi.
+8. **Đặt lại mật khẩu hàng loạt** (mọi tài khoản đang hoạt động về một mật
+   khẩu chung): thêm secret `RESET_PASSWORD`, rồi Actions → **Reset passwords**
+   → Run workflow. Để trống ô xác nhận = chạy thử (chỉ liệt kê tài khoản); gõ
+   `RESET` = ghi thật. Mọi phiên đăng nhập cũ bị đăng xuất. Chạy xong xoá secret
+   `RESET_PASSWORD`. Chạy tay: `RESET_PASSWORD='…' node scripts/reset-passwords.mjs --apply`.
 
 **Bảo mật vận hành:**
 
