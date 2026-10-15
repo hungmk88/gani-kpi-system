@@ -18,7 +18,14 @@ const h = vi.hoisted(() => {
       updateMany: vi.fn(async (args: { where: { id: { in: string[] } } }) => ({
         count: state.claimCount ?? args.where.id.in.length,
       })),
-      findMany: vi.fn(async () => state.claimedIds.map((id) => ({ id }))),
+      // Đọc lại các dòng lượt này vừa khoá: mặc định là mọi dòng trong lệnh
+      // khoá; `claimedIds` giả lập lượt khác đã chốt mất một phần.
+      findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) => {
+        const ids = state.claimedIds.length > 0 ? state.claimedIds : args.where.id.in;
+        return state.rows
+          .filter((r) => ids.includes(r.id as string))
+          .map((r) => ({ ...r, status: "FINALIZED" }));
+      }),
       update: vi.fn(async () => ({})),
       count: vi.fn(async () => state.remaining),
     },

@@ -25,8 +25,11 @@ export function reasonRequiredFor(
 ): TaskReasonKind | null {
   if (from === to) return null;
   if (to === "BLOCKED") return "BLOCK";
-  // Việc đã nghiệm thu / đã huỷ được mở lại
-  if (from === "DONE" || from === "CANCELLED") return "REOPEN";
+  // Việc đã nghiệm thu / đã huỷ được mở lại (về một trạng thái còn mở —
+  // Hoàn thành → Đã huỷ không phải là "mở lại")
+  if ((from === "DONE" || from === "CANCELLED") && (OPEN_AGAIN.includes(to) || to === "REVIEW")) {
+    return "REOPEN";
+  }
   // Việc đang chờ duyệt bị trả về làm tiếp ("Làm lại")
   if (from === "REVIEW" && OPEN_AGAIN.includes(to)) return "REOPEN";
   return null;

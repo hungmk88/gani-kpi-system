@@ -305,9 +305,18 @@ async function main() {
     headers: { cookie: emp },
     redirect: "manual",
   });
+  // Trang có loading.tsx thì Next.js gửi khung chờ (HTTP 200) trước khi trang
+  // chạy xong, nên redirect() thành chuyển hướng phía trình duyệt (thẻ meta
+  // __next-page-redirect) thay vì mã 307 — nhưng nội dung trang vẫn không được
+  // vẽ ra. Chấp nhận cả hai, miễn là đá về đúng chỗ và không lộ dữ liệu.
+  const empAnalyticsHtml = await empAnalytics.text();
   check(
     "Xác nhận trang Phân tích thật sự đá nhân viên ra",
-    empAnalytics.status === 307 || empAnalytics.status === 302,
+    empAnalytics.status === 307 ||
+      empAnalytics.status === 302 ||
+      (empAnalytics.status === 200 &&
+        /id="__next-page-redirect"[^>]*url=\/dashboard/.test(empAnalyticsHtml) &&
+        !empAnalyticsHtml.includes("Cân bằng tải")),
     `HTTP ${empAnalytics.status}`
   );
 
@@ -437,15 +446,12 @@ async function main() {
     "Nhân viên KHÔNG thấy khối nhịp xưởng",
     !dEmp.html.includes("Nhân lực hôm nay")
   );
-  check("Admin thấy khối nhịp xưởng", dAdmin.html.includes("Nhân lực hôm nay"));
-  check("Ban Giám đốc thấy khối nhịp xưởng", dCeo.html.includes("Nhân lực hôm nay"));
-  check(
-    "Tên tháng có đủ 2 chữ số, khớp cách đặt tên kỳ KPI ở chỗ khác trong hệ thống",
-    new RegExp(`Sản lượng Tháng ${String(new Date().getMonth() + 1).padStart(2, "0")}/${new Date().getFullYear()}`).test(
-      dAdmin.html
-    ),
-    "không thấy đúng định dạng Tháng 0X/YYYY"
-  );
+  // Xưởng chưa có ca nào thì khối thu lại thành một dòng "Xưởng hôm nay: …"
+  // thay vì hai thẻ "0 người / 0 tấn" — vẫn tính là thấy khối nhịp xưởng.
+  const seesFactory = (html) =>
+    html.includes("Nhân lực hôm nay") || html.includes("Xưởng hôm nay:");
+  check("Admin thấy khối nhịp xưởng", seesFactory(dAdmin.html));
+  check("Ban Giám đốc thấy khối nhịp xưởng", seesFactory(dCeo.html));
 
   // Dựng đúng 2 ca THẬT cho hôm nay để kiểm số ra đúng công thức, không đoán
   // suông từ dữ liệu seed vốn chỉ có 1 ca ở ngày hôm qua.
@@ -462,8 +468,14 @@ async function main() {
     where: { email: "tp.prod@ganifoody.vn" },
   });
 
-  const today0h = new Date();
-  today0h.setHours(0, 0, 0, 0);
+  // 00:00 HÔM NAY THEO GIỜ VIỆT NAM — không dùng setHours(0) của máy chạy
+  // test: máy CI chạy UTC, sau 17:00 UTC là đã sang ngày mới ở Việt Nam và
+  // ca "hôm nay" của test sẽ rơi vào hôm qua theo lịch VN.
+  const VN_OFFSET_MS = 7 * 3600_000;
+  const vnNow = new Date(Date.now() + VN_OFFSET_MS);
+  const today0h = new Date(
+    Date.UTC(vnNow.getUTCFullYear(), vnNow.getUTCMonth(), vnNow.getUTCDate()) - VN_OFFSET_MS
+  );
 
   const beforeSummary = await getDash(admin);
   const workforceBefore = extractStatValue(beforeSummary.html, "Nhân lực hôm nay");
@@ -516,6 +528,14 @@ async function main() {
       "Nhân lực hôm nay đếm đúng — 2 ca mới cộng thêm 3 người có mặt (đếm theo người, không theo lượt ca)",
       workforceAfter === workforceBefore + 3,
       `trước ${workforceBefore}, sau ${workforceAfter} (kỳ vọng +3)`
+    );
+
+    check(
+      "Tên tháng có đủ 2 chữ số, khớp cách đặt tên kỳ KPI ở chỗ khác trong hệ thống",
+      new RegExp(`Sản lượng Tháng ${String(new Date().getMonth() + 1).padStart(2, "0")}/${new Date().getFullYear()}`).test(
+        after.html
+      ),
+      "không thấy đúng định dạng Tháng 0X/YYYY"
     );
 
     const outputAfter = extractStatValue(after.html, /Sản lượng Tháng/);
@@ -629,13 +649,18 @@ function extractStatValue(html, label) {
       ? label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
       : label.source;
   // Nhãn và số không nằm cạnh nhau: giữa hai thứ đó còn một <div> bọc ngoài
-  // rồi mới tới <span class="text-2xl..."> chứa số. Bắc cầu qua bằng [\s\S]*?
+  // rồi mới tới phần tử "stat-value" chứa số. Bắc cầu qua bằng [\s\S]*?
   // không tham lam, dừng đúng ở span đầu tiên gặp — tức span của thẻ này.
+  // Số nằm trong phần tử mang class "stat-value" (StatCard của hệ thiết kế).
+  // Chỉ khớp nhãn nằm trong thẻ HTML (">nhãn<"), không khớp bản sao nhãn
+  // trong dữ liệu RSC nhúng ở cuối trang — bản đó nằm ở chỗ khác, bắc cầu từ
+  // đó sẽ vớ nhầm số của thẻ khác.
   const re = new RegExp(
-    labelPattern + "[\\s\\S]*?text-2xl[^>]*>([\\d.,]+)"
+    ">" + labelPattern + "[^<]*<[\\s\\S]*?stat-value[^>\"]*\">([\\d.,]+)"
   );
   const m = html.match(re);
-  if (!m) return NaN;
+  // Xưởng chưa có ca: khối thu thành một dòng, không có thẻ số → coi như 0
+  if (!m) return html.includes("Xưởng hôm nay:") ? 0 : NaN;
   // vi-VN: dấu chấm ngăn nghìn, dấu phẩy là thập phân
   return parseFloat(m[1].replace(/\./g, "").replace(",", "."));
 }

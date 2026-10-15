@@ -20,24 +20,30 @@ type AuditInput = {
  */
 export async function writeAudit(input: AuditInput) {
   try {
-    await prisma.auditLog.create({
-      data: {
-        userId: input.actor?.id ?? null,
-        userEmail: input.actor?.email ?? null,
-        action: input.action,
-        entityName: input.entityName,
-        entityId: input.entityId,
-        beforePayload: input.before ? safeJson(input.before) : null,
-        afterPayload: input.after ? safeJson(input.after) : null,
-        reason: input.reason ?? null,
-        ipAddress: input.ip ?? null,
-        userAgent: input.userAgent ?? null,
-      },
-    });
+    await prisma.auditLog.create({ data: auditRecord(input) });
   } catch (e) {
     // Không được để lỗi ghi log làm hỏng nghiệp vụ chính, nhưng phải kêu to.
     console.error("[AUDIT] Ghi log thất bại:", e);
   }
+}
+
+/**
+ * Một dòng audit_logs đúng định dạng — dùng chung cho writeAudit và cho nơi
+ * phải ghi nhật ký hàng loạt TRONG một giao dịch (createMany).
+ */
+export function auditRecord(input: AuditInput) {
+  return {
+    userId: input.actor?.id ?? null,
+    userEmail: input.actor?.email ?? null,
+    action: input.action,
+    entityName: input.entityName,
+    entityId: input.entityId,
+    beforePayload: input.before ? safeJson(input.before) : null,
+    afterPayload: input.after ? safeJson(input.after) : null,
+    reason: input.reason ?? null,
+    ipAddress: input.ip ?? null,
+    userAgent: input.userAgent ?? null,
+  };
 }
 
 function safeJson(v: unknown) {

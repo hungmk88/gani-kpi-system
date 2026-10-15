@@ -89,10 +89,33 @@ export const MAX_QUALITY_LOSS_VND = 2_000_000_000;
 
 /* ------------------------------------------------------------ PHÂN QUYỀN */
 
-function canEnterDraft(u: { role: string; productionRole?: string | null }) {
+export function canEnterDraft(u: { role: string; productionRole?: string | null }) {
   if (u.role === "CEO") return true;
   return ["WORKER", "TEAM_LEADER", "SUPERVISOR", "PRODUCTION_DIRECTOR"].includes(
     u.productionRole ?? ""
+  );
+}
+
+/**
+ * Ai được sửa và gửi lại một ca KCS đã trả về.
+ *
+ * Mặc định chỉ người đã khai ca (họ biết số liệu thật). Nhưng nếu người đó
+ * đã nghỉ / bị khoá hoặc không còn vai trò khai ca, ca sẽ kẹt DRAFT mãi và
+ * chặn KPI xưởng ngày hôm đó — khi ấy tổ trưởng / quản đốc / giám đốc sản
+ * xuất (hoặc BGĐ) được nhận thay. Công nhân thường không được sửa ca của
+ * người khác. KCS không có vai trò khai ca nên vẫn không tự sửa rồi tự duyệt.
+ */
+export function canResubmitReturnedShift(
+  actor: { id: string; role: string; productionRole?: string | null },
+  creator: { id: string; isActive: boolean; role: string; productionRole?: string | null }
+) {
+  if (!canEnterDraft(actor)) return false;
+  if (actor.id === creator.id) return true;
+  const creatorStuck = !creator.isActive || !canEnterDraft(creator);
+  if (!creatorStuck) return false;
+  return (
+    actor.role === "CEO" ||
+    ["TEAM_LEADER", "SUPERVISOR", "PRODUCTION_DIRECTOR"].includes(actor.productionRole ?? "")
   );
 }
 
@@ -631,8 +654,7 @@ export async function returnShiftToProduction(
   const res = await prisma.productionShiftLog.updateMany({
     where: {
       id: logId,
-      status: "DRAFT",
-      OR: [{ qcNote: null }, { NOT: { qcNote: { startsWith: SHIFT_RETURN_PREFIX } } }],
+      ...WAITING_QC_WHERE,
     },
     data: { qcNote: buildShiftReturnNote(actor.fullName, why) },
   });
@@ -682,15 +704,19 @@ export async function resubmitShiftDraft(
   }
   const log = await prisma.productionShiftLog.findUnique({
     where: { id: logId },
-    include: { sku: true, participants: true },
+    include: {
+      sku: true,
+      participants: true,
+      createdBy: { select: { id: true, isActive: true, role: true, productionRole: true } },
+    },
   });
   if (!log) {
     throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy ca sản xuất.", 404);
   }
-  if (log.createdById !== actor.id) {
+  if (!canResubmitReturnedShift(actor, log.createdBy)) {
     throw new BusinessError(
       ERR.FORBIDDEN,
-      "Chỉ người đã khai ca này mới sửa và gửi lại được.",
+      "Chỉ người đã khai ca này mới sửa và gửi lại được (tổ trưởng / quản đốc nhận thay khi người khai đã nghỉ).",
       403
     );
   }
@@ -871,8 +897,7 @@ export async function approveByQc(
       // ...và chưa bị KCS khác trả về sản xuất trong lúc đang nhập
       where: {
         id: logId,
-        status: "DRAFT",
-        OR: [{ qcNote: null }, { NOT: { qcNote: { startsWith: SHIFT_RETURN_PREFIX } } }],
+        ...WAITING_QC_WHERE,
       },
       data: {
         qcPassedKg: input.qcPassedKg,
