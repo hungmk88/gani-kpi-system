@@ -1,6 +1,5 @@
-import { PRODUCTION_DEPARTMENT_CODE } from "@/lib/constants";
 import Link from "next/link";
-import { CalendarDays, LineChart } from "lucide-react";
+import { CalendarDays } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { can } from "@/lib/rbac";
@@ -27,16 +26,6 @@ export default async function KpiHomePage() {
   });
 
   const current = periods[0];
-
-  // "Năm Quyết Định" chỉ áp dụng cho Phòng Sản Xuất (KpiPeriodTarget hardcode
-  // department: "PRODUCTION", xem app/api/kpi/targets/route.ts) — trước đây
-  // điều kiện chỉ kiểm tra "là Trưởng phòng có phòng ban" nên hiện nhầm cho
-  // MỌI trưởng phòng, kể cả Sales.
-  const myDept = user.departmentId
-    ? await prisma.department.findUnique({ where: { id: user.departmentId } })
-    : null;
-  const isProductionManager =
-    user.role === "MANAGER" && myDept?.code === PRODUCTION_DEPARTMENT_CODE;
 
   const myResults = current
     ? await prisma.kpiResult.findMany({
@@ -105,17 +94,6 @@ export default async function KpiHomePage() {
               }
               href={`/kpi/${current.id}`}
             />
-            {(user.role === "CEO" || isProductionManager) && (
-              <Link
-                href={`/kpi/nam-quyet-dinh?periodId=${current.id}`}
-                className="card p-4 transition hover:shadow-md hover:bg-blue-50"
-              >
-                <div className="flex items-center gap-1.5 text-sm font-semibold text-ink-600">
-                  <LineChart size={16} strokeWidth={2} /> Năm Quyết Định
-                </div>
-                <div className="mt-2 text-sm text-ink-500">Nhập mục tiêu KPI phòng SX</div>
-              </Link>
-            )}
             {user.role !== "ADMIN" && (
               <StatCard
                 label="Điểm KPI của tôi"

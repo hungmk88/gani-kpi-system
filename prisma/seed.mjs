@@ -15,7 +15,6 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { seedHistory } from "./seed-history.mjs";
-import { seedProductionKpi } from "./seed-production-kpi.mjs";
 import { vnAt, vnDate, vnParts } from "./vn-date.mjs";
 
 try {
@@ -530,10 +529,6 @@ async function main() {
     });
     console.log("  ✓ 1 ca sản xuất mẫu đang chờ KCS xác nhận");
   }
-
-  // 8c'. Cấu hình 6 KPI ca sản xuất + bậc thưởng (trước đây nằm ở seed.ts
-  // nhưng không script nào gọi).
-  await seedProductionKpi(prisma);
 
   // 8d. Lịch sử cho phần Phân tích & Dự báo (Phase 4).
   // Không có quá khứ thì ba engine của Phase 4 mở lên chỉ báo "chưa đủ dữ liệu".

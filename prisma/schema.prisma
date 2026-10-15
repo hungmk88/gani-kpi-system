@@ -410,6 +410,8 @@ model KpiReview {
 
 // ============ KPI CONFIGURATION (PHÒNG SX) ============
 
+// LEGACY (gỡ 10/2026): bộ "6 KPI ca" đã gộp vào điểm 2 tầng — bảng giữ dữ liệu
+// cũ, không còn code nào ghi vào. Xem README mục "6 chỉ tiêu — ĐÃ GỠ".
 model KpiConfig {
   id              String      @id @default(uuid())
   code            String      @unique
@@ -432,6 +434,8 @@ model KpiConfig {
   @@map("kpi_configs")
 }
 
+// LEGACY (gỡ 10/2026): bộ "6 KPI ca" đã gộp vào điểm 2 tầng — bảng giữ dữ liệu
+// cũ, không còn code nào ghi vào. Xem README mục "6 chỉ tiêu — ĐÃ GỠ".
 model BonusConfig {
   id              String      @id @default(cuid())
   department      String      // "PRODUCTION"
@@ -994,6 +998,8 @@ model KpiAnomaly {
 // Một record duy nhất cho mỗi kỳ KPI & phòng ban
 // CEO/BGD nhập tất cả 6 targets ở đây
 
+// LEGACY (gỡ 10/2026): bộ "6 KPI ca" đã gộp vào điểm 2 tầng — bảng giữ dữ liệu
+// cũ, không còn code nào ghi vào. Xem README mục "6 chỉ tiêu — ĐÃ GỠ".
 model KpiPeriodTarget {
   id              String    @id @default(uuid())
   periodId        String    @unique  // 1 kỳ = 1 target chung
@@ -1033,6 +1039,8 @@ model KpiPeriodTarget {
 // Cho phép set targets khác nhau cho từng ca (morning/afternoon/night)
 // Optional: nếu không nhập, dùng mục tiêu chung (period target)
 
+// LEGACY (gỡ 10/2026): bộ "6 KPI ca" đã gộp vào điểm 2 tầng — bảng giữ dữ liệu
+// cũ, không còn code nào ghi vào. Xem README mục "6 chỉ tiêu — ĐÃ GỠ".
 model KpiShiftTarget {
   id                  String    @id @default(uuid())
   periodTargetId      String
@@ -1069,6 +1077,8 @@ model KpiShiftTarget {
 // ============ SHIFT KPI SCORE ============
 // Lưu kết quả tính toán achievement, weighted score, bonus cho từng ca
 
+// LEGACY (gỡ 10/2026): bộ "6 KPI ca" đã gộp vào điểm 2 tầng — bảng giữ dữ liệu
+// cũ, không còn code nào ghi vào. Xem README mục "6 chỉ tiêu — ĐÃ GỠ".
 model ShiftKpiScore {
   id                String    @id @default(uuid())
 

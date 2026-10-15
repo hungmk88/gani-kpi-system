@@ -1055,8 +1055,6 @@ export async function reopenShift(
       shiftAlreadyHandled("Ca này vừa được người khác mở lại.");
     }
     await tx.dailyKpiResult.deleteMany({ where: { shiftLogId: logId } });
-    // Điểm 6 KPI ca tính từ dữ liệu cũ cũng mất hiệu lực — khoá lại thì tính lại
-    await tx.shiftKpiScore.deleteMany({ where: { shiftLogId: logId } });
     const reversed = await reverseRawMaterialForShift(tx, logId, actor.id, reason);
     const updated = await tx.productionShiftLog.findUniqueOrThrow({
       where: { id: logId },

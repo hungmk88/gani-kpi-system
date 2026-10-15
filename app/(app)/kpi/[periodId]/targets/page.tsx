@@ -10,9 +10,9 @@ export const dynamic = "force-dynamic";
 
 /**
  * Đặt mục tiêu (targetValue) hàng loạt cho từng nhân sự trong một phòng ban.
- * Khác Sản Xuất (một bộ số dùng chung cả phòng, xem KpiPeriodTarget +
- * /kpi/nam-quyet-dinh) — các phòng còn lại (vd Sales) mỗi người một mục tiêu
- * riêng, nên sửa thẳng trên từng dòng KpiResult.
+ * Sản Xuất đặt chỉ tiêu theo từng mã sản phẩm (Quản lý SKU) và chấm theo ca;
+ * các phòng còn lại (vd Sales) mỗi người một mục tiêu riêng, nên sửa thẳng
+ * trên từng dòng KpiResult.
  */
 export default async function KpiTargetsPage({
   params,

@@ -67,21 +67,6 @@ export type CrossDeptRequestStatus = (typeof CROSS_DEPT_REQUEST_STATUSES)[number
 
 export const DATA_SOURCES = ["MANUAL", "EXCEL", "IPOS_API"] as const;
 
-/** Nguồn số liệu của KpiConfig (6 chỉ tiêu KPI sản xuất) — enum riêng, khác DATA_SOURCES ở trên. */
-export const KPI_CONFIG_DATA_SOURCES = [
-  "MANUAL",
-  "IPOS",
-  "QA_CHECK",
-  "SYSTEM_CALC",
-] as const;
-
-export const KPI_CONFIG_DATA_SOURCE_LABEL: Record<string, string> = {
-  MANUAL: "Nhập tay",
-  IPOS: "iPOS",
-  QA_CHECK: "KCS kiểm tra",
-  SYSTEM_CALC: "Hệ thống tự tính",
-};
-
 // ----------------------- NHÃN TIẾNG VIỆT -----------------------
 
 export const ROLE_LABEL: Record<string, string> = {
@@ -147,10 +132,7 @@ export const SALES_DEPARTMENT_CODE = "SALES";
 
 /**
  * Mã phòng ban Sản xuất thật trong database (seed ở `prisma/seed.mjs`) là
- * "PROD", KHÔNG PHẢI "PRODUCTION" — hai route `/api/kpi/targets` và
- * `/api/kpi/calculate` từng hardcode nhầm "PRODUCTION" nên Giám đốc Sản xuất
- * (role=MANAGER) không bao giờ khớp được điều kiện quyền, chỉ CEO/Admin gọi
- * được (phát hiện + vá 14/09/2026). Dùng hằng số này thay vì gõ tay lại.
+ * "PROD", KHÔNG PHẢI "PRODUCTION". Dùng hằng số này thay vì gõ tay lại.
  */
 export const PRODUCTION_DEPARTMENT_CODE = "PROD";
 
