@@ -247,19 +247,9 @@ export const REWORK_LOSS_FACTOR = 0.3;
  * ========================================================================== */
 
 /**
- * Mã chỉ tiêu KPI tháng được nuôi bằng số liệu ca sản xuất.
+ * Tên nguồn tự động (sourceCode) khi số liệu ca sản xuất được đẩy sang KPI tháng.
  * Cuối mỗi lượt chạy nền, hệ thống gộp các ca đã khoá trong tháng rồi đẩy vào
- * cột "Số hệ thống" của các chỉ tiêu này — đi qua đúng bộ đối soát Phase 3.
+ * cột "Số hệ thống" của các chỉ tiêu PROD_* — đi qua đúng bộ đối soát Phase 3.
+ * Cách tính từng chỉ tiêu nằm ở lib/production/bridge.ts.
  */
 export const PRODUCTION_FEED_SOURCE = "production";
-
-export const PRODUCTION_KPI_MAPPING = {
-  /** Tổng thành phẩm đạt QC trong tháng (kg) */
-  PROD_OUT: "TOTAL_QC_PASSED_KG",
-  /** Tỷ lệ phế + làm lại trên sản lượng thô (%) */
-  PROD_DEFECT: "DEFECT_RATE_PERCENT",
-  /** Tỷ lệ ca đạt chỉ tiêu sản lượng (%) */
-  PROD_ONTIME: "ON_TARGET_SHIFT_PERCENT",
-  /** Tổng số vi phạm HACCP trong tháng (vụ) */
-  PROD_SAFE: "HACCP_VIOLATIONS",
-} as const;

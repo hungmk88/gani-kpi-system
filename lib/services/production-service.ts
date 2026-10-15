@@ -48,6 +48,31 @@ function shiftAlreadyHandled(message: string): never {
   throw new BusinessError(ERR.VALIDATION_FAILED, message, 409);
 }
 
+/** Lỗi P2002 có phải do khoá unique (ngày ca, loại ca, mã SKU) không. */
+function isShiftUniqueViolation(e: Prisma.PrismaClientKnownRequestError) {
+  const meta = e.meta as { target?: unknown; modelName?: unknown } | undefined;
+  if (meta?.modelName === "ProductionShiftParticipant") return false;
+  // Bảng ca chỉ có một khoá unique nghiệp vụ: (ngày, loại ca, mã SKU)
+  if (meta?.modelName === "ProductionShiftLog") return true;
+  const target = meta?.target;
+  const fields = Array.isArray(target)
+    ? target.map(String)
+    : typeof target === "string"
+      ? [target]
+      : [];
+  // Postgres trả mảng tên cột; đôi khi là tên index
+  // "production_shift_logs_shiftDate_shiftType_skuId_key".
+  return fields.some(
+    (f) =>
+      f === "shiftDate" ||
+      f.includes("shiftDate_shiftType_skuId") ||
+      (f.startsWith("production_shift_logs") && !f.includes("participants"))
+  );
+}
+
+/** Trần tổn thất chất lượng ghi vào cột Int (int4 tối đa ~2,147 tỷ). */
+export const MAX_QUALITY_LOSS_VND = 2_000_000_000;
+
 /* ------------------------------------------------------------ PHÂN QUYỀN */
 
 function canEnterDraft(u: SessionUser & { productionRole?: string | null }) {
@@ -142,6 +167,35 @@ export async function submitShiftDraft(
     );
   }
 
+  // Mỗi người chỉ xuất hiện MỘT lần trong ca — DB có unique (ca, người), để
+  // lọt xuống đó thì người dùng nhận thông báo "ca đã khai rồi" rất khó hiểu.
+  const seen = new Set<string>();
+  const dupUsers = new Set<string>();
+  for (const p of input.participants) {
+    if (seen.has(p.userId)) dupUsers.add(p.userId);
+    seen.add(p.userId);
+  }
+  if (dupUsers.size > 0) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      `Có ${dupUsers.size} người bị khai trùng trong danh sách làm ca. Mỗi người chỉ khai một dòng (cộng gộp giờ công nếu làm nhiều công đoạn).`,
+      400
+    );
+  }
+  const activeUsers = await prisma.user.findMany({
+    where: { id: { in: [...seen] }, isActive: true },
+    select: { id: true },
+  });
+  if (activeUsers.length !== seen.size) {
+    const ok = new Set(activeUsers.map((u) => u.id));
+    const missing = [...seen].filter((id) => !ok.has(id));
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      `${missing.length} người trong danh sách làm ca không tồn tại hoặc đã nghỉ việc. Tải lại danh sách nhân sự rồi khai lại.`,
+      400
+    );
+  }
+
   const sku = await prisma.productSku.findUnique({ where: { id: input.skuId } });
   if (!sku || !sku.isActive) {
     throw new BusinessError(
@@ -206,12 +260,31 @@ export async function submitShiftDraft(
     include: { sku: true, participants: true },
   })
     .catch((e: unknown) => {
-      // Hai người khai cùng ca cùng lúc: kiểm tra trùng ở trên đều lọt, ràng
-      // buộc unique của DB chặn người thứ hai — trả 409 thay vì lỗi 500.
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-        shiftAlreadyHandled(
-          `Ca ${input.shiftType} ngày ${formatVnDate(day)} cho mã ${sku.skuCode} đã được khai rồi.`
-        );
+      if (e instanceof Prisma.PrismaClientKnownRequestError) {
+        // Hai người khai cùng ca cùng lúc: kiểm tra trùng ở trên đều lọt, ràng
+        // buộc unique của DB chặn người thứ hai — trả 409 thay vì lỗi 500.
+        // CHỈ khi đúng là khoá (ngày, ca, mã) — trùng ở bảng người làm ca là
+        // chuyện khác, không được báo nhầm thành "ca đã khai".
+        if (e.code === "P2002" && isShiftUniqueViolation(e)) {
+          shiftAlreadyHandled(
+            `Ca ${input.shiftType} ngày ${formatVnDate(day)} cho mã ${sku.skuCode} đã được khai rồi.`
+          );
+        }
+        if (e.code === "P2002") {
+          throw new BusinessError(
+            ERR.VALIDATION_FAILED,
+            "Danh sách người làm ca bị trùng người. Mỗi người chỉ khai một dòng.",
+            400
+          );
+        }
+        // Tham chiếu tới người / mã sản phẩm vừa bị xoá giữa lúc kiểm tra và lúc ghi
+        if (e.code === "P2003") {
+          throw new BusinessError(
+            ERR.VALIDATION_FAILED,
+            "Có người làm ca hoặc mã sản phẩm không còn tồn tại trong hệ thống. Tải lại trang rồi khai lại.",
+            400
+          );
+        }
       }
       throw e;
     });
@@ -477,6 +550,19 @@ export async function lockAndTriggerKpi(
   };
 
   const loss = computeQualityLoss(facts, log.sku.unitPriceVnd);
+  // Cột qualityLossVnd là Int (int4) — số tràn sẽ làm hỏng cả transaction khoá
+  // với lỗi khó hiểu. Chặn trước, báo rõ số nào bất thường.
+  if (
+    !Number.isFinite(loss.qualityLossVnd) ||
+    loss.qualityLossVnd < 0 ||
+    loss.qualityLossVnd > MAX_QUALITY_LOSS_VND
+  ) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      `Tổn thất chất lượng tính ra ${Number.isFinite(loss.qualityLossVnd) ? new Intl.NumberFormat("vi-VN").format(loss.qualityLossVnd) : "không xác định"} VNĐ — vượt trần ${new Intl.NumberFormat("vi-VN").format(MAX_QUALITY_LOSS_VND)} VNĐ. Kiểm tra lại số nguyên liệu, phế phẩm, làm lại và đơn giá SKU.`,
+      400
+    );
+  }
 
   /* --- Khoá NGUYÊN TỬ ---
      Kiểm tra status ở trên chỉ là đọc trước. Bấm đúp hoặc hai người trong
@@ -546,9 +632,69 @@ export async function lockAndTriggerKpi(
 
   // Chấm điểm và quét chống chạy chỉ tiêu — chỉ chạy ở đây, không sớm hơn.
   // Chỉ người khoá thắng ở transaction trên mới tới được đây → chạy đúng 1 lần.
-  const result = await executeCalculationAndAudit(logId);
+  // Khoá đã commit ở trên: nếu chấm điểm lỗi, ca vẫn LOCKED nhưng chưa có điểm.
+  // Lượt chạy nền tự chấm lại (rescoreLockedShiftsWithoutResults) — báo rõ cho
+  // người bấm khoá thay vì một lỗi 500 trống trơn.
+  let result: Awaited<ReturnType<typeof executeCalculationAndAudit>>;
+  try {
+    result = await executeCalculationAndAudit(logId);
+  } catch (e) {
+    console.error(`[PRODUCTION] Chấm điểm ca ${logId} lỗi sau khi khoá:`, e);
+    throw new BusinessError(
+      "SCORING_DEFERRED",
+      "Ca đã khoá số thành công nhưng bước chấm điểm bị lỗi. Hệ thống sẽ tự chấm lại ở lượt chạy nền kế tiếp — không cần khoá lại.",
+      500
+    );
+  }
 
   return { log: locked, ...result, inventory };
+}
+
+/**
+ * TỰ CHỮA LÀNH: ca đã LOCKED mà chưa có dòng điểm nào (chấm điểm lỗi sau khi
+ * khoá commit — mất mạng, timeout, deploy giữa chừng). Chạy lại bước chấm
+ * điểm cho những ca đó. Idempotent: executeCalculationAndAudit upsert theo
+ * (ca, người), ca đã có điểm thì không bị lọc vào đây.
+ *
+ * Gọi từ cron (lib/production/bridge.ts) TRƯỚC khi gộp số tháng, để điểm ca
+ * kịp vào số liệu KPI tháng.
+ */
+export async function rescoreLockedShiftsWithoutResults(limit = 20) {
+  const pending = await prisma.productionShiftLog.findMany({
+    where: {
+      status: "LOCKED",
+      participants: { some: {} },
+      kpiResults: { none: {} },
+    },
+    select: { id: true },
+    orderBy: { lockedAt: "asc" },
+    // Giới hạn mỗi lượt để không ăn hết 60 giây của cron; lượt sau làm tiếp
+    take: limit,
+  });
+
+  const rescored: string[] = [];
+  const failed: { id: string; error: string }[] = [];
+  for (const s of pending) {
+    try {
+      await executeCalculationAndAudit(s.id);
+      rescored.push(s.id);
+    } catch (e) {
+      console.error(`[PRODUCTION] Chấm lại ca ${s.id} vẫn lỗi:`, e);
+      failed.push({ id: s.id, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  if (rescored.length > 0 || failed.length > 0) {
+    await writeAudit({
+      actor: null,
+      action: "PRODUCTION_KPI_RESCORE",
+      entityName: "production_shift_logs",
+      entityId: "cron",
+      after: { caDaChamLai: rescored, caVanLoi: failed },
+    });
+  }
+
+  return { found: pending.length, rescored: rescored.length, failed };
 }
 
 /**

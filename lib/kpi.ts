@@ -201,11 +201,3 @@ export function classifyScore(score: number) {
   if (score >= 70) return { label: "Cần cải thiện", tone: "amber" as const };
   return { label: "Không đạt", tone: "red" as const };
 }
-
-export function formatNumber(n: number | null | undefined, unit?: string) {
-  if (n === null || n === undefined) return "—";
-  const s = new Intl.NumberFormat("vi-VN", {
-    maximumFractionDigits: 2,
-  }).format(n);
-  return unit ? `${s} ${unit}` : s;
-}

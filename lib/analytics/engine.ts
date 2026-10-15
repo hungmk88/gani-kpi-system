@@ -12,6 +12,7 @@ import {
   VELOCITY_CLAMP,
   VELOCITY_MIN_SAMPLES,
   WORKLOAD_BANDS,
+  HEALTH_WEIGHTS,
   type Confidence,
 } from "./constants";
 
@@ -580,7 +581,7 @@ export function computeHealth(d: HealthInput): HealthResult {
   parts.push({
     key: "ON_TIME_TASKS",
     label: "Việc bám hạn",
-    weight: 30,
+    weight: HEALTH_WEIGHTS.ON_TIME_TASKS,
     score: round1(onTime),
     note: `${d.overdueTasks}/${d.openTasks} việc đang mở đã quá hạn`,
   });
@@ -592,7 +593,7 @@ export function computeHealth(d: HealthInput): HealthResult {
   parts.push({
     key: "LOW_RISK",
     label: "Không có việc báo động đỏ",
-    weight: 20,
+    weight: HEALTH_WEIGHTS.LOW_RISK,
     score: round1(lowRisk),
     note: `${d.criticalRiskTasks} việc ở mức báo động đỏ`,
   });
@@ -604,7 +605,7 @@ export function computeHealth(d: HealthInput): HealthResult {
   parts.push({
     key: "BALANCED_WORKLOAD",
     label: "Tải nhân sự cân",
-    weight: 20,
+    weight: HEALTH_WEIGHTS.BALANCED_WORKLOAD,
     score: round1(balanced),
     note: `${d.overloadedPeople}/${d.totalPeople} người đang quá tải`,
   });
@@ -616,7 +617,7 @@ export function computeHealth(d: HealthInput): HealthResult {
   parts.push({
     key: "DATA_INTEGRITY",
     label: "Số liệu các nguồn khớp nhau",
-    weight: 15,
+    weight: HEALTH_WEIGHTS.DATA_INTEGRITY,
     score: round1(integrity),
     note: `${d.mismatchCells} ô KPI đang treo vì lệch nguồn`,
   });
@@ -625,13 +626,17 @@ export function computeHealth(d: HealthInput): HealthResult {
   parts.push({
     key: "NO_ANOMALY",
     label: "Không có khai báo bất thường",
-    weight: 15,
+    weight: HEALTH_WEIGHTS.NO_ANOMALY,
     score: round1(noAnomaly),
     note: `${d.openAnomalies} bất thường KPI đang chờ xử lý`,
   });
 
+  // Trọng số lấy từ HEALTH_WEIGHTS (constants.ts) — chỉnh cấu hình ở đó là
+  // có hiệu lực. Chia cho tổng trọng số để cấu hình không cộng đúng 100 vẫn
+  // ra thang 0-100.
+  const totalWeight = parts.reduce((s, p) => s + p.weight, 0) || 1;
   const score = round1(
-    parts.reduce((s, p) => s + (p.score * p.weight) / 100, 0)
+    parts.reduce((s, p) => s + p.score * p.weight, 0) / totalWeight
   );
 
   return { score, parts };

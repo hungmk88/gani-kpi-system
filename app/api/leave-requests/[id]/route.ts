@@ -6,7 +6,13 @@ import { clientMeta, writeAudit } from "@/lib/audit";
 import { notify } from "@/lib/telegram";
 import { ERR } from "@/lib/constants";
 import { formatVnDate } from "@/lib/vn-time";
-import { assertLeaveQuota, lockLeaveOwner } from "@/lib/services/leave-service";
+import {
+  assertLeaveQuota,
+  assertNoLeaveOverlap,
+  cancelLeaveRequest,
+  canReviewLeave,
+  lockLeaveOwner,
+} from "@/lib/services/leave-service";
 
 /** Đơn đã bị người khác xử lý trước (bấm đúp, hai người duyệt cùng lúc). */
 function alreadyHandled(): never {
@@ -27,6 +33,12 @@ export async function PATCH(
     const user = await requireUser();
     const body = schema.parse(await req.json());
 
+    // Huỷ: đơn đang chờ (người gửi tự rút) hoặc đơn ĐÃ DUYỆT trước ngày bắt
+    // đầu nghỉ (người gửi / Trưởng phòng / Ban Giám đốc) — xem leave-service.
+    if (body.action === "CANCEL") {
+      return ok(await cancelLeaveRequest(user, id, body.note, clientMeta(req)));
+    }
+
     const request = await prisma.leaveRequest.findUnique({
       where: { id },
       include: { employee: { select: { id: true, role: true } } },
@@ -42,44 +54,18 @@ export async function PATCH(
       );
     }
 
-    if (body.action === "CANCEL") {
-      if (request.employeeId !== user.id) {
-        throw new BusinessError(
-          ERR.FORBIDDEN,
-          "Chỉ người gửi mới huỷ được đơn của chính mình.",
-          403
-        );
-      }
-      // Cập nhật có điều kiện status = PENDING: kiểm tra ở trên chỉ là đọc
-      // trước, giữa lúc đọc và lúc ghi đơn có thể đã được duyệt.
-      const res = await prisma.leaveRequest.updateMany({
-        where: { id, status: "PENDING", employeeId: user.id },
-        data: { status: "CANCELLED", resolvedAt: new Date() },
-      });
-      if (res.count !== 1) alreadyHandled();
-      await writeAudit({
-        actor: user,
-        action: "LEAVE_REQUEST_CANCEL",
-        entityName: "leave_requests",
-        entityId: id,
-        ...clientMeta(req),
-      });
-      return ok({ status: "CANCELLED" });
-    }
-
     // Trưởng phòng xin nghỉ, hoặc Admin xin nghỉ -> chỉ CEO được duyệt.
     // Nhân viên thường -> CEO hoặc đúng Trưởng phòng của phòng ban đó.
     const requesterNeedsCeo =
       request.employee.role === "MANAGER" || request.employee.role === "ADMIN";
-    const isDeptManager =
-      user.role === "MANAGER" && user.departmentId === request.departmentId;
-    const canReview = user.role === "CEO" || (!requesterNeedsCeo && isDeptManager);
-    if (!canReview) {
+    if (!canReviewLeave(user, request)) {
       throw new BusinessError(
         ERR.FORBIDDEN,
-        requesterNeedsCeo
-          ? "Chỉ Ban Giám đốc mới duyệt được đơn nghỉ của Trưởng phòng/Quản trị."
-          : "Chỉ Trưởng phòng của người gửi hoặc Ban Giám đốc mới duyệt được đơn này.",
+        request.employeeId === user.id
+          ? "Không thể tự duyệt đơn nghỉ của chính bạn."
+          : requesterNeedsCeo
+            ? "Chỉ Ban Giám đốc mới duyệt được đơn nghỉ của Trưởng phòng/Quản trị."
+            : "Chỉ Trưởng phòng của người gửi hoặc Ban Giám đốc mới duyệt được đơn này.",
         403
       );
     }
@@ -125,6 +111,11 @@ export async function PATCH(
     // cùng một người không cùng lọt hạn mức khi được duyệt song song.
     await prisma.$transaction(async (tx) => {
       await lockLeaveOwner(tx, request.employeeId);
+      // Trùng ngày với một đơn khác đã duyệt của cùng người -> không duyệt
+      await assertNoLeaveOverlap(tx, request.employeeId, request.startDate, request.endDate, {
+        statuses: ["APPROVED"],
+        excludeId: id,
+      });
       await assertLeaveQuota(
         tx,
         request.employeeId,

@@ -131,12 +131,6 @@ export const PERIOD_STATUS_LABEL: Record<string, string> = {
 export const SALES_DEPARTMENT_CODE = "SALES";
 
 /**
- * Mã phòng ban Sản xuất thật trong database (seed ở `prisma/seed.mjs`) là
- * "PROD", KHÔNG PHẢI "PRODUCTION". Dùng hằng số này thay vì gõ tay lại.
- */
-export const PRODUCTION_DEPARTMENT_CODE = "PROD";
-
-/**
  * Hạn mức nghỉ phép năm — 12 ngày/người/năm, chốt 15/09/2026. Cố định
  * trong code, áp dụng chung cho mọi người, chưa phân biệt thâm niên/loại
  * hợp đồng. Xem `getAnnualLeaveQuota()` ở lib/services/leave-service.ts.

@@ -15,8 +15,19 @@ function hostOf(url) {
   }
 }
 
-export function assertLocalTarget({ appUrl, databaseUrl = process.env.DATABASE_URL } = {}) {
-  if (process.env.ALLOW_REMOTE_TARGET === "1") return;
+/**
+ * @param {object} [opts]
+ * @param {string} [opts.appUrl]
+ * @param {string} [opts.databaseUrl]  mặc định DATABASE_URL
+ * @param {string} [opts.overrideEnv]  biến môi trường =1 để cố tình cho qua
+ *   (mặc định ALLOW_REMOTE_TARGET; seed dùng ALLOW_PROD_SEED).
+ */
+export function assertLocalTarget({
+  appUrl,
+  databaseUrl = process.env.DATABASE_URL,
+  overrideEnv = "ALLOW_REMOTE_TARGET",
+} = {}) {
+  if (process.env[overrideEnv] === "1") return;
   const bad = [];
   if (appUrl && !LOCAL_HOSTS.has(hostOf(appUrl) ?? "")) bad.push(`APP_URL=${appUrl}`);
   if (databaseUrl && !LOCAL_HOSTS.has(hostOf(databaseUrl) ?? "")) {
@@ -25,7 +36,7 @@ export function assertLocalTarget({ appUrl, databaseUrl = process.env.DATABASE_U
   if (bad.length) {
     console.error(
       `❌ Từ chối chạy: ${bad.join(", ")} không phải máy local.\n` +
-        "   Script này ghi/xoá dữ liệu. Cố tình chạy thì đặt ALLOW_REMOTE_TARGET=1."
+        `   Script này ghi/xoá dữ liệu. Cố tình chạy thì đặt ${overrideEnv}=1.`
     );
     process.exit(1);
   }

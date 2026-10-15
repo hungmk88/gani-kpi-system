@@ -6,7 +6,11 @@ import { clientMeta, writeAudit } from "@/lib/audit";
 import { notify } from "@/lib/telegram";
 import { ERR } from "@/lib/constants";
 import { formatVnDate, parseVnDate } from "@/lib/vn-time";
-import { assertLeaveQuota, lockLeaveOwner } from "@/lib/services/leave-service";
+import {
+  assertLeaveQuota,
+  assertNoLeaveOverlap,
+  lockLeaveOwner,
+} from "@/lib/services/leave-service";
 
 const LEAVE_NOTICE_HOURS = 24;
 
@@ -82,6 +86,9 @@ export async function POST(req: Request) {
     // CEO tự duyệt cũng phải qua đúng bước này.
     const request = await prisma.$transaction(async (tx) => {
       await lockLeaveOwner(tx, user.id);
+      // Không cho hai đơn (chờ / đã duyệt) của cùng một người chồng ngày nhau —
+      // nếu không, một ngày nghỉ bị trừ phép hai lần.
+      await assertNoLeaveOverlap(tx, user.id, startDate, endDate);
       await assertLeaveQuota(tx, user.id, startDate, endDate);
       return tx.leaveRequest.create({
         data: {

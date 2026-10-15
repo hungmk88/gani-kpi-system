@@ -43,11 +43,14 @@ export async function POST(req: Request) {
         403
       );
     }
-    // Telegram của Ban Giám đốc chỉ chính chủ tự nối bằng mã liên kết.
-    if (body.role === "CEO" && body.telegramChatId) {
+    // Telegram chỉ chính chủ tự nối bằng mã liên kết (trang Thông báo) — với
+    // MỌI vai trò, không riêng Ban Giám đốc. Ai đặt sẵn được Chat ID thì trỏ
+    // được thông báo (và các nút bấm duyệt trong chat) của người khác về
+    // Telegram của mình.
+    if (body.telegramChatId) {
       throw new BusinessError(
         ERR.FORBIDDEN,
-        "Không đặt sẵn Telegram cho tài khoản Ban Giám đốc. Người đó tự liên kết trong trang Thông báo.",
+        "Không đặt sẵn Telegram khi tạo tài khoản. Người dùng tự liên kết trong trang Thông báo.",
         403
       );
     }
@@ -78,7 +81,7 @@ export async function POST(req: Request) {
         role: body.role,
         departmentId: body.departmentId ?? null,
         passwordHash: await hashPassword(body.password),
-        telegramChatId: body.telegramChatId ?? null,
+        telegramChatId: null,
         phone: body.phone ?? null,
         // Mật khẩu này do quản trị đặt nên quản trị biết. Người mới vào hệ thống
         // là bị chặn ở trang đổi mật khẩu, chưa xem được gì cho tới khi tự đặt.

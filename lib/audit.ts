@@ -48,13 +48,33 @@ function safeJson(v: unknown) {
   }
 }
 
+/**
+ * IP + User-Agent của người gọi, dùng cho nhật ký và đếm giới hạn đăng nhập.
+ *
+ * KHÔNG tin X-Forwarded-For do client tự gửi: ai cũng đặt được header đó, và
+ * nếu tin nó thì kẻ dò mật khẩu chỉ cần đổi XFF mỗi lần là thoát giới hạn theo
+ * IP (hoặc đổ tội cho IP người khác trong nhật ký).
+ *  - Trên Vercel (VERCEL=1): edge của Vercel GHI ĐÈ các header này. Ưu tiên
+ *    `x-vercel-forwarded-for`, không có thì lấy phần tử đầu của XFF (do Vercel
+ *    đặt, không phải giá trị client gửi).
+ *  - Ngoài Vercel: chỉ dùng `x-real-ip` (reverse proxy đặt). XFF chỉ được dùng
+ *    khi TRUST_PROXY=1, tức người triển khai xác nhận phía trước app có đúng
+ *    một proxy tin cậy luôn ghi đè XFF.
+ */
 export function clientMeta(req: Request) {
   const h = req.headers;
+  const firstXff = () => h.get("x-forwarded-for")?.split(",")[0]?.trim() || null;
+  let ip: string | null;
+  if (process.env.VERCEL === "1") {
+    ip =
+      h.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() || firstXff();
+  } else {
+    ip =
+      h.get("x-real-ip")?.trim() ||
+      (process.env.TRUST_PROXY === "1" ? firstXff() : null);
+  }
   return {
-    ip:
-      h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      h.get("x-real-ip") ||
-      null,
+    ip: ip || null,
     userAgent: h.get("user-agent"),
   };
 }

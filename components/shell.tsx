@@ -78,9 +78,27 @@ export default function Shell({
     pathname === href || pathname.startsWith(href + "/");
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/login");
-    router.refresh();
+    // Lỗi mạng/server không được làm kẹt người dùng trong trang: thử thu hồi
+    // phiên rồi vẫn đưa về /login. Nếu server chưa xoá được phiên thì /login
+    // sẽ tự chuyển lại vào hệ thống — báo trước để người dùng biết bấm lại.
+    let failed = false;
+    try {
+      const res = await fetch("/api/auth/logout", { method: "POST" });
+      failed = !res.ok;
+      if (failed) {
+        const data = await res.json().catch(() => ({}));
+        console.error("Đăng xuất lỗi:", data.message ?? res.status);
+      }
+    } catch (err) {
+      failed = true;
+      console.error("Đăng xuất lỗi:", err);
+    } finally {
+      if (failed) {
+        alert("Chưa đăng xuất được trên máy chủ (mạng hoặc máy chủ lỗi). Nếu vẫn thấy hệ thống mở, hãy thử lại.");
+      }
+      router.push("/login");
+      router.refresh();
+    }
   }
 
   return (

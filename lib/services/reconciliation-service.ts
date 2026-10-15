@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { BusinessError } from "../rbac";
 import { DATA_MISMATCH_THRESHOLD_PERCENT, ERR } from "../constants";
@@ -32,28 +33,26 @@ export type SourceValue = {
   at: string;
 };
 
-/** Gom số mới nhất của từng nguồn cho một ô KPI cụ thể. */
-export async function collectSources(
-  employeeEmail: string,
-  kpiDefinitionId: string,
-  month: number,
-  year: number,
-  actualSelf: number | null
-): Promise<SourceValue[]> {
-  const feeds = await prisma.kpiActualFeed.findMany({
-    where: {
-      employeeEmail,
-      kpiDefinitionId,
-      periodMonth: month,
-      periodYear: year,
-    },
-    orderBy: { createdAt: "desc" },
-  });
+/** Bản ghi feed tối thiểu cần cho đối soát (không kéo rawPayload). */
+export type FeedLite = {
+  value: number;
+  source: string;
+  sourceCode: string | null;
+  createdAt: Date;
+};
 
+/**
+ * Gom số mới nhất của từng nguồn từ danh sách feed ĐÃ SẮP XẾP mới → cũ.
+ * Hàm thuần — dùng chung cho đối soát từng ô và quét hàng loạt.
+ */
+export function latestSources(
+  feedsNewestFirst: FeedLite[],
+  actualSelf: number | null | undefined
+): SourceValue[] {
   // Mỗi nguồn chỉ lấy bản ghi mới nhất — nạp lại file Excel lần hai thì lần đầu
   // không còn tính nữa.
   const latestBySource = new Map<string, SourceValue>();
-  for (const f of feeds) {
+  for (const f of feedsNewestFirst) {
     const code = f.sourceCode ?? f.source;
     if (latestBySource.has(code)) continue;
     latestBySource.set(code, {
@@ -77,6 +76,34 @@ export async function collectSources(
   }
 
   return out;
+}
+
+const FEED_SELECT = {
+  value: true,
+  source: true,
+  sourceCode: true,
+  createdAt: true,
+} as const;
+
+/** Gom số mới nhất của từng nguồn cho một ô KPI cụ thể. */
+export async function collectSources(
+  employeeEmail: string,
+  kpiDefinitionId: string,
+  month: number,
+  year: number,
+  actualSelf: number | null
+): Promise<SourceValue[]> {
+  const feeds = await prisma.kpiActualFeed.findMany({
+    where: {
+      employeeEmail,
+      kpiDefinitionId,
+      periodMonth: month,
+      periodYear: year,
+    },
+    orderBy: { createdAt: "desc" },
+    select: FEED_SELECT,
+  });
+  return latestSources(feeds, actualSelf);
 }
 
 /** Dấu vân tay của bộ nguồn: chỉ mã + giá trị, sắp xếp ổn định. */
@@ -113,15 +140,13 @@ export function computeVariance(sources: SourceValue[]) {
  * Chỉ có 1 nguồn thì không có gì để đối soát — vẫn đồng bộ vào "Số hệ thống"
  * như bình thường (trừ nguồn tự khai, vì số tự khai đã có chỗ riêng của nó).
  */
-export async function reconcileCell(kpiResultId: string) {
-  const row = await prisma.kpiResult.findUnique({
-    where: { id: kpiResultId },
-    include: {
-      kpiDefinition: true,
-      employee: { include: { department: true } },
-      period: true,
-    },
-  });
+export async function reconcileCell(
+  kpiResultId: string,
+  preloaded?: ReconcilePreloaded
+) {
+  const row =
+    preloaded?.row ??
+    (await loadCell(kpiResultId));
   if (!row) {
     throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy dòng KPI.", 404);
   }
@@ -134,13 +159,15 @@ export async function reconcileCell(kpiResultId: string) {
     return { skipped: true as const, reason: "Dòng KPI đã chốt và khoá." };
   }
 
-  const sources = await collectSources(
-    row.employee.email,
-    row.kpiDefinitionId,
-    row.period.month,
-    row.period.year,
-    row.actualSelf
-  );
+  const sources = preloaded?.feeds
+    ? latestSources(preloaded.feeds, row.actualSelf)
+    : await collectSources(
+        row.employee.email,
+        row.kpiDefinitionId,
+        row.period.month,
+        row.period.year,
+        row.actualSelf
+      );
 
   const external = sources.filter((s) => s.code !== "SELF");
 
@@ -160,15 +187,18 @@ export async function reconcileCell(kpiResultId: string) {
   const { minValue, maxValue, variancePercent } = computeVariance(sources);
   const isMatched = variancePercent <= DATA_MISMATCH_THRESHOLD_PERCENT;
 
-  const existing = await prisma.reconciliation.findUnique({
-    where: {
-      periodId_employeeId_kpiDefinitionId: {
-        periodId: row.periodId,
-        employeeId: row.employeeId,
-        kpiDefinitionId: row.kpiDefinitionId,
-      },
-    },
-  });
+  const existing =
+    preloaded?.existing !== undefined
+      ? preloaded.existing
+      : await prisma.reconciliation.findUnique({
+          where: {
+            periodId_employeeId_kpiDefinitionId: {
+              periodId: row.periodId,
+              employeeId: row.employeeId,
+              kpiDefinitionId: row.kpiDefinitionId,
+            },
+          },
+        });
 
   // Đã có người chốt tay rồi thì tôn trọng quyết định đó, trừ khi SỐ của các
   // nguồn đổi. So bằng "dấu vân tay" (mã nguồn + giá trị), bỏ qua thời điểm —
@@ -219,7 +249,9 @@ export async function reconcileCell(kpiResultId: string) {
 
   if (isMatched) {
     // Các nguồn nhất trí -> lấy nguồn đáng tin nhất, đồng bộ, và im lặng
-    const chosen = await pickByPriority(external);
+    const priorities =
+      preloaded?.priorities ?? (await loadPriorities(external.map((s) => s.code)));
+    const chosen = pickByPriority(external, priorities);
     await prisma.kpiResult.update({
       where: { id: kpiResultId },
       data: { actualSystem: chosen.value },
@@ -257,29 +289,212 @@ export async function reconcileCell(kpiResultId: string) {
   };
 }
 
+const CELL_INCLUDE = {
+  kpiDefinition: true,
+  employee: { include: { department: true } },
+  period: true,
+} as const;
+
+function loadCell(kpiResultId: string) {
+  return prisma.kpiResult.findUnique({
+    where: { id: kpiResultId },
+    include: CELL_INCLUDE,
+  });
+}
+
+// Suy kiểu từ chính client (client có omit passwordHash toàn cục)
+type CellRow = NonNullable<Awaited<ReturnType<typeof loadCell>>>;
+type ReconRow = Prisma.ReconciliationGetPayload<object>;
+
+/**
+ * Dữ liệu nạp sẵn cho reconcileCell khi quét hàng loạt. Trường nào bỏ trống
+ * thì reconcileCell tự truy vấn như cũ. `existing: null` nghĩa là ĐÃ tra và
+ * chưa có bản đối soát (khác với undefined = chưa tra).
+ */
+export type ReconcilePreloaded = {
+  row?: CellRow;
+  /** Feed của đúng ô này, sắp xếp mới → cũ. */
+  feeds?: FeedLite[];
+  existing?: ReconRow | null;
+  priorities?: Map<string, number>;
+};
+
+export type CellPlan =
+  | { action: "noop"; outcome: "skipped" | "matched" | "mismatched" }
+  | { action: "write" };
+
+/**
+ * Quyết định NHANH, không truy vấn: ô này có cần chạy reconcileCell không?
+ * Chỉ trả "noop" khi chắc chắn reconcileCell sẽ không đổi gì có ý nghĩa
+ * (dấu vân tay nguồn, trạng thái, số hệ thống đều như cũ) — còn lại cứ chạy
+ * đường ghi đầy đủ để giữ nguyên ngữ nghĩa.
+ */
+export function planCell(input: {
+  row: Pick<CellRow, "status" | "kpiDefinitionId" | "actualSelf" | "actualSystem"> & {
+    kpiDefinition: unknown;
+  };
+  feeds: FeedLite[];
+  existing: Pick<ReconRow, "status" | "sourcesJson" | "minValue" | "maxValue" | "variancePercent"> | null;
+  priorities: Map<string, number>;
+}): CellPlan {
+  const { row, feeds, existing, priorities } = input;
+  if (!row.kpiDefinitionId || !row.kpiDefinition || row.status === "FINALIZED") {
+    return { action: "noop", outcome: "skipped" };
+  }
+
+  const sources = latestSources(feeds, row.actualSelf);
+  const external = sources.filter((s) => s.code !== "SELF");
+
+  if (external.length === 0) {
+    // Không có nguồn ngoài: chỉ cần ghi khi còn bản đối soát chưa chốt để xoá
+    return existing && existing.status !== "RESOLVED"
+      ? { action: "write" }
+      : { action: "noop", outcome: "skipped" };
+  }
+
+  if (!existing) return { action: "write" };
+  if (
+    sourcesFingerprint(parseSources(existing.sourcesJson)) !==
+    sourcesFingerprint(sources)
+  ) {
+    return { action: "write" };
+  }
+
+  const { minValue, maxValue, variancePercent } = computeVariance(sources);
+  const sameStats =
+    existing.minValue === minValue &&
+    existing.maxValue === maxValue &&
+    existing.variancePercent === variancePercent;
+
+  if (existing.status === "RESOLVED") {
+    // reconcileCell chỉ cập nhật min/max/variance rồi bỏ qua
+    return sameStats ? { action: "noop", outcome: "skipped" } : { action: "write" };
+  }
+
+  const isMatched = variancePercent <= DATA_MISMATCH_THRESHOLD_PERCENT;
+  if (!sameStats) return { action: "write" };
+
+  if (isMatched && existing.status === "MATCHED") {
+    // Đã khớp từ trước: chỉ cần số hệ thống đang đúng nguồn ưu tiên
+    const chosen = pickByPriority(external, priorities);
+    return row.actualSystem === chosen.value
+      ? { action: "noop", outcome: "matched" }
+      : { action: "write" };
+  }
+  if (!isMatched && existing.status === "MISMATCH") {
+    // Vẫn lệch như cũ: đã cảnh báo rồi, không ghi gì thêm
+    return { action: "noop", outcome: "mismatched" };
+  }
+  return { action: "write" };
+}
+
 /** Quét đối soát toàn bộ các dòng KPI chưa chốt của một kỳ (hoặc mọi kỳ đang mở). */
 export async function runReconciliation(periodId?: string) {
+  // Nạp MỘT LẦN mọi thứ cần cho cả lượt quét, thay vì 5–7 truy vấn mỗi dòng —
+  // cron trên Vercel chỉ có 60 giây.
   const rows = await prisma.kpiResult.findMany({
+    where: {
+      status: { not: "FINALIZED" },
+      kpiDefinitionId: { not: null },
+      ...(periodId ? { periodId } : { period: { status: { not: "FINALIZED" } } }),
+    },
+    include: CELL_INCLUDE,
+  });
+
+  const total = await prisma.kpiResult.count({
     where: {
       status: { not: "FINALIZED" },
       ...(periodId ? { periodId } : { period: { status: { not: "FINALIZED" } } }),
     },
-    select: { id: true },
   });
 
   let checked = 0;
   let matched = 0;
   let mismatched = 0;
+  let written = 0;
+
+  if (rows.length === 0) {
+    return { checked, matched, mismatched, total, written };
+  }
+
+  const periodKeys = new Map<string, { periodMonth: number; periodYear: number }>();
+  for (const r of rows) {
+    periodKeys.set(`${r.period.month}/${r.period.year}`, {
+      periodMonth: r.period.month,
+      periodYear: r.period.year,
+    });
+  }
+  const periodIds = [...new Set(rows.map((r) => r.periodId))];
+  const defIds = [...new Set(rows.map((r) => r.kpiDefinitionId!))];
+
+  const [feeds, recons, sourcesReg] = await Promise.all([
+    prisma.kpiActualFeed.findMany({
+      where: {
+        OR: [...periodKeys.values()],
+        kpiDefinitionId: { in: defIds },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        ...FEED_SELECT,
+        employeeEmail: true,
+        kpiDefinitionId: true,
+        periodMonth: true,
+        periodYear: true,
+      },
+    }),
+    prisma.reconciliation.findMany({ where: { periodId: { in: periodIds } } }),
+    prisma.integrationSource.findMany({ select: { code: true, priority: true } }),
+  ]);
+
+  // Gom feed theo ô (email + chỉ tiêu + tháng/năm), giữ thứ tự mới → cũ
+  const feedKey = (email: string, defId: string, m: number, y: number) =>
+    `${email}|${defId}|${m}|${y}`;
+  const feedsByCell = new Map<string, FeedLite[]>();
+  for (const f of feeds) {
+    const k = feedKey(f.employeeEmail, f.kpiDefinitionId, f.periodMonth, f.periodYear);
+    const list = feedsByCell.get(k);
+    if (list) list.push(f);
+    else feedsByCell.set(k, [f]);
+  }
+
+  const reconByCell = new Map<string, ReconRow>();
+  for (const r of recons) {
+    reconByCell.set(`${r.periodId}|${r.employeeId}|${r.kpiDefinitionId}`, r);
+  }
+
+  const priorities = new Map(sourcesReg.map((s) => [s.code, s.priority]));
 
   for (const r of rows) {
-    const res = await reconcileCell(r.id);
+    const cellFeeds =
+      feedsByCell.get(
+        feedKey(r.employee.email, r.kpiDefinitionId!, r.period.month, r.period.year)
+      ) ?? [];
+    const existing =
+      reconByCell.get(`${r.periodId}|${r.employeeId}|${r.kpiDefinitionId}`) ?? null;
+
+    const plan = planCell({ row: r, feeds: cellFeeds, existing, priorities });
+    if (plan.action === "noop") {
+      if (plan.outcome === "skipped") continue;
+      checked++;
+      if (plan.outcome === "matched") matched++;
+      else mismatched++;
+      continue;
+    }
+
+    written++;
+    const res = await reconcileCell(r.id, {
+      row: r,
+      feeds: cellFeeds,
+      existing,
+      priorities,
+    });
     if (res.skipped) continue;
     checked++;
     if (res.matched) matched++;
     else mismatched++;
   }
 
-  return { checked, matched, mismatched, total: rows.length };
+  return { checked, matched, mismatched, total, written };
 }
 
 /**
@@ -445,14 +660,22 @@ export async function resolveReconciliation(
 
 /* ------------------------------------------------------------ tiện ích */
 
-/** Nguồn nào đáng tin hơn khi các số đã khớp nhau. */
-async function pickByPriority(sources: SourceValue[]): Promise<SourceValue> {
+/** Bảng ưu tiên của các nguồn đã đăng ký. */
+async function loadPriorities(codes: string[]): Promise<Map<string, number>> {
   const registered = await prisma.integrationSource.findMany({
-    where: { code: { in: sources.map((s) => s.code) } },
+    where: { code: { in: codes } },
     select: { code: true, priority: true },
   });
+  return new Map(registered.map((r) => [r.code, r.priority]));
+}
+
+/** Nguồn nào đáng tin hơn khi các số đã khớp nhau. */
+export function pickByPriority(
+  sources: SourceValue[],
+  priorities: Map<string, number>
+): SourceValue {
   const priorityOf = (code: string) =>
-    registered.find((r) => r.code === code)?.priority ??
+    priorities.get(code) ??
     // Nguồn chưa đăng ký: API tự động tin hơn file người nạp tay
     (code.includes("API") ? 20 : 50);
 

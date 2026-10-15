@@ -6,6 +6,7 @@ import { parseTaskText, type ParsedTask } from "../ai/task-parser";
 import { adviseKpi, type KpiAdvisory, type KpiContext } from "../ai/kpi-advisor";
 import { createTask } from "./task-service";
 import { vnDayRange } from "../vn-time";
+import { countAudit, lockKey, recordAttempt } from "../rate-limit";
 import type { SessionUser } from "../auth";
 
 type Meta = { ip?: string | null; userAgent?: string | null };
@@ -30,16 +31,39 @@ export const AI_DAILY_QUOTA: Record<string, number> = {
 };
 
 /**
- * Chặn gọi AI quá hạn mức trong ngày. Mỗi lượt gọi AI đều để lại đúng một dòng
- * ai_suggestions (requestedById = người gọi) nên đếm thẳng trên bảng đó —
- * có index (requestedById, createdAt), không cần bảng đếm riêng.
+ * Chặn gọi AI quá hạn mức trong ngày — và GIỮ CHỖ luôn một lượt.
+ *
+ * Kiểu cũ "đếm ai_suggestions rồi mới gọi AI" bị lọt khi bắn song song: mọi
+ * request cùng đọc "còn 1 lượt" rồi cùng gọi model (tốn tiền thật). Giờ đếm và
+ * ghi dòng giữ chỗ AI_CALL_RESERVED (audit_logs) trong cùng một transaction
+ * giữ advisory lock `ai:<userId>` — các lượt của cùng một người xếp hàng nối
+ * tiếp, lượt thứ limit+1 chắc chắn bị chặn. Lượt đã giữ chỗ được tính kể cả
+ * khi gọi model lỗi sau đó (thà thiệt người dùng một lượt còn hơn để bắn lỗi
+ * vô hạn). Đếm theo ngày lịch VN.
  */
 export async function assertAiQuota(actor: SessionUser) {
   const limit = AI_DAILY_QUOTA[actor.role] ?? 50;
-  const used = await prisma.aiSuggestion.count({
-    where: { requestedById: actor.id, createdAt: vnDayRange() },
+  const { gte, lt } = vnDayRange();
+  const allowed = await prisma.$transaction(async (tx) => {
+    await lockKey(tx, `ai:${actor.id}`);
+    const used = await countAudit(tx, {
+      action: "AI_CALL_RESERVED",
+      userId: actor.id,
+      since: gte,
+      until: lt,
+    });
+    if (used >= limit) return false;
+    await recordAttempt(tx, {
+      action: "AI_CALL_RESERVED",
+      entityName: "ai_quota",
+      entityId: actor.id,
+      userId: actor.id,
+      userEmail: actor.email,
+      after: { used: used + 1, limit },
+    });
+    return true;
   });
-  if (used >= limit) {
+  if (!allowed) {
     throw new BusinessError(
       "AI_QUOTA_EXCEEDED",
       `Bạn đã dùng hết ${limit} lượt trợ lý AI trong hôm nay. Vui lòng thử lại vào ngày mai.`,

@@ -16,20 +16,31 @@ import { ERR } from "@/lib/constants";
 
 export const runtime = "nodejs";
 
+// Trần an toàn cho mọi số kg nhập tay: một ca thực tế không tới 100 tấn. Số
+// vô lý (gõ thừa chữ số, Infinity) làm tràn cột tiền Int khi tính tổn thất.
+const MAX_KG = 100_000;
+const kg = (label: string) =>
+  z
+    .number({ invalid_type_error: `${label} phải là số.` })
+    .finite(`${label} không hợp lệ.`)
+    .min(0, `${label} không được âm.`)
+    .max(MAX_KG, `${label} vượt trần ${MAX_KG.toLocaleString("vi-VN")} kg.`);
+const count = z.number().int().min(0).max(10_000);
+
 const actionSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("QC_APPROVE"),
-    qcPassedKg: z.number().min(0),
-    reworkKg: z.number().min(0),
-    scrapKg: z.number().min(0),
-    haccpViolationCount: z.number().int().min(0),
+    qcPassedKg: kg("Sản lượng đạt"),
+    reworkKg: kg("Khối lượng làm lại"),
+    scrapKg: kg("Khối lượng phế"),
+    haccpViolationCount: count,
     qcNote: z.string().max(2000).optional(),
     participantDefects: z
       .array(
         z.object({
           userId: z.string().min(1),
-          personalDefectKg: z.number().min(0),
-          violationCount: z.number().int().min(0),
+          personalDefectKg: kg("Lỗi cá nhân"),
+          violationCount: count,
           note: z.string().max(500).optional(),
         })
       )
@@ -37,8 +48,8 @@ const actionSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("CEO_LOCK"),
-    targetOutputKg: z.number().positive(),
-    rawMaterialInputKg: z.number().min(0).optional(),
+    targetOutputKg: kg("Chỉ tiêu sản lượng").positive("Chỉ tiêu sản lượng phải lớn hơn 0."),
+    rawMaterialInputKg: kg("Nguyên liệu cấp vào").optional(),
     targetOverrideReason: z.string().max(1000).optional(),
     materialOverrideReason: z.string().max(1000).optional(),
     ceoNote: z.string().max(2000).optional(),

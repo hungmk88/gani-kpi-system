@@ -2,13 +2,15 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { vnParts } from "@/lib/vn-time";
 
 export default function OpenPeriodButton() {
   const router = useRouter();
-  const now = new Date();
+  // Tháng/năm theo lịch VN — server (UTC) và trình duyệt ra cùng giá trị.
+  const now = vnParts();
   const [open, setOpen] = useState(false);
-  const [month, setMonth] = useState(now.getMonth() + 1);
-  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.month);
+  const [year, setYear] = useState(now.year);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,7 +23,7 @@ export default function OpenPeriodButton() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ month, year, autoAssign: true }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.message || "Không mở được kỳ.");
         return;

@@ -3,6 +3,7 @@ import { prisma } from "../db";
 import { PRODUCTION_FEED_SOURCE } from "./constants";
 import { safeDiv, safePercent } from "./kpi-engine";
 import { reconcileCell } from "../services/reconciliation-service";
+import { rescoreLockedShiftsWithoutResults } from "../services/production-service";
 
 /**
  * CẦU NỐI: TỪ CA SẢN XUẤT HẰNG NGÀY SANG KPI THÁNG.
@@ -129,6 +130,43 @@ export async function runProductionKpiSync(
     ).map((d) => [d.code, d])
   );
 
+  // Tra MỘT LẦN số đã gộp lần trước của mọi (người × chỉ tiêu) trong tháng,
+  // thay vì một findFirst cho từng ô — cron Vercel chỉ có 60 giây.
+  const emails = [...new Set([...byUser.values()].map((a) => a.email))];
+  const defIds = [...defs.values()].map((d) => d.id);
+  const cellKey = (email: string, defId: string) => `${email}|${defId}`;
+  const lastValue = new Map<string, number>();
+  if (defIds.length > 0) {
+    const prevFeeds = await prisma.kpiActualFeed.findMany({
+      where: {
+        kpiDefinitionId: { in: defIds },
+        employeeEmail: { in: emails },
+        periodMonth: month,
+        periodYear: year,
+        sourceCode: PRODUCTION_FEED_SOURCE,
+      },
+      orderBy: { createdAt: "desc" },
+      select: { employeeEmail: true, kpiDefinitionId: true, value: true },
+    });
+    for (const f of prevFeeds) {
+      const k = cellKey(f.employeeEmail, f.kpiDefinitionId);
+      if (!lastValue.has(k)) lastValue.set(k, f.value);
+    }
+  }
+
+  type NewFeed = {
+    kpiDefinitionId: string;
+    employeeEmail: string;
+    periodMonth: number;
+    periodYear: number;
+    value: number;
+    source: string;
+    sourceCode: string;
+    rawPayload: string;
+  };
+  const newFeeds: NewFeed[] = [];
+  const changedCells: { userId: string; defId: string }[] = [];
+
   for (const [userId, agg] of byUser) {
     const values: Record<string, number | null> = {
       // Tổng thành phẩm quy cho người này trong tháng
@@ -153,59 +191,61 @@ export async function runProductionKpiSync(
       // Nhật ký thô ghi kể cả khi kỳ tháng chưa mở — nhưng CHỈ khi số đổi so
       // với lần gộp trước. Cron chạy mỗi 2 tiếng; ghi lặp cùng một số sẽ phình
       // bảng feed và làm bộ đối soát tưởng nguồn vừa đổi.
-      const lastFeed = await prisma.kpiActualFeed.findFirst({
-        where: {
-          kpiDefinitionId: def.id,
-          employeeEmail: agg.email,
-          periodMonth: month,
-          periodYear: year,
-          sourceCode: PRODUCTION_FEED_SOURCE,
-        },
-        orderBy: { createdAt: "desc" },
-        select: { value: true },
-      });
-      const changed = !lastFeed || lastFeed.value !== value;
-      if (changed) await prisma.kpiActualFeed.create({
-        data: {
-          kpiDefinitionId: def.id,
-          employeeEmail: agg.email,
-          periodMonth: month,
-          periodYear: year,
-          value,
-          source: "PRODUCTION",
-          sourceCode: PRODUCTION_FEED_SOURCE,
-          rawPayload: JSON.stringify({
-            soCaThamGia: agg.shiftsTotal,
-            soCaDatChiTieu: agg.shiftsOnTarget,
-            kgQuyChoNguoiNay: round2(agg.attributedKg),
-            loiCongDoanKg: round2(agg.personalDefectKg),
-            diemCaTrungBinh:
-              agg.scoreCount > 0
-                ? round2(agg.scoreSum / agg.scoreCount)
-                : null,
-          }),
-        },
-      });
-      if (changed) result.feedsWritten++;
+      const prev = lastValue.get(cellKey(agg.email, def.id));
+      if (prev !== undefined && prev === value) continue;
 
-      if (!period || period.status === "FINALIZED") continue;
-
-      const row = await prisma.kpiResult.findUnique({
-        where: {
-          periodId_employeeId_kpiDefinitionId: {
-            periodId: period.id,
-            employeeId: userId,
-            kpiDefinitionId: def.id,
-          },
-        },
+      newFeeds.push({
+        kpiDefinitionId: def.id,
+        employeeEmail: agg.email,
+        periodMonth: month,
+        periodYear: year,
+        value,
+        source: "PRODUCTION",
+        sourceCode: PRODUCTION_FEED_SOURCE,
+        rawPayload: JSON.stringify({
+          soCaThamGia: agg.shiftsTotal,
+          soCaDatChiTieu: agg.shiftsOnTarget,
+          kgQuyChoNguoiNay: round2(agg.attributedKg),
+          loiCongDoanKg: round2(agg.personalDefectKg),
+          diemCaTrungBinh:
+            agg.scoreCount > 0 ? round2(agg.scoreSum / agg.scoreCount) : null,
+        }),
       });
-      // Không tự tạo dòng KPI mới — nếu quản lý chưa gán chỉ tiêu này cho người
-      // đó thì đừng tự ý gán thay họ.
-      if (!row || row.status === "FINALIZED") continue;
-
-      const rec = await reconcileCell(row.id);
-      if (!rec.skipped && !rec.matched) result.mismatches++;
+      changedCells.push({ userId, defId: def.id });
     }
+  }
+
+  if (newFeeds.length > 0) {
+    await prisma.kpiActualFeed.createMany({ data: newFeeds });
+    result.feedsWritten = newFeeds.length;
+  }
+
+  // Chỉ đối soát lại những ô vừa có số mới. Ô không đổi đã được đối soát ở
+  // lượt trước; bước runReconciliation ngay sau trong cron vẫn quét toàn bộ.
+  if (!period || period.status === "FINALIZED" || changedCells.length === 0) {
+    return result;
+  }
+
+  const rows = await prisma.kpiResult.findMany({
+    where: {
+      periodId: period.id,
+      employeeId: { in: [...new Set(changedCells.map((c) => c.userId))] },
+      kpiDefinitionId: { in: [...new Set(changedCells.map((c) => c.defId))] },
+    },
+    select: { id: true, status: true, employeeId: true, kpiDefinitionId: true },
+  });
+  const rowByCell = new Map(
+    rows.map((r) => [`${r.employeeId}|${r.kpiDefinitionId}`, r])
+  );
+
+  for (const c of changedCells) {
+    const row = rowByCell.get(`${c.userId}|${c.defId}`);
+    // Không tự tạo dòng KPI mới — nếu quản lý chưa gán chỉ tiêu này cho người
+    // đó thì đừng tự ý gán thay họ.
+    if (!row || row.status === "FINALIZED") continue;
+
+    const rec = await reconcileCell(row.id);
+    if (!rec.skipped && !rec.matched) result.mismatches++;
   }
 
   return result;
@@ -223,10 +263,23 @@ export async function runProductionKpiSyncRecent(now = new Date()) {
       ? { month: 12, year: cur.year - 1 }
       : { month: cur.month - 1, year: cur.year };
 
+  // Chữa ca đã khoá mà chấm điểm lỗi TRƯỚC khi gộp — để điểm ca kịp vào
+  // số liệu tháng. Lỗi ở bước này không được chặn việc gộp.
+  let chamLai: Awaited<ReturnType<typeof rescoreLockedShiftsWithoutResults>> | {
+    error: string;
+  };
+  try {
+    chamLai = await rescoreLockedShiftsWithoutResults();
+  } catch (e) {
+    console.error("[PRODUCTION] Chấm lại ca thiếu điểm lỗi:", e);
+    chamLai = { error: e instanceof Error ? e.message : String(e) };
+  }
+
   const a = await runProductionKpiSync(cur.month, cur.year);
   const b = await runProductionKpiSync(prev.month, prev.year);
 
   return {
+    chamLaiCaThieuDiem: chamLai,
     thangNay: a,
     thangTruoc: b,
     tongCaDaGop: a.shiftsCounted + b.shiftsCounted,

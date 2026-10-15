@@ -1,4 +1,4 @@
-import { safeEqual } from "@/lib/secrets";
+import { safeEqual, strongSecret } from "@/lib/secrets";
 import { NextResponse } from "next/server";
 import { handleTelegramUpdate } from "@/lib/telegram-bot";
 import { clientMeta } from "@/lib/audit";
@@ -16,11 +16,13 @@ export const runtime = "nodejs";
  * gây lặp thao tác. Lỗi nghiệp vụ được báo cho người dùng ngay trong chat.
  */
 export async function POST(req: Request) {
-  const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  // Khoá yếu (thiếu, < 16 ký tự, còn chuỗi mẫu "doi-chuoi...") coi như chưa
+  // cấu hình — thà tắt webhook còn hơn để người đọc .env.example mạo danh CEO.
+  const secret = strongSecret("TELEGRAM_WEBHOOK_SECRET", 16);
 
   if (!secret) {
     console.error(
-      "[TELEGRAM] Nhận được gói tin nhưng chưa đặt TELEGRAM_WEBHOOK_SECRET — từ chối."
+      "[TELEGRAM] Nhận được gói tin nhưng TELEGRAM_WEBHOOK_SECRET chưa đặt hoặc quá yếu — từ chối."
     );
     return NextResponse.json(
       { ok: false, error: "Webhook chưa được cấu hình khoá bí mật." },

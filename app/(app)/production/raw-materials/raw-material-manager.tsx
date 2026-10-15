@@ -82,12 +82,25 @@ export default function RawMaterialManager({
   }
 
   async function toggleActive(id: string, isActive: boolean) {
-    await fetch(`/api/production/raw-materials/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive }),
-    });
-    router.refresh();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/production/raw-materials/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.message || "Không đổi được trạng thái nguyên vật liệu.");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("Không kết nối được máy chủ, thử lại sau.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function submitTransaction(id: string) {
@@ -238,6 +251,7 @@ export default function RawMaterialManager({
                         className={`text-xs hover:underline ${
                           m.isActive ? "text-red-600" : "text-emerald-600"
                         }`}
+                        disabled={busy}
                         onClick={() => toggleActive(m.id, !m.isActive)}
                       >
                         {m.isActive ? "Ngưng dùng" : "Dùng lại"}

@@ -34,62 +34,11 @@ export async function recalcResult(resultId: string) {
   });
   if (!r) throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy dòng KPI.", 404);
 
-  // Số dùng để chấm: ưu tiên số chốt, chưa có thì lấy số nhân viên khai,
-  // chưa có nữa thì lấy số hệ thống.
-  const effective =
-    r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null;
-
-  // Trần Sales là 120% (tài liệu truyền thông KPI Sales, 10/09/2026) — khác
-  // trần 150% chung toàn công ty. Chỉ Sales bị ghi đè, phòng ban khác giữ
-  // nguyên KPI_SCORE_CAP mặc định.
-  const cap =
-    r.kpiDefinition?.department?.code === SALES_DEPARTMENT_CODE
-      ? SALES_KPI_CAP
-      : undefined;
-
-  // Chưa gán chỉ tiêu thì không có gì để chấm — cho điểm 0, không đoán chiều.
-  let calc = r.kpiDefinition
-    ? calculateKpiScore({
-        target: r.targetValue ?? 0,
-        actual: effective,
-        weight: r.weightPercent ?? 0,
-        isHigherBetter: r.kpiDefinition.isHigherBetter,
-        cap,
-      })
-    : {
-        achievementPercent: 0,
-        weightedScore: 0,
-        isCapped: false,
-        rawAchievementPercent: 0,
-      };
-
-  // Gatekeeper Sales: trả hàng/khiếu nại vượt ngưỡng thì trừ THẲNG vào tổng
-  // điểm, không đi qua công thức trọng số × mức đạt như mọi chỉ tiêu khác.
-  // Chỉ tiêu này có defaultWeight = 0 nên bình thường weightedScore đã là 0 —
-  // chỗ này chỉ ghi đè khi thật sự vượt ngưỡng.
-  if (
-    r.kpiDefinition?.code === SALES_RETURN_RATE_GATEKEEPER.KPI_CODE &&
-    effective !== null &&
-    effective !== undefined &&
-    effective > SALES_RETURN_RATE_GATEKEEPER.THRESHOLD_PERCENT
-  ) {
-    calc = {
-      ...calc,
-      weightedScore: -SALES_RETURN_RATE_GATEKEEPER.PENALTY_POINTS,
-    };
-  }
-
-  const mismatch = detectMismatch(r.actualSystem, r.actualSelf);
-
+  // Công thức nằm MỘT chỗ (computeDerivedFields) — quét hàng loạt dùng chung,
+  // không có chuyện hai nơi tính lệch nhau.
   return prisma.kpiResult.update({
     where: { id: resultId },
-    data: {
-      achievementPercent: calc.achievementPercent,
-      weightedScore: calc.weightedScore,
-      isCapped: calc.isCapped,
-      hasMismatch: mismatch.hasMismatch,
-      mismatchPercent: mismatch.mismatchPercent,
-    },
+    data: computeDerivedFields(r),
     include: { kpiDefinition: true, employee: true, period: true },
   });
 }
@@ -509,14 +458,106 @@ export async function editAfterLock(
  * nhịp chạy nền tiếp theo sẽ đưa mọi thứ về đúng.
  */
 export async function recalcOpenResults() {
+  // Một truy vấn đọc cho cả lượt, tính trong bộ nhớ, chỉ GHI dòng nào số dẫn
+  // xuất thật sự đổi — trước đây mỗi dòng 2 truy vấn + 1 lệnh ghi dù không đổi
+  // gì, cron Vercel 60 giây không gánh nổi khi số dòng lớn.
   const rows = await prisma.kpiResult.findMany({
     where: { status: { not: "FINALIZED" } },
-    select: { id: true },
+    include: { kpiDefinition: { include: { department: true } } },
   });
+
   for (const r of rows) {
-    await recalcResult(r.id);
+    const next = computeDerivedFields(r);
+    const same =
+      r.achievementPercent === next.achievementPercent &&
+      r.weightedScore === next.weightedScore &&
+      r.isCapped === next.isCapped &&
+      r.hasMismatch === next.hasMismatch &&
+      r.mismatchPercent === next.mismatchPercent;
+    if (same) continue;
+
+    // Ghi có điều kiện: nếu số nguồn vừa bị sửa ở luồng khác thì luồng đó đã
+    // tự gọi recalcResult — không ghi đè bằng số tính từ dữ liệu cũ.
+    await prisma.kpiResult.updateMany({
+      where: {
+        id: r.id,
+        status: { not: "FINALIZED" },
+        kpiDefinitionId: r.kpiDefinitionId,
+        targetValue: r.targetValue,
+        weightPercent: r.weightPercent,
+        actualSystem: r.actualSystem,
+        actualSelf: r.actualSelf,
+        actualFinal: r.actualFinal,
+      },
+      data: next,
+    });
   }
+  // Giữ kiểu trả về cũ (số dòng đã xét) để báo cáo cron không đổi ý nghĩa
   return rows.length;
+}
+
+/**
+ * NƠI DUY NHẤT tính các trường dẫn xuất của một dòng KPI (mức đạt, điểm có
+ * trọng số, cờ trần, cờ lệch số). Thuần — không truy vấn, không ghi.
+ *
+ * - Số dùng để chấm: số chốt → số nhân viên khai → số hệ thống.
+ * - Trần Sales 120% (10/09/2026), phòng khác giữ trần chung 150%.
+ * - Chưa gán chỉ tiêu thì 0 điểm, không đoán chiều.
+ * - Gatekeeper Sales: trả hàng/khiếu nại vượt ngưỡng thì trừ THẲNG vào tổng.
+ */
+function computeDerivedFields(r: {
+  targetValue: number | null;
+  weightPercent: number | null;
+  actualSystem: number | null;
+  actualSelf: number | null;
+  actualFinal: number | null;
+  kpiDefinition: {
+    code: string;
+    isHigherBetter: boolean;
+    department: { code: string } | null;
+  } | null;
+}) {
+  const effective = r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null;
+  const cap =
+    r.kpiDefinition?.department?.code === SALES_DEPARTMENT_CODE
+      ? SALES_KPI_CAP
+      : undefined;
+
+  let calc = r.kpiDefinition
+    ? calculateKpiScore({
+        target: r.targetValue ?? 0,
+        actual: effective,
+        weight: r.weightPercent ?? 0,
+        isHigherBetter: r.kpiDefinition.isHigherBetter,
+        cap,
+      })
+    : {
+        achievementPercent: 0,
+        weightedScore: 0,
+        isCapped: false,
+        rawAchievementPercent: 0,
+      };
+
+  if (
+    r.kpiDefinition?.code === SALES_RETURN_RATE_GATEKEEPER.KPI_CODE &&
+    effective !== null &&
+    effective !== undefined &&
+    effective > SALES_RETURN_RATE_GATEKEEPER.THRESHOLD_PERCENT
+  ) {
+    calc = {
+      ...calc,
+      weightedScore: -SALES_RETURN_RATE_GATEKEEPER.PENALTY_POINTS,
+    };
+  }
+
+  const mismatch = detectMismatch(r.actualSystem, r.actualSelf);
+  return {
+    achievementPercent: calc.achievementPercent,
+    weightedScore: calc.weightedScore,
+    isCapped: calc.isCapped,
+    hasMismatch: mismatch.hasMismatch,
+    mismatchPercent: mismatch.mismatchPercent,
+  };
 }
 
 /**
