@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { handle, ok, requireUser } from "@/lib/api";
-import { hashPassword, verifyPassword } from "@/lib/auth";
+import { createSession, hashPassword, verifyPassword } from "@/lib/auth";
 import { checkPasswordStrength } from "@/lib/password";
 import { BusinessError } from "@/lib/rbac";
 import { ERR } from "@/lib/constants";
@@ -27,10 +27,13 @@ const schema = z.object({
  */
 export async function POST(req: Request) {
   return handle(async () => {
-    const actor = await requireUser();
+    const actor = await requireUser({ allowMustChange: true });
     const body = schema.parse(await req.json());
 
-    const user = await prisma.user.findUnique({ where: { id: actor.id } });
+    const user = await prisma.user.findUnique({
+      where: { id: actor.id },
+      omit: { passwordHash: false },
+    });
     if (!user) {
       throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy tài khoản.", 404);
     }
@@ -76,6 +79,10 @@ export async function POST(req: Request) {
         mustChangePassword: false,
       },
     });
+
+    // Đổi mật khẩu làm mọi phiên cũ hết hiệu lực (kể cả phiên đang dùng) —
+    // cấp lại phiên mới cho chính người vừa đổi để họ không bị đăng xuất.
+    await createSession(actor);
 
     // Nhật ký KHÔNG chứa mật khẩu cũ lẫn mới, chỉ ghi là đã đổi
     await writeAudit({

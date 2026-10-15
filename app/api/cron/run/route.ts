@@ -1,5 +1,6 @@
-import { fail, handle, ok } from "@/lib/api";
-import { getSession } from "@/lib/auth";
+import { fail, handle, ok, requireUser } from "@/lib/api";
+import { safeEqual, strongSecret } from "@/lib/secrets";
+import { acquireJobLock, releaseJobLock } from "@/lib/job-lock";
 import {
   recalcOpenResults,
   runKpiLockCycle,
@@ -34,19 +35,37 @@ export const maxDuration = 60;
  *
  * Hai cách gọi:
  *   - Từ scheduler:  POST /api/cron/run  header  x-cron-secret: <CRON_SECRET>
+ *     (chỉ header — không nhận ?secret= trên URL)
  *   - Bấm tay trong giao diện (Ban Giám đốc / quản trị đã đăng nhập)
  *
  * Chạy lại nhiều lần vẫn an toàn, không tạo dữ liệu trùng và không nhắc lặp.
  */
+type Step = { name: string; run: () => Promise<unknown> };
+
+const STEPS: Step[] = [
+  { name: "kpiLock", run: runKpiLockCycle },
+  // Gộp ca sản xuất đã khoá thành số liệu KPI tháng TRƯỚC khi đối soát,
+  // để số của xưởng cũng phải đi qua bộ đối soát như iPOS và file Excel.
+  { name: "productionSync", run: runProductionKpiSyncRecent },
+  { name: "reconciliation", run: runReconciliation },
+  { name: "kpiRecalculated", run: recalcOpenResults },
+  { name: "riskScan", run: runRiskScan },
+  // Phân tích chạy SAU cùng: nó đọc kết quả của mọi bước trên
+  { name: "analytics", run: runAnalyticsCycle },
+  { name: "reminders", run: runDeadlineReminders },
+  { name: "staleMismatch", run: remindStaleMismatches },
+];
+
+const LOCK_NAME = "cron:run";
+
 async function execute(req: Request) {
-  const secret = process.env.CRON_SECRET;
-  const provided =
-    req.headers.get("x-cron-secret") ??
-    new URL(req.url).searchParams.get("secret");
+  // Chỉ nhận khoá qua header — query string bị ghi vào log truy cập.
+  const secret = strongSecret("CRON_SECRET", 16);
+  const provided = req.headers.get("x-cron-secret");
 
   let actorLabel = "CRON";
-  if (!secret || provided !== secret) {
-    const user = await getSession();
+  if (!secret || !safeEqual(provided, secret)) {
+    const user = await requireUser().catch(() => null);
     if (!user || (user.role !== "CEO" && user.role !== "ADMIN")) {
       return fail(
         "FORBIDDEN",
@@ -57,53 +76,48 @@ async function execute(req: Request) {
     actorLabel = `MANUAL:${user.email}`;
   }
 
-  const lockReport = await runKpiLockCycle();
-  // Gộp ca sản xuất đã khoá thành số liệu KPI tháng TRƯỚC khi đối soát,
-  // để số của xưởng cũng phải đi qua bộ đối soát như iPOS và file Excel.
-  const productionSync = await runProductionKpiSyncRecent();
-  const reconciliation = await runReconciliation();
-  const recalced = await recalcOpenResults();
-  const riskReport = await runRiskScan();
-  // Phân tích chạy SAU cùng: nó đọc kết quả của mọi bước trên
-  const analytics = await runAnalyticsCycle();
-  const reminders = await runDeadlineReminders();
-  const staleMismatch = await remindStaleMismatches();
+  if (!(await acquireJobLock(LOCK_NAME, maxDuration + 30))) {
+    return fail(
+      "CRON_BUSY",
+      "Một lượt chạy nền khác đang diễn ra, thử lại sau ít phút.",
+      409
+    );
+  }
+
+  const results: Record<string, unknown> = {};
+  const errors: Record<string, string> = {};
+  try {
+    // Mỗi bước tự bắt lỗi: một bước hỏng không được làm mất các bước sau
+    // (nhất là nhắc hạn ở cuối).
+    for (const step of STEPS) {
+      try {
+        results[step.name] = await step.run();
+      } catch (e) {
+        console.error(`[CRON] Bước ${step.name} lỗi:`, e);
+        errors[step.name] = e instanceof Error ? e.message : String(e);
+      }
+    }
+  } finally {
+    await releaseJobLock(LOCK_NAME);
+  }
 
   await writeAudit({
     actor: null,
     action: "CRON_RUN",
     entityName: "system",
     entityId: actorLabel,
-    after: {
-      lockReport,
-      productionSync,
-      reconciliation,
-      recalced,
-      riskReport,
-      analytics,
-      reminders,
-      staleMismatch,
-    },
+    after: { ...results, errors },
   });
 
   return ok({
     ranAt: new Date().toISOString(),
     triggeredBy: actorLabel,
-    kpiLock: lockReport,
-    productionSync,
-    reconciliation,
-    kpiRecalculated: recalced,
-    riskScan: riskReport,
-    analytics,
-    reminders,
-    staleMismatch,
+    ...results,
+    errors,
   });
 }
 
+// Chỉ POST: GET chạy được bằng một đường link (CSRF qua cookie SameSite=Lax).
 export async function POST(req: Request) {
-  return handle(() => execute(req));
-}
-
-export async function GET(req: Request) {
   return handle(() => execute(req));
 }

@@ -497,6 +497,8 @@ model AuditLog {
 
   @@index([userId, createdAt])
   @@index([entityName, entityId])
+  @@index([action, createdAt])
+  @@index([createdAt])
   @@map("audit_logs")
 }
 
@@ -1135,4 +1137,12 @@ model SystemSetting {
   updatedAt DateTime @updatedAt
 
   @@map("system_settings")
+}
+
+// Khoá chống chạy chồng cho việc nền (xem lib/job-lock.ts)
+model JobLock {
+  name        String   @id
+  lockedUntil DateTime
+
+  @@map("job_locks")
 }

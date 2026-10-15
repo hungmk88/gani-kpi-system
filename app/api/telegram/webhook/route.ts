@@ -1,3 +1,4 @@
+import { safeEqual } from "@/lib/secrets";
 import { NextResponse } from "next/server";
 import { handleTelegramUpdate } from "@/lib/telegram-bot";
 import { clientMeta } from "@/lib/audit";
@@ -28,7 +29,7 @@ export async function POST(req: Request) {
   }
 
   const provided = req.headers.get("x-telegram-bot-api-secret-token");
-  if (provided !== secret) {
+  if (!safeEqual(provided, secret)) {
     console.warn("[TELEGRAM] Gói tin sai khoá bí mật, đã chặn.");
     return NextResponse.json({ ok: false }, { status: 401 });
   }

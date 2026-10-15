@@ -7,6 +7,7 @@ import { checkPasswordStrength } from "@/lib/password";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { ERR, ROLES } from "@/lib/constants";
 import { EMPLOYMENT_TYPES } from "@/lib/production/constants";
+import { alertCeos } from "@/lib/services/user-security";
 
 const schema = z.object({
   fullName: z.string().min(2).max(255).optional(),
@@ -44,10 +45,36 @@ export async function PATCH(
       );
     }
 
+    // Quản trị không tự nâng mình lên Ban Giám đốc (tách quyền: ADMIN không
+    // được duyệt KPI hay giao việc — xem lib/rbac.ts).
+    if (target.id === actor.id && body.role === "CEO" && actor.role !== "CEO") {
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Không thể tự nâng quyền tài khoản của chính bạn lên Ban Giám đốc.",
+        403
+      );
+    }
+
+    // Telegram của Ban Giám đốc là kênh bấm "Duyệt & khoá" KPI — chỉ chính chủ
+    // được liên kết (qua mã liên kết trong trang Thông báo), quản trị không
+    // được trỏ nó sang tài khoản Telegram khác.
+    if (
+      target.role === "CEO" &&
+      target.id !== actor.id &&
+      body.telegramChatId !== undefined &&
+      body.telegramChatId !== target.telegramChatId
+    ) {
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Không được sửa Telegram của tài khoản Ban Giám đốc. Người đó tự liên kết trong trang Thông báo.",
+        403
+      );
+    }
+
     // Luôn phải còn ít nhất một CEO đang hoạt động
     if (
       target.role === "CEO" &&
-      (body.role === "EMPLOYEE" || body.role === "MANAGER" || body.isActive === false)
+      ((body.role !== undefined && body.role !== "CEO") || body.isActive === false)
     ) {
       const activeCeos = await prisma.user.count({
         where: { role: "CEO", isActive: true, id: { not: id } },
@@ -86,7 +113,9 @@ export async function PATCH(
       // Quản trị đặt hộ nghĩa là quản trị BIẾT mật khẩu đó. Bắt người kia tự
       // đổi ngay lần đăng nhập sau, để cuối cùng chỉ họ biết mật khẩu của mình.
       data.mustChangePassword = true;
-      data.passwordChangedAt = null;
+      // Mốc đổi mật khẩu = bây giờ -> mọi phiên cũ của người này mất hiệu lực
+      // (lib/auth.ts loadActiveUser).
+      data.passwordChangedAt = new Date();
     }
 
     const updated = await prisma.user.update({ where: { id }, data });
@@ -114,6 +143,13 @@ export async function PATCH(
       ...clientMeta(req),
     });
 
-    return ok({ user: { ...updated, passwordHash: undefined } });
+    if (body.role === "CEO" && target.role !== "CEO") {
+      await alertCeos(
+        `Tài khoản ${updated.email} vừa được nâng lên Ban Giám đốc`,
+        `Người thực hiện: ${actor.email}. Nếu không phải chủ ý của Ban Giám đốc, khoá tài khoản này ngay.`
+      );
+    }
+
+    return ok({ user: updated });
   });
 }

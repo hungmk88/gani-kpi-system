@@ -20,8 +20,12 @@ export default function RunScanButton() {
         setMsg(data.message || "Không chạy được.");
         return;
       }
+      const failed = Object.keys(data.errors ?? {});
       setMsg(
-        `Đã quét ${data.riskScan.scanned} việc · ${data.riskScan.newCritical} việc vừa lên báo động đỏ.`
+        data.riskScan
+          ? `Đã quét ${data.riskScan.scanned} việc · ${data.riskScan.newCritical} việc vừa lên báo động đỏ.` +
+              (failed.length ? ` (${failed.length} bước lỗi: ${failed.join(", ")})` : "")
+          : `Chạy xong nhưng có bước lỗi: ${failed.join(", ")}.`
       );
       router.refresh();
     } finally {

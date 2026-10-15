@@ -1,3 +1,4 @@
+import { strongSecret } from "@/lib/secrets";
 import { NextResponse } from "next/server";
 import { ingestFromSource } from "@/lib/services/integration-service";
 import { clientMeta } from "@/lib/audit";
@@ -39,7 +40,7 @@ export async function POST(
     ip: clientMeta(req).ip,
     legacySecret:
       source.toLowerCase() === "ipos"
-        ? (process.env.IPOS_WEBHOOK_SECRET ?? null)
+        ? strongSecret("IPOS_WEBHOOK_SECRET", 16)
         : null,
   });
 
