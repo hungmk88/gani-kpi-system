@@ -347,6 +347,12 @@ NVL kho cấp            Lỗi theo công đoạn               ▼
 
 **Ba luật cứng:** người khai ca không tự xác nhận phẩm chất của mình (KCS khác phải vào); chấm điểm chỉ chạy ở bước 3 khi con số chắc chắn; ca đã khoá là đóng băng, mở lại phải ghi lý do và xoá điểm cũ để chấm lại.
 
+**KCS trả về sản xuất:** số liệu sai thì KCS (hoặc Ban Giám đốc) bấm *Trả về sản
+xuất* kèm lý do. Ca vẫn ở `DRAFT` nhưng mang dấu `[KCS trả về]` trong ghi chú KCS
+— không xác nhận được cho tới khi người khai sửa và gửi lại. Người khai đã nghỉ /
+mất vai trò thì tổ trưởng, quản đốc hoặc GĐ Sản xuất nhận thay. Lệch cân đối
+khối lượng quá 5 kg thì KCS bắt buộc ghi lý do khi xác nhận.
+
 ### Điểm 2 tầng (cuối = T1 × 0,6 + T2 × 0,4, chặn trần 150)
 
 **Tầng 2 (40%) — kết quả chung ca:**
@@ -664,9 +670,11 @@ npm run test:all
 
 - **Vận hành (57 phép thử)** — đổi mật khẩu (sai mật khẩu cũ, mật khẩu yếu, đặt
   lại đúng mật khẩu mẫu, trùng mật khẩu cũ đều bị chặn; gửi kèm `userId` người
-  khác cũng chỉ đổi được của chính mình), nạp nhân sự Excel (sai một dòng là từ
-  chối cả file, không tạo được tài khoản ADMIN/CEO bằng Excel, bắt email trùng
-  trong file lẫn trùng với người đã có), sao lưu (bản sao mở được và đủ dữ liệu).
+  khác cũng chỉ đổi được của chính mình), nạp nhân sự Excel (xem trước không
+  tạo ai, chỉ nhập dòng hợp lệ, file đổi sau lúc xem trước thì từ chối, nạp lại
+  không tạo trùng, không tạo được tài khoản ADMIN/CEO bằng Excel, bắt email và
+  mã NV trùng trong file lẫn trùng với người đã có), sao lưu (bản sao mở được và
+  đủ dữ liệu).
 
 - **Bảng điều hành (62 phép thử)** — thanh nhịp kỳ KPI khớp luật khoá thật, hàng
   chờ xếp khoá-cứng-trước, việc trễ tách khỏi việc hôm nay, và quan trọng nhất:
@@ -707,24 +715,39 @@ dấu hiệu có người đụng vào máy người khác. Nhật ký không ba
 
 ### Nạp nhân sự hàng loạt
 
-**Quản trị → Tài khoản → Tải file mẫu**, điền, rồi **Chọn file để nạp**.
+**Quản trị → Tài khoản → Tải file mẫu**, điền, rồi **Chọn file để xem trước**.
 
-Luật ở đây ngược với phần nạp số KPI: **sai một dòng là từ chối cả file, không tạo
-ai hết.** Nạp số KPI thì dòng nào được cứ nhận, vì thiếu một con số bổ sung sau
-được. Còn nạp nhân sự nửa chừng thì có người đã có tài khoản, có người chưa, mà
-nhìn vào file không phân biệt được — nạp lại lần hai sẽ đẻ ra một mớ lỗi "email đã
-tồn tại" lẫn với lỗi thật.
+Hai bước:
 
-Máy liệt kê **đủ** các dòng sai và sai vì sao, để sửa một lượt.
+1. **Xem trước** — chọn file là máy đọc và kiểm từng dòng, **chưa tạo ai**. Bảng
+   xem trước tô đỏ dòng sai, ghi rõ sai ở cột nào và vì sao (một dòng sai hai
+   chỗ thì báo cả hai). Email đã có tài khoản thì ghi "bỏ qua", không tính là lỗi.
+2. **Nhập** — bấm "Nhập N dòng" thì chỉ những dòng hợp lệ được tạo, trong một
+   lệnh duy nhất. Máy kiểm lại file từ đầu; nếu số dòng hợp lệ khác lúc xem trước
+   (file bị sửa, có người vừa được tạo tay…) thì từ chối, bắt xem lại.
+
+Dòng sai thì sửa trong file rồi nạp lại **cả file**: những người đã tạo ở lần
+trước tự được bỏ qua, không tạo trùng.
+
+Cột **MA_NV** (mã nhân viên, cột 9) không bắt buộc; có thì phải không trùng với ai
+— trong file lẫn trong hệ thống. File mẫu cũ 8 cột vẫn nạp được.
 
 Hai thứ file Excel **không** làm được:
 - Không tạo được tài khoản `CEO` hoặc `ADMIN`. Hai vai trò này phải tạo tay trong
   mục Quản trị — tạo quyền cao nhất hệ thống bằng một dòng Excel là đường leo
   thang quyền quá dễ.
-- Không lách được luật mật khẩu. Mật khẩu tạm yếu thì cả file bị từ chối.
+- Không lách được luật mật khẩu. Mật khẩu tạm yếu thì dòng đó là dòng lỗi.
 
 Mọi người nạp vào đều bị bắt tự đổi mật khẩu, vì mật khẩu tạm nằm trong file mà
 nhiều người xem được.
+
+### Mã nhân viên
+
+Mỗi tài khoản có thể có **Mã NV** (theo hồ sơ nhân sự, vd `NV0012`) — không bắt
+buộc, nhưng đã có thì không trùng. Máy tự viết hoa và chỉ nhận chữ không dấu, số
+và `. _ -`. Đặt ở **Quản trị → Tài khoản** (ô Mã NV khi thêm, hoặc bấm *Sửa* trên
+dòng) hoặc cột MA_NV khi nạp Excel. Trùng mã thì máy báo tên người đang giữ mã.
+Tìm theo mã được ở Quản trị và Bảng KPI; bản in KPI và file Excel KPI có cột Mã NV.
 
 ### Sao lưu
 

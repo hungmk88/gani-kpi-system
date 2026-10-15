@@ -131,6 +131,18 @@ export async function PATCH(
         403
       );
     }
+    // Tách quyền: Quản trị không tự cấp cho mình quyền ký KCS / khoá ca
+    if (
+      target.id === actor.id &&
+      body.productionRole !== undefined &&
+      body.productionRole !== target.productionRole
+    ) {
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Không thể tự đổi vai trò sản xuất của chính bạn.",
+        403
+      );
+    }
 
     // Không cho tự khoá chính mình -> tránh mất lối vào hệ thống
     if (target.id === actor.id && body.isActive === false) {
@@ -278,6 +290,13 @@ export async function PATCH(
       await alertCeos(
         `Đổi vai trò ${updated.email}: ${ROLE_LABEL[target.role] ?? target.role} → ${ROLE_LABEL[updated.role] ?? updated.role}`,
         `Người thực hiện: ${actor.email}. Nếu không phải chủ ý của Ban Giám đốc, kiểm tra lại ngay.`
+      );
+    }
+
+    if (updated.productionRole !== target.productionRole) {
+      await alertCeos(
+        `Đổi vai trò sản xuất ${updated.email}: ${target.productionRole ?? "(không)"} → ${updated.productionRole ?? "(không)"}`,
+        `Người thực hiện: ${actor.email}. Vai trò xưởng mở quyền ký xác nhận KCS / khoá ca — nếu không phải chủ ý của Ban Giám đốc, kiểm tra lại ngay.`
       );
     }
 

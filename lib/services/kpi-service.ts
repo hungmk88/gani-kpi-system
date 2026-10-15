@@ -11,7 +11,7 @@ import {
   isSelfReviewOpen,
   round2,
 } from "../kpi";
-import { writeAudit } from "../audit";
+import { auditRecord, writeAudit } from "../audit";
 import { vnParts } from "../vn-time";
 import { notify, sendCeoAlert } from "../telegram";
 import type { SessionUser } from "../auth";
@@ -292,29 +292,26 @@ export async function ceoApprove(
   // ~2.000 lệnh rời, đứt giữa chừng thì nửa kỳ khoá nửa kỳ không.
   const outcome = await prisma.$transaction(
     async (tx) => {
-      let claimedIds: string[] = [];
+      let claimed: ApprovalEntry[] = [];
       if (plan.eligible.length > 0) {
         const ids = plan.eligible.map((e) => e.id);
         // Khoá có điều kiện: duyệt trên web và Telegram cùng lúc thì chỉ một
         // lượt thắng (Postgres khoá dòng, lượt sau thấy status đã đổi).
-        const res = await tx.kpiResult.updateMany({
+        await tx.kpiResult.updateMany({
           where: { id: { in: ids }, status: "MANAGER_REVIEWED" },
           data: { status: "FINALIZED", ceoNote, finalizedAt: now },
         });
-        if (res.count === ids.length) {
-          claimedIds = ids;
-        } else {
-          // Có dòng vừa bị lượt khác chốt — dòng của lượt này mang đúng mốc
-          // finalizedAt vừa ghi.
-          const mine = await tx.kpiResult.findMany({
-            where: { id: { in: ids }, status: "FINALIZED", finalizedAt: now },
-            select: { id: true },
-          });
-          claimedIds = mine.map((m) => m.id);
-        }
+        // Đọc lại đúng những dòng lượt này vừa khoá (mang mốc finalizedAt vừa
+        // ghi) — số liệu lúc này là bản mới nhất, đã bị khoá dòng: trưởng
+        // phòng sửa số chốt giữa lúc đọc kế hoạch và lúc khoá thì số chốt,
+        // điểm và nhật ký vẫn tính theo số mới, không theo bản đọc cũ.
+        const fresh = await tx.kpiResult.findMany({
+          where: { id: { in: ids }, status: "FINALIZED", finalizedAt: now },
+          include: { kpiDefinition: { include: { department: true } } },
+        });
+        claimed = fresh.map((r) => approvalEntry({ ...r, status: "MANAGER_REVIEWED" }));
       }
-      const claimedSet = new Set(claimedIds);
-      const claimed = plan.eligible.filter((e) => claimedSet.has(e.id));
+      const claimedSet = new Set(claimed.map((e) => e.id));
       for (const e of plan.eligible) {
         if (!claimedSet.has(e.id)) {
           skipped.push({ id: e.id, reason: "Đã được chốt ở lượt khác" });
@@ -437,20 +434,46 @@ type ApprovalRow = Parameters<typeof computeDerivedFields>[0] & {
  * Phần THUẦN của bước chốt: dòng nào được khoá, số chốt là gì, điểm sau khoá
  * bao nhiêu, dòng nào bị bỏ qua vì sao. Tách ra để test không cần database.
  */
+type ApprovalEntry = {
+  id: string;
+  employeeId: string;
+  /** Số chốt sau khi khoá */
+  actualFinal: number | null;
+  /** Khác null = số chốt đang trống, phải ghi giá trị này */
+  fillActualFinal: number | null;
+  derived: ReturnType<typeof computeDerivedFields>;
+  /** Điểm dẫn xuất đang lưu lệch so với dữ liệu → phải ghi lại */
+  derivedChanged: boolean;
+  before: { actualFinal: number | null; weightedScore: number; status: string };
+};
+
+/** Số chốt + điểm sau khoá của MỘT dòng đủ điều kiện chốt. Thuần. */
+function approvalEntry(r: ApprovalRow): ApprovalEntry {
+  // Chưa có số chốt thì lấy số nhân viên khai / số hệ thống. Không có số
+  // nào thì để TRỐNG (chấm 0 điểm) — tuyệt đối không quy về 0, vì với chỉ
+  // tiêu "càng thấp càng tốt" số 0 là điểm tối đa.
+  const actualFinal = r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null;
+  const derived = computeDerivedFields({ ...r, actualFinal });
+  const derivedChanged =
+    r.achievementPercent !== derived.achievementPercent ||
+    r.weightedScore !== derived.weightedScore ||
+    r.isCapped !== derived.isCapped ||
+    r.hasMismatch !== derived.hasMismatch ||
+    r.mismatchPercent !== derived.mismatchPercent;
+  return {
+    id: r.id,
+    employeeId: r.employeeId,
+    actualFinal,
+    fillActualFinal: r.actualFinal === null ? actualFinal : null,
+    derived,
+    derivedChanged,
+    before: { actualFinal: r.actualFinal, weightedScore: r.weightedScore, status: r.status },
+  };
+}
+
 export function planCeoApproval(rows: ApprovalRow[], openMismatch: Set<string>) {
   const skipped: { id: string; reason: string }[] = [];
-  const eligible: {
-    id: string;
-    employeeId: string;
-    /** Số chốt sau khi khoá */
-    actualFinal: number | null;
-    /** Khác null = số chốt đang trống, phải ghi giá trị này */
-    fillActualFinal: number | null;
-    derived: ReturnType<typeof computeDerivedFields>;
-    /** Điểm dẫn xuất đang lưu lệch so với dữ liệu → phải ghi lại */
-    derivedChanged: boolean;
-    before: { actualFinal: number | null; weightedScore: number; status: string };
-  }[] = [];
+  const eligible: ApprovalEntry[] = [];
 
   for (const r of rows) {
     if (r.status === "FINALIZED") continue;
@@ -468,56 +491,18 @@ export function planCeoApproval(rows: ApprovalRow[], openMismatch: Set<string>) 
       continue;
     }
 
-    // Chưa có số chốt thì lấy số nhân viên khai / số hệ thống. Không có số
-    // nào thì để TRỐNG (chấm 0 điểm) — tuyệt đối không quy về 0, vì với chỉ
-    // tiêu "càng thấp càng tốt" số 0 là điểm tối đa.
-    const actualFinal = r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null;
-    const derived = computeDerivedFields({ ...r, actualFinal });
-    const derivedChanged =
-      r.achievementPercent !== derived.achievementPercent ||
-      r.weightedScore !== derived.weightedScore ||
-      r.isCapped !== derived.isCapped ||
-      r.hasMismatch !== derived.hasMismatch ||
-      r.mismatchPercent !== derived.mismatchPercent;
-
-    eligible.push({
-      id: r.id,
-      employeeId: r.employeeId,
-      actualFinal,
-      fillActualFinal: r.actualFinal === null ? actualFinal : null,
-      derived,
-      derivedChanged,
-      before: { actualFinal: r.actualFinal, weightedScore: r.weightedScore, status: r.status },
-    });
+    eligible.push(approvalEntry(r));
   }
   return { eligible, skipped };
 }
 
-/** Một dòng audit_logs đúng định dạng writeAudit — để ghi hàng loạt trong giao dịch. */
+/** Một dòng audit_logs (định dạng writeAudit) — để ghi hàng loạt trong giao dịch. */
 function auditRow(
   actor: SessionUser,
   meta: Meta,
-  e: {
-    action: string;
-    entityName: string;
-    entityId: string;
-    before?: unknown;
-    after?: unknown;
-    reason?: string | null;
-  }
+  e: Omit<Parameters<typeof auditRecord>[0], "actor" | "ip" | "userAgent">
 ) {
-  return {
-    userId: actor.id,
-    userEmail: actor.email ?? null,
-    action: e.action,
-    entityName: e.entityName,
-    entityId: e.entityId,
-    beforePayload: e.before ? JSON.stringify(e.before) : null,
-    afterPayload: e.after ? JSON.stringify(e.after) : null,
-    reason: e.reason ?? null,
-    ipAddress: meta.ip ?? null,
-    userAgent: meta.userAgent ?? null,
-  };
+  return auditRecord({ actor, ip: meta.ip, userAgent: meta.userAgent, ...e });
 }
 
 /**

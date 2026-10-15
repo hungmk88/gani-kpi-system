@@ -25,17 +25,21 @@ export default function VnNumberInput({
 } & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type" | "min">) {
   const [text, setText] = useState(value === null ? "" : formatVnNumber(value));
 
-  // Giá trị đổi từ bên ngoài (tải lại, đặt lại) thì cập nhật chữ hiển thị
+  const isBad = (t: string, n: number | null) =>
+    (t.trim() !== "" && n === null) || (n !== null && min !== undefined && n < min);
+
+  // Giá trị đổi từ bên ngoài (tải lại, đặt lại) thì cập nhật chữ hiển thị.
+  // value = null trong lúc chữ đang gõ sai (vd "-5" khi min=0) là do chính ô
+  // này báo lên — giữ nguyên chữ để người dùng thấy ô đỏ và sửa, không xoá.
   useEffect(() => {
     const current = parseVnNumber(text);
+    if (value === null && isBad(text, current)) return;
     if (current !== value) setText(value === null ? "" : formatVnNumber(value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
   const parsed = parseVnNumber(text);
-  const bad =
-    (text.trim() !== "" && parsed === null) ||
-    (parsed !== null && min !== undefined && parsed < min);
+  const bad = isBad(text, parsed);
 
   return (
     <input
@@ -50,7 +54,7 @@ export default function VnNumberInput({
         const t = e.target.value;
         setText(t);
         const n = parseVnNumber(t);
-        const invalid = (t.trim() !== "" && n === null) || (n !== null && min !== undefined && n < min);
+        const invalid = isBad(t, n);
         onValue(invalid ? null : n, invalid);
       }}
       onBlur={(e) => {

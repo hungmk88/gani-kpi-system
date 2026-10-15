@@ -7,7 +7,7 @@
  * đưa hệ thống vào dùng thật được:
  *
  *   1. Đổi mật khẩu      — người dùng tự đổi, quản trị không còn giữ mật khẩu ai
- *   2. Nạp nhân sự Excel — thêm hàng loạt, sai một dòng là từ chối cả file
+ *   2. Nạp nhân sự Excel — xem trước từng dòng, rồi chỉ nhập các dòng hợp lệ
  *   3. Sao lưu           — bản sao mở được và có đủ dữ liệu, không phải file rác
  *
  * Phần đáng kiểm nhất ở đây là các đường VÒNG: đổi mật khẩu người khác, tạo
@@ -103,6 +103,7 @@ async function buildSheet(rows) {
     "CHUC_DANH",
     "DIEN_THOAI",
     "VAI_TRO_XUONG",
+    "MA_NV",
   ]);
   for (const r of rows) ws.addRow(r);
   const buf = await wb.xlsx.writeBuffer();
@@ -111,16 +112,29 @@ async function buildSheet(rows) {
   });
 }
 
-function upload(blob, name = "nhan-su.xlsx") {
+function upload(blob, name = "nhan-su.xlsx", extra = {}) {
   const fd = new FormData();
   fd.append("file", blob, name);
+  for (const [k, v] of Object.entries(extra)) fd.append(k, String(v));
   return { method: "POST", body: fd };
+}
+
+/** Bước 2 của nạp nhân sự: nhập thật với số dòng hợp lệ đã thấy ở bước xem trước */
+function commit(blob, expectedValid) {
+  return upload(blob, "nhan-su.xlsx", { mode: "commit", expectedValid });
+}
+
+/** Dòng nào trong bảng xem trước có chỗ sai chứa chuỗi này */
+function previewHas(res, rowNumber, text) {
+  const row = (res.body?.rows ?? []).find((r) => r.rowNumber === rowNumber);
+  return !!row && row.issues.some((i) => i.message.includes(text));
 }
 
 const TEST_EMAILS = [
   "kt.nhap1@ganifoody.vn",
   "kt.nhap2@ganifoody.vn",
   "kt.nhap3@ganifoody.vn",
+  "kt.saipb@ganifoody.vn",
   "kt.doimk@ganifoody.vn",
 ];
 
@@ -378,7 +392,7 @@ async function main() {
     ceoImport.status === 403
   );
 
-  /* -------- File hợp lệ -------- */
+  /* -------- File hợp lệ: xem trước rồi mới nhập -------- */
   const goodSheet = await buildSheet([
     [
       "Kiểm Thử Một",
@@ -389,6 +403,7 @@ async function main() {
       "Nhân viên kinh doanh",
       "0900000001",
       "",
+      "kt001",
     ],
     [
       "Kiểm Thử Hai",
@@ -399,10 +414,20 @@ async function main() {
       "Quản đốc",
       "",
       "SUPERVISOR",
+      "",
     ],
   ]);
-  const good = await admin("/api/admin/users/import", upload(goodSheet));
-  check("Nạp được file hợp lệ", good.status === 200, JSON.stringify(good.body));
+  const goodPreview = await admin("/api/admin/users/import", upload(goodSheet));
+  check("Xem trước file hợp lệ", goodPreview.status === 200, JSON.stringify(goodPreview.body));
+  check("Xem trước đếm đúng 2 dòng hợp lệ", goodPreview.body?.validCount === 2);
+  check(
+    "Xem trước KHÔNG tạo ai",
+    (await prisma.user.count({
+      where: { email: { in: ["kt.nhap1@ganifoody.vn", "kt.nhap2@ganifoody.vn"] } },
+    })) === 0
+  );
+  const good = await admin("/api/admin/users/import", commit(goodSheet, 2));
+  check("Nhập được file hợp lệ", good.status === 200, JSON.stringify(good.body));
   check("Báo đúng số tài khoản đã tạo", good.body?.created === 2);
 
   const imported = await prisma.user.findMany({
@@ -421,6 +446,10 @@ async function main() {
       "SUPERVISOR"
   );
   check(
+    "Mã NV trong file được chuẩn hoá in hoa",
+    imported.find((u) => u.email === "kt.nhap1@ganifoody.vn")?.employeeCode === "KT001"
+  );
+  check(
     "Mọi người nạp vào đều bị bắt tự đổi mật khẩu",
     imported.every((u) => u.mustChangePassword === true)
   );
@@ -437,18 +466,9 @@ async function main() {
   });
   check("Lượt nạp vào nhật ký", !!importLog);
 
-  /* -------- Sai một dòng là từ chối cả file -------- */
+  /* -------- File có dòng sai: xem trước chỉ rõ, chỉ nhập dòng đúng -------- */
   const mixedSheet = await buildSheet([
-    [
-      "Kiểm Thử Ba",
-      "kt.nhap3@ganifoody.vn",
-      "TamThoi2026cc",
-      "EMPLOYEE",
-      "SALES",
-      "",
-      "",
-      "",
-    ],
+    ["Kiểm Thử Ba", "kt.nhap3@ganifoody.vn", "TamThoi2026cc", "EMPLOYEE", "SALES", "", "", "", ""],
     [
       "Sai Phòng Ban",
       "kt.saipb@ganifoody.vn",
@@ -458,106 +478,122 @@ async function main() {
       "",
       "",
       "",
+      "",
     ],
   ]);
-  const mixed = await admin("/api/admin/users/import", upload(mixedSheet));
-  check("Có dòng sai thì cả file bị từ chối", mixed.status === 422);
-  check("Nói rõ không tài khoản nào được tạo", mixed.body?.created === 0);
+  const mixedPreview = await admin("/api/admin/users/import", upload(mixedSheet));
+  check(
+    "Xem trước: 1 dòng hợp lệ · 1 dòng lỗi",
+    mixedPreview.body?.validCount === 1 && mixedPreview.body?.errorCount === 1
+  );
   check(
     "Chỉ đúng dòng nào sai và sai vì sao",
-    (mixed.body?.errors ?? []).some(
-      (e) => e.includes("Dòng 3") && e.includes("KHONG_CO_MA_NAY")
-    ),
-    JSON.stringify(mixed.body?.errors)
+    previewHas(mixedPreview, 3, "KHONG_CO_MA_NAY"),
+    JSON.stringify(mixedPreview.body?.rows)
   );
-  const three = await prisma.user.findUnique({
-    where: { email: "kt.nhap3@ganifoody.vn" },
-  });
+  const stale = await admin("/api/admin/users/import", commit(mixedSheet, 5));
   check(
-    "Dòng ĐÚNG trong file hỏng cũng không được tạo — không nạp nửa vời",
-    three === null
+    "Số dòng hợp lệ khác lúc xem trước thì từ chối, không tạo ai",
+    stale.status === 422 && stale.body?.rejectReason === "preview_mismatch" && stale.body?.created === 0
+  );
+  const mixed = await admin("/api/admin/users/import", commit(mixedSheet, 1));
+  check("Nhập phần đúng của file", mixed.status === 200 && mixed.body?.created === 1);
+  check(
+    "Dòng đúng được tạo, dòng sai thì không",
+    !!(await prisma.user.findUnique({ where: { email: "kt.nhap3@ganifoody.vn" } })) &&
+      (await prisma.user.findUnique({ where: { email: "kt.saipb@ganifoody.vn" } })) === null
+  );
+  const again = await admin("/api/admin/users/import", upload(mixedSheet));
+  check(
+    "Nạp lại file sau khi đã nhập: người đã tạo tự được bỏ qua, không tạo trùng",
+    again.body?.existingCount === 1 && again.body?.validCount === 0
   );
 
   /* -------- Các đường vòng -------- */
   const adminSheet = await buildSheet([
-    [
-      "Kẻ Leo Quyền",
-      "kt.leoquyen@ganifoody.vn",
-      "TamThoi2026ee",
-      "ADMIN",
-      "SALES",
-      "",
-      "",
-      "",
-    ],
+    ["Kẻ Leo Quyền", "kt.leoquyen@ganifoody.vn", "TamThoi2026ee", "ADMIN", "SALES", "", "", "", ""],
   ]);
-  const adminTry = await admin("/api/admin/users/import", upload(adminSheet));
-  check("Không tạo được tài khoản ADMIN bằng file Excel", adminTry.status === 422);
+  const adminPreview = await admin("/api/admin/users/import", upload(adminSheet));
+  const adminTry = await admin("/api/admin/users/import", commit(adminSheet, 0));
+  check(
+    "Không tạo được tài khoản ADMIN bằng file Excel",
+    adminPreview.body?.errorCount === 1 &&
+      adminTry.status === 422 &&
+      (await prisma.user.findUnique({ where: { email: "kt.leoquyen@ganifoody.vn" } })) === null
+  );
+  const ceoSheet = await buildSheet([
+    ["Giám Đốc Giả", "kt.ceogia@ganifoody.vn", "TamThoi2026ff", "CEO", "SALES", "", "", "", ""],
+  ]);
   check(
     "Không tạo được tài khoản Ban Giám đốc bằng file Excel",
-    (
-      await admin(
-        "/api/admin/users/import",
-        upload(
-          await buildSheet([
-            [
-              "Giám Đốc Giả",
-              "kt.ceogia@ganifoody.vn",
-              "TamThoi2026ff",
-              "CEO",
-              "SALES",
-              "",
-              "",
-              "",
-            ],
-          ])
-        )
-      )
-    ).status === 422
+    (await admin("/api/admin/users/import", upload(ceoSheet))).body?.errorCount === 1 &&
+      (await admin("/api/admin/users/import", commit(ceoSheet, 0))).status === 422
   );
 
-  const dupSheet = await buildSheet([
-    ["Trùng Một", "kt.trung@ganifoody.vn", "TamThoi2026gg", "EMPLOYEE", "SALES", "", "", ""],
-    ["Trùng Hai", "kt.trung@ganifoody.vn", "TamThoi2026hh", "EMPLOYEE", "SALES", "", "", ""],
-  ]);
-  const dup = await admin("/api/admin/users/import", upload(dupSheet));
+  const dup = await admin(
+    "/api/admin/users/import",
+    upload(
+      await buildSheet([
+        ["Trùng Một", "kt.trung@ganifoody.vn", "TamThoi2026gg", "EMPLOYEE", "SALES", "", "", "", ""],
+        ["Trùng Hai", "kt.trung@ganifoody.vn", "TamThoi2026hh", "EMPLOYEE", "SALES", "", "", "", ""],
+      ])
+    )
+  );
+  check("Bắt được email trùng nhau ngay trong cùng một file", previewHas(dup, 3, "đã xuất hiện ở dòng"));
+
+  const exist = await admin(
+    "/api/admin/users/import",
+    upload(
+      await buildSheet([
+        ["Đã Có Rồi", "ceo@ganifoody.vn", "TamThoi2026ii", "EMPLOYEE", "SALES", "", "", "", ""],
+      ])
+    )
+  );
   check(
-    "Bắt được email trùng nhau ngay trong cùng một file",
-    dup.status === 422 &&
-      (dup.body?.errors ?? []).some((e) => e.includes("đã xuất hiện ở dòng"))
+    "Email đã có tài khoản thì bỏ qua, không tạo lại",
+    exist.body?.existingCount === 1 && previewHas(exist, 2, "đã có tài khoản")
   );
 
-  const existSheet = await buildSheet([
-    ["Đã Có Rồi", "ceo@ganifoody.vn", "TamThoi2026ii", "EMPLOYEE", "SALES", "", "", ""],
-  ]);
-  const exist = await admin("/api/admin/users/import", upload(existSheet));
-  check(
-    "Bắt được email đã có tài khoản trong hệ thống",
-    exist.status === 422 &&
-      (exist.body?.errors ?? []).some((e) => e.includes("đã có tài khoản"))
+  const codeDup = await admin(
+    "/api/admin/users/import",
+    upload(
+      await buildSheet([
+        ["Mã Trùng", "kt.matrung@ganifoody.vn", "TamThoi2026kk", "EMPLOYEE", "SALES", "", "", "", "KT001"],
+      ])
+    )
   );
+  check("Mã NV đã thuộc về người khác bị bắt", previewHas(codeDup, 2, "đã thuộc về"));
 
-  const weakSheet = await buildSheet([
-    ["Yếu Xìu", "kt.yeuxiu@ganifoody.vn", "123456", "EMPLOYEE", "SALES", "", "", ""],
-  ]);
-  const weakImport = await admin("/api/admin/users/import", upload(weakSheet));
+  const weakImport = await admin(
+    "/api/admin/users/import",
+    upload(
+      await buildSheet([
+        ["Yếu Xìu", "kt.yeuxiu@ganifoody.vn", "123456", "EMPLOYEE", "SALES", "", "", "", ""],
+      ])
+    )
+  );
   check(
     "Mật khẩu tạm yếu cũng bị chặn, không có cửa lách qua đường Excel",
-    weakImport.status === 422
+    weakImport.body?.errorCount === 1 && weakImport.body?.validCount === 0
   );
 
   const badRole = await admin(
     "/api/admin/users/import",
     upload(
       await buildSheet([
-        ["Sai Vai Xưởng", "kt.saivai@ganifoody.vn", "TamThoi2026jj", "EMPLOYEE", "SALES", "", "", "TO_TRUONG"],
+        ["Sai Vai Xưởng", "kt.saivai@ganifoody.vn", "TamThoi2026jj", "EMPLOYEE", "SALES", "", "", "TO_TRUONG", ""],
       ])
     )
   );
-  check("Vai trò xưởng viết sai bị bắt", badRole.status === 422);
+  check("Vai trò xưởng viết sai bị bắt", previewHas(badRole, 2, "TO_TRUONG"));
 
-  const emptyFile = await admin("/api/admin/users/import", upload(await buildSheet([])));
-  check("File rỗng thì báo rõ, không im lặng", emptyFile.status === 422);
+  const emptySheet = await buildSheet([]);
+  const emptyFile = await admin("/api/admin/users/import", upload(emptySheet));
+  check(
+    "File rỗng thì báo rõ, không im lặng",
+    (emptyFile.body?.fileErrors ?? []).length > 0 &&
+      (await admin("/api/admin/users/import", commit(emptySheet, 0))).status === 422
+  );
 
   const noFile = await admin("/api/admin/users/import", {
     method: "POST",

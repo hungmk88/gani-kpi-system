@@ -7,6 +7,7 @@ import {
   CEO_QC_OVERRIDE_PREFIX,
   canSeeMoney,
   extractCeoQcOverrideReason,
+  canResubmitReturnedShift,
   withProductionRole,
 } from "@/lib/services/production-service";
 import { computeShiftMetrics } from "@/lib/production/kpi-engine";
@@ -106,7 +107,8 @@ export default async function ShiftDetailPage({
   // KCS trả ca về sản xuất sửa: ca vẫn DRAFT, người trả + lý do nằm trong qcNote
   const stage = shiftStage(log);
   const returnInfo = stage === "RETURNED" ? extractShiftReturn(log.qcNote) : null;
-  const isCreator = log.createdById === user.id;
+  // Người khai đã nghỉ thì tổ trưởng / quản đốc nhận thay việc sửa ca trả về
+  const canResubmit = canResubmitReturnedShift(user, log.createdBy);
 
   const visibleScores = log.kpiResults.filter(
     (r) => isWide || r.userId === user.id
@@ -195,7 +197,7 @@ export default async function ShiftDetailPage({
             </div>
             <div className="mt-0.5 whitespace-pre-line">{returnInfo.reason}</div>
           </div>
-          {isCreator && (
+          {canResubmit && (
             <Link
               href={`/production/${log.id}/edit`}
               className="btn-primary btn-sm inline-flex items-center gap-1.5"

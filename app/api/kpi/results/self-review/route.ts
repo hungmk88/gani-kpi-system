@@ -44,9 +44,19 @@ export async function POST(req: Request) {
         );
         submitted.push(item.resultId);
       } catch (e) {
-        // Lỗi nghiệp vụ thì nói đúng lý do; lỗi lạ thì ném ra cho handle()
-        if (!(e instanceof BusinessError)) throw e;
-        failed.push({ resultId: item.resultId, message: e.message });
+        // Lỗi nghiệp vụ thì nói đúng lý do. Lỗi lạ cũng báo theo dòng (và ghi
+        // log) — ném ra thành 500 thì các dòng trước đã gửi xong mà người dùng
+        // lại thấy "thất bại" cả lượt.
+        if (!(e instanceof BusinessError)) {
+          console.error("[KPI self-review batch]", item.resultId, e);
+        }
+        failed.push({
+          resultId: item.resultId,
+          message:
+            e instanceof BusinessError
+              ? e.message
+              : "Lỗi hệ thống khi gửi dòng này — thử lại sau.",
+        });
       }
     }
 

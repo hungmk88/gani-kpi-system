@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CEO_QC_OVERRIDE_PREFIX,
+  canResubmitReturnedShift,
   RETURNED_WHERE,
   WAITING_QC_WHERE,
   awaitingMyStepWhere,
@@ -119,5 +120,25 @@ describe("ca đang chờ vai trò của tôi", () => {
 
   it("không có vai trò trong luồng: không có ca nào chờ", () => {
     expect(awaitingMyStepWhere({ id: "a1", role: "ADMIN", productionRole: null })).toBeNull();
+  });
+});
+
+describe("ai được sửa và gửi lại ca KCS trả về", () => {
+  const creator = { id: "u1", isActive: true, role: "EMPLOYEE", productionRole: "WORKER" };
+  const leader = { id: "u2", role: "EMPLOYEE", productionRole: "TEAM_LEADER" };
+  const worker = { id: "u3", role: "EMPLOYEE", productionRole: "WORKER" };
+  const qc = { id: "u4", role: "EMPLOYEE", productionRole: "QC_OFFICER" };
+
+  it("người khai ca luôn được; người khác thì không khi người khai còn làm", () => {
+    expect(canResubmitReturnedShift({ ...creator }, creator)).toBe(true);
+    expect(canResubmitReturnedShift(leader, creator)).toBe(false);
+  });
+
+  it("người khai đã nghỉ / mất vai trò: tổ trưởng nhận thay, công nhân và KCS thì không", () => {
+    const gone = { ...creator, isActive: false };
+    expect(canResubmitReturnedShift(leader, gone)).toBe(true);
+    expect(canResubmitReturnedShift(worker, gone)).toBe(false);
+    expect(canResubmitReturnedShift(qc, gone)).toBe(false);
+    expect(canResubmitReturnedShift(leader, { ...creator, productionRole: null })).toBe(true);
   });
 });

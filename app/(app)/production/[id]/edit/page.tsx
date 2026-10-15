@@ -3,14 +3,17 @@ import { notFound, redirect } from "next/navigation";
 import { Undo2 } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { withProductionRole } from "@/lib/services/production-service";
+import {
+  canResubmitReturnedShift,
+  withProductionRole,
+} from "@/lib/services/production-service";
 import { extractShiftReturn } from "@/lib/production/shift-flow";
 import { SHIFT_TYPE_LABEL } from "@/lib/production/constants";
 import { fmtDate } from "@/lib/format";
 import { vnDateKey } from "@/lib/vn-time";
 import { PageHeader } from "@/components/ui";
 import ShiftDraftForm from "../../new/shift-draft-form";
-import { canDraftShift, loadDraftFormData } from "../../new/form-data";
+import { loadDraftFormData } from "../../new/form-data";
 
 export const dynamic = "force-dynamic";
 
@@ -30,12 +33,15 @@ export default async function EditShiftPage({
 
   const log = await prisma.productionShiftLog.findUnique({
     where: { id },
-    include: { participants: true },
+    include: {
+      participants: true,
+      createdBy: { select: { id: true, isActive: true, role: true, productionRole: true } },
+    },
   });
   if (!log) notFound();
 
   const returned = log.status === "DRAFT" ? extractShiftReturn(log.qcNote) : null;
-  if (!returned || log.createdById !== user.id || !canDraftShift(user)) {
+  if (!returned || !canResubmitReturnedShift(user, log.createdBy)) {
     redirect(`/production/${id}`);
   }
 

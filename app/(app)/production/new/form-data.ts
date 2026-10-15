@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { canEnterDraft } from "@/lib/services/production-service";
 
 /**
  * Dữ liệu cho form khai ca — dùng chung cho khai mới và sửa ca bị KCS trả về.
@@ -40,11 +41,5 @@ export async function loadDraftFormData() {
   };
 }
 
-export function canDraftShift(user: { role: string; productionRole?: string | null }) {
-  return (
-    user.role === "CEO" ||
-    ["WORKER", "TEAM_LEADER", "SUPERVISOR", "PRODUCTION_DIRECTOR"].includes(
-      user.productionRole ?? ""
-    )
-  );
-}
+/** Ai được khai ca — cùng một luật với máy chủ (canEnterDraft). */
+export const canDraftShift = canEnterDraft;
