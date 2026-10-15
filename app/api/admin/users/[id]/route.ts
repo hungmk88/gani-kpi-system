@@ -6,7 +6,7 @@ import { hashPassword } from "@/lib/auth";
 import { checkPasswordStrength } from "@/lib/password";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { ERR, ROLE_LABEL, ROLES } from "@/lib/constants";
-import { EMPLOYMENT_TYPES } from "@/lib/production/constants";
+import { EMPLOYMENT_TYPES, PRODUCTION_ROLES } from "@/lib/production/constants";
 import { alertCeos } from "@/lib/services/user-security";
 
 /** Vai trò có quyền duyệt KPI — đổi mật khẩu/vai trò của họ phải báo Ban Giám đốc. */
@@ -18,10 +18,15 @@ const schema = z.object({
   role: z.enum(ROLES).optional(),
   employmentType: z.enum(EMPLOYMENT_TYPES).optional(),
   departmentId: z.string().nullable().optional(),
+  // null = gỡ vai trò xưởng (người không làm ở xưởng)
+  productionRole: z
+    .enum(PRODUCTION_ROLES, { message: "Vai trò sản xuất không hợp lệ." })
+    .nullable()
+    .optional(),
   telegramChatId: z.string().max(100).nullable().optional(),
   phone: z.string().max(50).nullable().optional(),
   isActive: z.boolean().optional(),
-  newPassword: z.string().min(8).optional(),
+  newPassword: z.string().min(8, "Mật khẩu tối thiểu 8 ký tự.").optional(),
 });
 
 export async function PATCH(
@@ -106,6 +111,21 @@ export async function PATCH(
       }
     }
 
+    // Vai trò xưởng mở quyền ký xác nhận phẩm chất / khoá ca — chỉ Quản trị
+    // hệ thống gán hoặc gỡ (Ban Giám đốc đi qua route này chỉ để lo tài khoản
+    // Ban Giám đốc, không gán quyền xưởng).
+    if (
+      body.productionRole !== undefined &&
+      body.productionRole !== target.productionRole &&
+      actor.role !== "ADMIN"
+    ) {
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Chỉ Quản trị hệ thống được đổi vai trò sản xuất.",
+        403
+      );
+    }
+
     // Không cho tự khoá chính mình -> tránh mất lối vào hệ thống
     if (target.id === actor.id && body.isActive === false) {
       throw new BusinessError(
@@ -167,6 +187,7 @@ export async function PATCH(
       "role",
       "employmentType",
       "departmentId",
+      "productionRole",
       "telegramChatId",
       "phone",
       "isActive",
@@ -213,6 +234,7 @@ export async function PATCH(
         role: target.role,
         employmentType: target.employmentType,
         departmentId: target.departmentId,
+        productionRole: target.productionRole,
         isActive: target.isActive,
         telegramChatId: target.telegramChatId,
       },
@@ -220,6 +242,7 @@ export async function PATCH(
         role: updated.role,
         employmentType: updated.employmentType,
         departmentId: updated.departmentId,
+        productionRole: updated.productionRole,
         isActive: updated.isActive,
         telegramChatId: updated.telegramChatId,
         passwordReset: !!body.newPassword,

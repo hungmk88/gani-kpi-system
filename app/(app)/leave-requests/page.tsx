@@ -1,17 +1,27 @@
-import { Download, CircleCheck } from "lucide-react";
+import Link from "next/link";
+import { Download, CircleCheck, CalendarClock } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { Badge, EmptyState, PageHeader, formatDateTime } from "@/components/ui";
+import { Badge, EmptyState, PageHeader, ShowingCount } from "@/components/ui";
 import {
   canCancelLeave,
+  findTasksDueDuringLeave,
   getAnnualLeaveQuota,
+  leaveDaysBetween,
   leaveReportScope,
+  type LeaveConflictTask,
 } from "@/lib/services/leave-service";
-import { formatVnDate, vnParts } from "@/lib/vn-time";
+import { fmtDate, fmtDateTime, fmtNum } from "@/lib/format";
+import { vnParts } from "@/lib/vn-time";
 import LeaveRequestForm from "./leave-request-form";
 import LeaveRequestActions from "./leave-request-actions";
 
 export const dynamic = "force-dynamic";
+
+/** Lịch sử phòng ban hiện tối đa chừng này đơn gần nhất */
+const HISTORY_LIMIT = 50;
+/** Thẻ đơn chờ duyệt liệt kê tối đa chừng này việc trùng ngày nghỉ */
+const CONFLICT_PREVIEW = 5;
 
 export default async function LeaveRequestsPage() {
   const user = (await requireSession())!;
@@ -76,6 +86,11 @@ export default async function LeaveRequestsPage() {
   const history = requests.filter(
     (r) => r.status !== "PENDING" && r.employeeId !== user.id
   );
+  const historyShown = history.slice(0, HISTORY_LIMIT);
+
+  // Việc của người xin nghỉ có hạn rơi vào ngày nghỉ — một truy vấn cho mọi
+  // đơn đang chờ mà người xem nhìn thấy (không truy vấn từng đơn).
+  const conflicts = await findTasksDueDuringLeave([...inbox, ...allPending]);
 
   return (
     <>
@@ -92,17 +107,12 @@ export default async function LeaveRequestsPage() {
         }
       />
 
-      {user.role !== "CEO" && (
-        <section className="mb-8">
-          <h2 className="section-title mb-3">Gửi đơn mới</h2>
-          <LeaveRequestForm />
-        </section>
-      )}
-
+      {/* Người duyệt: hàng đợi "chờ tôi duyệt" lên đầu trang — đó là việc
+          của họ khi mở trang này, form gửi đơn của chính họ xếp sau. */}
       {(user.role === "MANAGER" || user.role === "CEO") && (
         <section className="mb-8">
           <h2 className="section-title mb-3">
-            Đang chờ bạn duyệt ({inbox.length})
+            Chờ tôi duyệt ({fmtNum(inbox.length)})
           </h2>
           {inbox.length === 0 ? (
             <EmptyState
@@ -113,28 +123,45 @@ export default async function LeaveRequestsPage() {
           ) : (
             <div className="space-y-3">
               {inbox.map((r) => (
-                <LeaveRequestCard key={r.id} r={r} actionable />
+                <LeaveRequestCard
+                  key={r.id}
+                  r={r}
+                  actionable
+                  conflicts={conflicts.get(r.id) ?? []}
+                />
               ))}
             </div>
           )}
         </section>
       )}
 
+      {user.role !== "CEO" && (
+        <section className="mb-8">
+          <h2 className="section-title mb-3">Gửi đơn mới</h2>
+          <LeaveRequestForm />
+        </section>
+      )}
+
       {allPending.length > 0 && (
         <section className="mb-8">
           <h2 className="section-title mb-3">
-            Toàn bộ đơn đang chờ trong công ty ({allPending.length})
+            Toàn bộ đơn đang chờ trong công ty ({fmtNum(allPending.length)})
           </h2>
           <div className="space-y-3">
             {allPending.map((r) => (
-              <LeaveRequestCard key={r.id} r={r} actionable={false} />
+              <LeaveRequestCard
+                key={r.id}
+                r={r}
+                actionable={false}
+                conflicts={conflicts.get(r.id) ?? []}
+              />
             ))}
           </div>
         </section>
       )}
 
       <section className="mb-8">
-        <h2 className="section-title mb-3">Đơn của tôi ({mine.length})</h2>
+        <h2 className="section-title mb-3">Đơn của tôi ({fmtNum(mine.length)})</h2>
         {mine.length === 0 ? (
           <div className="card p-4 text-sm text-ink-500">
             Bạn chưa gửi đơn nghỉ phép nào.
@@ -155,7 +182,10 @@ export default async function LeaveRequestsPage() {
                 {mine.map((r) => (
                   <tr key={r.id}>
                     <td className="text-ink-800">
-                      {formatVnDate(r.startDate)} → {formatVnDate(r.endDate)}
+                      {fmtDate(r.startDate)} → {fmtDate(r.endDate)}
+                      <div className="text-xs text-ink-500">
+                        <LeaveDays r={r} />
+                      </div>
                       {r.isUrgent && (
                         <span className="ml-2">
                           <Badge tone="red">Khẩn cấp</Badge>
@@ -174,7 +204,7 @@ export default async function LeaveRequestsPage() {
                       <StatusBadge status={r.status} />
                     </td>
                     <td data-label="Ngày phép còn lại" className="text-ink-600">
-                      {quota.remaining}/{quota.total} ngày
+                      {fmtNum(quota.remaining)}/{fmtNum(quota.total)} ngày
                     </td>
                     <td data-label="">
                       {canCancelLeave(user, r, now) && (
@@ -208,11 +238,14 @@ export default async function LeaveRequestsPage() {
                 </tr>
               </thead>
               <tbody>
-                {history.map((r) => (
+                {historyShown.map((r) => (
                   <tr key={r.id}>
                     <td className="text-ink-800">{r.employee.fullName}</td>
                     <td data-label="Thời gian nghỉ" className="text-ink-600">
-                      {formatVnDate(r.startDate)} → {formatVnDate(r.endDate)}
+                      {fmtDate(r.startDate)} → {fmtDate(r.endDate)}
+                      <div className="text-xs text-ink-500">
+                        <LeaveDays r={r} />
+                      </div>
                     </td>
                     <td data-label="Người duyệt" className="text-ink-600">
                       {r.reviewedBy?.fullName ?? "—"}
@@ -231,15 +264,35 @@ export default async function LeaveRequestsPage() {
               </tbody>
             </table>
           </div>
+          <ShowingCount
+            shown={historyShown.length}
+            total={history.length}
+            hint="các đơn gần nhất; tải Excel để xem đủ"
+          />
         </section>
       )}
     </>
   );
 }
 
+/**
+ * Số ngày của đơn — đúng cách hệ thống trừ phép (leaveDaysBetween): ngày LỊCH,
+ * gồm cả ngày đầu lẫn ngày cuối, KHÔNG trừ cuối tuần. Ghi rõ để người duyệt
+ * không tưởng "5 ngày" là 5 ngày làm việc.
+ */
+function LeaveDays({ r }: { r: { startDate: Date; endDate: Date } }) {
+  const n = leaveDaysBetween(r.startDate, r.endDate);
+  return (
+    <span title="Ngày lịch, tính cả ngày đầu, ngày cuối và cuối tuần — đúng cách trừ phép">
+      {fmtNum(n)} ngày lịch
+    </span>
+  );
+}
+
 function LeaveRequestCard({
   r,
   actionable,
+  conflicts,
 }: {
   r: {
     id: string;
@@ -251,6 +304,8 @@ function LeaveRequestCard({
     employee: { fullName: string; department: { name: string } | null };
   };
   actionable: boolean;
+  /** Việc chưa xong của người xin nghỉ có hạn trong những ngày nghỉ */
+  conflicts: LeaveConflictTask[];
 }) {
   return (
     <div className="card p-4">
@@ -266,7 +321,7 @@ function LeaveRequestCard({
           </div>
           <div className="mt-1 text-xs text-ink-500">
             {r.employee.department?.name ?? "—"} · Gửi lúc{" "}
-            {formatDateTime(r.createdAt)}
+            {fmtDateTime(r.createdAt)}
           </div>
         </div>
       </div>
@@ -274,9 +329,33 @@ function LeaveRequestCard({
         {r.reason}
       </p>
       <div className="mb-3 text-sm text-ink-600">
-        Nghỉ từ <b className="text-ink-800">{formatVnDate(r.startDate)}</b>{" "}
-        đến <b className="text-ink-800">{formatVnDate(r.endDate)}</b>
+        Nghỉ từ <b className="text-ink-800">{fmtDate(r.startDate)}</b> đến{" "}
+        <b className="text-ink-800">{fmtDate(r.endDate)}</b> ·{" "}
+        <b className="text-ink-800">
+          <LeaveDays r={r} />
+        </b>
       </div>
+      {conflicts.length > 0 && (
+        <div className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <div className="flex items-center gap-1.5 font-medium">
+            <CalendarClock size={16} aria-hidden />
+            Trùng {fmtNum(conflicts.length)} việc có hạn trong thời gian nghỉ
+          </div>
+          <ul className="mt-1 space-y-0.5 text-xs">
+            {conflicts.slice(0, CONFLICT_PREVIEW).map((t) => (
+              <li key={t.id}>
+                <Link href={`/tasks/${t.id}`} className="underline hover:no-underline">
+                  {t.code} · {t.title}
+                </Link>{" "}
+                — hạn {fmtDate(t.dueDate)}
+              </li>
+            ))}
+            {conflicts.length > CONFLICT_PREVIEW && (
+              <li>và {fmtNum(conflicts.length - CONFLICT_PREVIEW)} việc khác</li>
+            )}
+          </ul>
+        </div>
+      )}
       {actionable && <LeaveRequestActions requestId={r.id} mode="review" />}
     </div>
   );

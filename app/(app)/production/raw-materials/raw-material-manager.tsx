@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { formatVnDateTime } from "@/lib/vn-time";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { Badge } from "@/components/ui";
-
-/** Số kiểu Việt Nam, tối đa 2 chữ số thập phân: 374,5 */
-const fmtNum = (n: number) => n.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+import VnNumberInput from "@/components/vn-number-input";
+import { toast } from "@/components/toast";
+// Đơn vị NVL do người dùng đặt (kg, lít, bao…) nên dùng fmtNum + đơn vị, không fmtKg
+import { fmtDateTime, fmtNum } from "@/lib/format";
 
 type Transaction = {
   id: string;
@@ -54,14 +54,16 @@ export default function RawMaterialManager({
     code: "",
     name: "",
     unit: "kg",
-    initialStockKg: 0,
+    initialStockKg: 0 as number | null,
   });
+  const [badStock, setBadStock] = useState(false);
 
   const [tf, setTf] = useState({
     action: "STOCK_IN" as "STOCK_IN" | "ADJUSTMENT",
-    quantityKg: 0,
+    quantityKg: null as number | null,
     note: "",
   });
+  const [badQty, setBadQty] = useState(false);
 
   async function create() {
     setBusy(true);
@@ -70,7 +72,11 @@ export default function RawMaterialManager({
       const res = await fetch("/api/production/raw-materials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...f, code: f.code.toUpperCase() }),
+        body: JSON.stringify({
+          ...f,
+          code: f.code.toUpperCase(),
+          initialStockKg: f.initialStockKg ?? 0,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -78,6 +84,7 @@ export default function RawMaterialManager({
         return;
       }
       setAdding(false);
+      toast(`Đã tạo mã NVL ${f.code.toUpperCase()}.`);
       setF({ code: "", name: "", unit: "kg", initialStockKg: 0 });
       router.refresh();
     } finally {
@@ -116,7 +123,7 @@ export default function RawMaterialManager({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: tf.action,
-          quantityKg: Number(tf.quantityKg),
+          quantityKg: tf.quantityKg ?? 0,
           note: tf.note || undefined,
         }),
       });
@@ -126,7 +133,8 @@ export default function RawMaterialManager({
         return;
       }
       setTxForm(null);
-      setTf({ action: "STOCK_IN", quantityKg: 0, note: "" });
+      toast(tf.action === "STOCK_IN" ? "Đã ghi nhập kho." : "Đã ghi chỉnh tay tồn kho.");
+      setTf({ action: "STOCK_IN", quantityKg: null, note: "" });
       router.refresh();
     } finally {
       setBusy(false);
@@ -193,21 +201,23 @@ export default function RawMaterialManager({
             />
           </div>
           <div>
-            <label className="label">Tồn kho khởi tạo</label>
-            <input
-              type="number"
-              step="any"
-              className="input"
+            <label className="label" htmlFor="rm-initial">
+              Tồn kho khởi tạo ({f.unit || "đơn vị"})
+            </label>
+            <VnNumberInput
+              id="rm-initial"
+              min={0}
               value={f.initialStockKg}
-              onChange={(e) =>
-                setF({ ...f, initialStockKg: Number(e.target.value) })
-              }
+              onValue={(n, bad) => {
+                setF({ ...f, initialStockKg: n });
+                setBadStock(bad);
+              }}
             />
           </div>
           <div className="sm:col-span-4">
             <button
               className="btn-primary"
-              disabled={busy || !f.code || !f.name}
+              disabled={busy || badStock || !f.code || !f.name}
               onClick={create}
             >
               {busy ? "Đang lưu..." : "Tạo mã NVL"}
@@ -257,7 +267,7 @@ export default function RawMaterialManager({
                         className="inline-flex items-center gap-1 text-xs text-brand-700 hover:underline"
                         onClick={() => {
                           setTxForm(txForm === m.id ? null : m.id);
-                          setTf({ action: "STOCK_IN", quantityKg: 0, note: "" });
+                          setTf({ action: "STOCK_IN", quantityKg: null, note: "" });
                         }}
                       >
                         {txForm === m.id ? (
@@ -301,14 +311,15 @@ export default function RawMaterialManager({
                     <label className="label">
                       Số lượng ({m.unit}){tf.action === "ADJUSTMENT" && " — âm để trừ"}
                     </label>
-                    <input
-                      type="number"
-                      step="any"
-                      className="input"
+                    {/* Nhập kho chỉ nhận số dương; chỉnh tay cho phép âm để trừ */}
+                    <VnNumberInput
+                      min={tf.action === "STOCK_IN" ? 0 : undefined}
+                      aria-label={`Số lượng (${m.unit})`}
                       value={tf.quantityKg}
-                      onChange={(e) =>
-                        setTf({ ...tf, quantityKg: Number(e.target.value) })
-                      }
+                      onValue={(n, bad) => {
+                        setTf({ ...tf, quantityKg: n });
+                        setBadQty(bad);
+                      }}
                     />
                   </div>
                   <div className="sm:col-span-2">
@@ -327,7 +338,9 @@ export default function RawMaterialManager({
                       className="btn-primary"
                       disabled={
                         busy ||
-                        tf.quantityKg === 0 ||
+                        badQty ||
+                        !tf.quantityKg ||
+                        (tf.action === "STOCK_IN" && tf.quantityKg < 0) ||
                         (tf.action === "ADJUSTMENT" && !tf.note.trim())
                       }
                       onClick={() => submitTransaction(m.id)}
@@ -360,7 +373,7 @@ export default function RawMaterialManager({
                           {m.transactions.map((t) => (
                             <tr key={t.id}>
                               <td className="whitespace-nowrap text-xs text-ink-500">
-                                {formatVnDateTime(t.createdAt)}
+                                {fmtDateTime(t.createdAt)}
                               </td>
                               <td className="text-xs">
                                 {TX_TYPE_LABEL[t.type] ?? t.type}

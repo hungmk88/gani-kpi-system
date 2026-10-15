@@ -306,7 +306,7 @@ export default function GanttChart({
                       >
                         {it.isCritical && (
                           <span
-                            className="shrink-0 text-red-800"
+                            className="shrink-0 text-ink-900"
                             title="Nằm trên đường găng"
                           >
                             <Triangle size={12} strokeWidth={2.5} className="fill-current" aria-label="Nằm trên đường găng" />
@@ -385,7 +385,7 @@ export default function GanttChart({
                         fill="none"
                         strokeWidth={a.critical ? 2 : 1.2}
                         className={
-                          a.critical ? "text-red-800" : "text-ink-300"
+                          a.critical ? "text-ink-800" : "text-ink-300"
                         }
                         stroke="currentColor"
                         markerEnd="url(#gantt-arrow)"
@@ -401,16 +401,17 @@ export default function GanttChart({
                       xOf(it.end) - left
                     );
                     const isDone = it.status === "DONE";
-                    // Màu nền theo tình trạng: trễ = đỏ, xong = xám nhạt, còn lại = màu chính.
-                    // Đường găng không đổi màu nền mà thêm viền đậm — việc găng mà trễ
-                    // thì thấy cả hai dấu hiệu cùng lúc.
+                    // Màu nền theo tình trạng: trễ = đỏ (đỏ chỉ dành cho trễ, ở mọi
+                    // màn), xong = xám nhạt, còn lại = màu chính. Đường găng không
+                    // đổi màu nền mà thêm viền đậm màu mực — việc găng mà trễ thì
+                    // thấy cả hai dấu hiệu cùng lúc, và không bị nhầm thành "trễ".
                     const fill = isDone
-                      ? "bg-ink-300"
+                      ? "bg-ink-200"
                       : it.isOverdue
                         ? "bg-red-500"
                         : "bg-brand-500";
                     const ring = it.isCritical
-                      ? "ring-2 ring-red-800 ring-offset-1"
+                      ? "ring-2 ring-ink-900 ring-offset-1"
                       : "";
                     const showSlack =
                       !isDone && it.hasDependencies && it.slackDays > 0;
@@ -471,11 +472,11 @@ export default function GanttChart({
       <div className="mt-3 flex flex-wrap gap-4 text-xs text-ink-500">
         <Legend color="bg-red-500" label="Đã trễ hạn" />
         <Legend
-          color="bg-brand-500 ring-2 ring-red-800 ring-offset-1"
+          color="bg-brand-500 ring-2 ring-ink-900 ring-offset-1"
           label="Nằm trên đường găng (viền đậm)"
         />
         <Legend color="bg-brand-500" label="Đang trong kế hoạch" />
-        <Legend color="bg-ink-300" label="Đã hoàn thành" />
+        <Legend color="bg-ink-200" label="Đã hoàn thành" />
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-3 w-0.5 bg-brand-600" />
           Hôm nay
@@ -495,8 +496,8 @@ function Chip({
 }) {
   const cls = {
     red: "border-red-200 bg-red-50 text-red-700",
-    // Đường găng: viền đậm như trên thanh, khác hẳn ô "Trễ hạn"
-    critical: "border-red-800 bg-white text-red-900",
+    // Đường găng: viền đậm màu mực như trên thanh, khác hẳn ô "Trễ hạn" đỏ
+    critical: "border-ink-900 bg-white text-ink-900",
     slate: "border-ink-200 bg-ink-50 text-ink-600",
   }[tone];
   return (

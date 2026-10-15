@@ -13,14 +13,9 @@ import {
   canSeeMoney,
   withProductionRole,
 } from "@/lib/services/production-service";
-import {
-  SHIFT_STATUSES,
-  SHIFT_STATUS_LABEL,
-  SHIFT_TYPES,
-  SHIFT_TYPE_LABEL,
-} from "@/lib/production/constants";
-import { formatVnDate, formatVnDateTime } from "@/lib/vn-time";
-import { fmtScore } from "@/components/ui";
+import { SHIFT_TYPES, SHIFT_TYPE_LABEL } from "@/lib/production/constants";
+import { SHIFT_STAGES, SHIFT_STAGE_LABEL } from "@/lib/production/shift-flow";
+import { fmtDate, fmtDateTime, fmtNum, fmtPct, fmtScore, fmtVnd } from "@/lib/format";
 import PrintToolbar from "./print-toolbar";
 
 export const dynamic = "force-dynamic";
@@ -82,7 +77,7 @@ export default async function KpiDashboardReportPage({
           <span>
             Kỳ xem: <b>{PERIOD_LABEL[period]}</b>
           </span>
-          <span>Xuất lúc: {formatVnDateTime(new Date())}</span>
+          <span>Xuất lúc: {fmtDateTime(new Date())}</span>
           <span>Người xuất: {user.fullName}</span>
         </div>
       </header>
@@ -113,7 +108,7 @@ export default async function KpiDashboardReportPage({
             value={
               noShifts || summary.summary.percentBonusUnlocked === null
                 ? "—"
-                : `${fmt(summary.summary.percentBonusUnlocked)}%`
+                : fmtPct(summary.summary.percentBonusUnlocked)
             }
           />
           <Stat label="Lượt bị khoá thưởng" value={fmt(summary.summary.bonusLockedCount)} />
@@ -126,9 +121,9 @@ export default async function KpiDashboardReportPage({
             </h3>
             <table className="w-full text-sm">
               <tbody>
-                {SHIFT_STATUSES.map((st) => (
+                {SHIFT_STAGES.map((st) => (
                   <tr key={st}>
-                    <td className="py-1 text-ink-600">{SHIFT_STATUS_LABEL[st]}</td>
+                    <td className="py-1 text-ink-600">{SHIFT_STAGE_LABEL[st]}</td>
                     <td className="py-1 text-right font-semibold tabular-nums">
                       {fmt(summary.statusCounts[st] ?? 0)}
                     </td>
@@ -177,7 +172,7 @@ export default async function KpiDashboardReportPage({
                 {summary.topScores.map((s) => (
                   <tr key={s.shiftId}>
                     <td className="border border-ink-200 px-2 py-1">
-                      {formatVnDate(s.shiftDate)}
+                      {fmtDate(s.shiftDate)}
                     </td>
                     <td className="border border-ink-200 px-2 py-1">
                       {SHIFT_TYPE_LABEL[s.shiftType] ?? s.shiftType}
@@ -239,7 +234,7 @@ export default async function KpiDashboardReportPage({
                 <td className="w-40 py-1 text-ink-600">
                   {b.range}{" "}
                   <span className="text-xs text-ink-500">
-                    (hệ số {b.multiplier.toLocaleString("vi-VN")}×)
+                    (hệ số {fmtNum(b.multiplier)}×)
                   </span>
                 </td>
                 <td className="py-1">
@@ -249,7 +244,7 @@ export default async function KpiDashboardReportPage({
                       style={{ width: `${b.percentage}%`, minWidth: b.count ? 8 : 0 }}
                     />
                     <span className="text-xs font-medium text-ink-700">
-                      {fmt(b.count)} lượt ({fmt(b.percentage)}%)
+                      {fmt(b.count)} lượt ({fmtPct(b.percentage)})
                     </span>
                   </div>
                 </td>
@@ -329,7 +324,7 @@ export default async function KpiDashboardReportPage({
       <footer className="mt-8 border-t border-ink-200 pt-4 text-xs text-ink-500">
         <p>
           Báo cáo sinh tự động từ hệ thống quản lý công việc &amp; KPI ·{" "}
-          {company?.value ?? "GANI FOODY"} · {formatVnDateTime(new Date())}
+          {company?.value ?? "GANI FOODY"} · {fmtDateTime(new Date())}
         </p>
       </footer>
     </div>
@@ -345,20 +340,18 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** Số nguyên kiểu Việt Nam; null/NaN → "—" (lib/format) */
 function fmt(n: number | null | undefined) {
-  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
-  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(n);
+  return fmtNum(n, 0);
 }
 
 /** Số tiền kèm ₫; null (đã ẩn với người không được xem tiền) → "—". */
 function vnd(n: number | null | undefined) {
-  const s = fmt(n);
-  return s === "—" ? s : `${s} ₫`;
+  return fmtVnd(n);
 }
 
 /** Số 2 chữ số thập phân kiểu Việt Nam ("98,50"); null (chưa có dữ liệu) → "—". */
 function num2(n: number | null | undefined) {
-  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
   return fmtScore(n);
 }
 

@@ -4,10 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { Badge } from "@/components/ui";
-
-/** Số kiểu Việt Nam, tối đa 2 chữ số thập phân: 374,5 */
-const fmtNum = (n: number) => n.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
 import ConfirmDialog from "@/components/confirm-dialog";
+import VnNumberInput from "@/components/vn-number-input";
+import { toast } from "@/components/toast";
+import { fmtKg, fmtNum, fmtPct, fmtVnd } from "@/lib/format";
 
 type Sku = {
   id: string;
@@ -44,7 +44,10 @@ export default function SkuManager({
   const [editing, setEditing] = useState<string | null>(null);
   // Bản nháp của dòng đang sửa — chỉ gửi khi bấm Lưu (trước đây gửi ngay khi
   // rời ô / đổi lựa chọn, bấm Huỷ ở prompt thì ô vẫn hiện số mới như đã lưu).
-  const [draft, setDraft] = useState({ targetOutputKg: "", rawMaterialId: "" });
+  const [draft, setDraft] = useState<{ targetOutputKg: number | null; rawMaterialId: string }>({
+    targetOutputKg: null,
+    rawMaterialId: "",
+  });
   const [confirm, setConfirm] = useState<
     | { kind: "save"; sku: Sku }
     | { kind: "toggle"; sku: Sku }
@@ -54,20 +57,24 @@ export default function SkuManager({
 
   function startEdit(sku: Sku) {
     setDraft({
-      targetOutputKg: String(sku.targetOutputKg),
+      targetOutputKg: sku.targetOutputKg,
       rawMaterialId: sku.rawMaterialId ?? "",
     });
     setEditing(sku.id);
   }
 
-  const [f, setF] = useState({
+  const EMPTY_FORM = {
     skuCode: "",
     skuName: "",
-    targetOutputKg: 500,
-    stdMaterialLossRate: 8,
+    targetOutputKg: 500 as number | null,
+    stdMaterialLossRate: 8 as number | null,
     stdKgPerLaborHour: 0,
-    unitPriceVnd: 0,
-  });
+    unitPriceVnd: 0 as number | null,
+  };
+  const [f, setF] = useState(EMPTY_FORM);
+  // Ô số đang gõ sai (chữ, số âm) — chặn tạo mã
+  const [badNum, setBadNum] = useState<Record<string, boolean>>({});
+  const formInvalid = Object.values(badNum).some(Boolean);
 
   async function create() {
     setBusy(true);
@@ -76,7 +83,13 @@ export default function SkuManager({
       const res = await fetch("/api/production/skus", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...f, skuCode: f.skuCode.toUpperCase() }),
+        body: JSON.stringify({
+          ...f,
+          skuCode: f.skuCode.toUpperCase(),
+          targetOutputKg: f.targetOutputKg ?? 0,
+          stdMaterialLossRate: f.stdMaterialLossRate ?? 0,
+          unitPriceVnd: Math.round(f.unitPriceVnd ?? 0),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -84,14 +97,8 @@ export default function SkuManager({
         return;
       }
       setAdding(false);
-      setF({
-        skuCode: "",
-        skuName: "",
-        targetOutputKg: 500,
-        stdMaterialLossRate: 8,
-        stdKgPerLaborHour: 0,
-        unitPriceVnd: 0,
-      });
+      toast(`Đã tạo mã ${f.skuCode.toUpperCase()}.`);
+      setF(EMPTY_FORM);
       router.refresh();
     } finally {
       setBusy(false);
@@ -114,6 +121,7 @@ export default function SkuManager({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return data.message || "Không lưu được.";
       setEditing(null);
+      toast("Đã lưu mã sản phẩm.");
       router.refresh();
       return null;
     } catch {
@@ -131,7 +139,7 @@ export default function SkuManager({
       payload = { isActive: !sku.isActive };
     } else {
       payload = {};
-      const t = Number(draft.targetOutputKg);
+      const t = draft.targetOutputKg ?? 0;
       if (t !== sku.targetOutputKg) {
         payload.targetOutputKg = t;
         payload.reason = reason;
@@ -149,9 +157,8 @@ export default function SkuManager({
   }
 
   const editingSku = skus.find((x) => x.id === editing) ?? null;
-  const draftTarget = Number(draft.targetOutputKg);
-  const draftValid =
-    draft.targetOutputKg.trim() !== "" && Number.isFinite(draftTarget) && draftTarget > 0;
+  const draftTarget = draft.targetOutputKg ?? 0;
+  const draftValid = draft.targetOutputKg !== null && draftTarget > 0;
   const targetChanged = !!editingSku && draftValid && draftTarget !== editingSku.targetOutputKg;
   const materialChanged =
     !!editingSku && (draft.rawMaterialId || null) !== editingSku.rawMaterialId;
@@ -225,8 +232,8 @@ export default function SkuManager({
           <ul className="space-y-1">
             {targetChanged && (
               <li>
-                Sản lượng chuẩn: <b>{fmtNum(confirm.sku.targetOutputKg)} kg</b> →{" "}
-                <b>{fmtNum(draftTarget)} kg</b> mỗi ca. Đây là thước đo chấm điểm cho cả
+                Sản lượng chuẩn: <b>{fmtKg(confirm.sku.targetOutputKg, { unit: "kg" })}</b> →{" "}
+                <b>{fmtKg(draftTarget, { unit: "kg" })}</b> mỗi ca. Đây là thước đo chấm điểm cho cả
                 xưởng — các ca khai từ nay dùng chuẩn mới.
               </li>
             )}
@@ -276,15 +283,17 @@ export default function SkuManager({
             />
           </div>
           <div>
-            <label className="label">Sản lượng chuẩn (kg/ca)</label>
-            <input
-              type="number"
-              step="any"
-              className="input"
+            <label className="label" htmlFor="sku-target">
+              Sản lượng chuẩn (kg/ca)
+            </label>
+            <VnNumberInput
+              id="sku-target"
+              min={0}
               value={f.targetOutputKg}
-              onChange={(e) =>
-                setF({ ...f, targetOutputKg: Number(e.target.value) })
-              }
+              onValue={(n, bad) => {
+                setF({ ...f, targetOutputKg: n });
+                setBadNum((m) => ({ ...m, target: bad }));
+              }}
             />
             <p className="mt-1 text-xs text-ink-500">
               Trần của xưởng HCM01 là 500 kg/ca (nút thắt máy hút chân không 50
@@ -292,32 +301,36 @@ export default function SkuManager({
             </p>
           </div>
           <div>
-            <label className="label">Hao hụt định mức (%)</label>
-            <input
-              type="number"
-              step="any"
-              className="input"
+            <label className="label" htmlFor="sku-loss">
+              Hao hụt định mức (%)
+            </label>
+            <VnNumberInput
+              id="sku-loss"
+              min={0}
               value={f.stdMaterialLossRate}
-              onChange={(e) =>
-                setF({ ...f, stdMaterialLossRate: Number(e.target.value) })
-              }
+              onValue={(n, bad) => {
+                setF({ ...f, stdMaterialLossRate: n });
+                setBadNum((m) => ({ ...m, loss: bad }));
+              }}
             />
             <p className="mt-1 text-xs text-ink-500">
-              Định mức NVL = {fmtNum(norm(f.targetOutputKg, f.stdMaterialLossRate))} kg
+              Định mức NVL ={" "}
+              {fmtKg(norm(f.targetOutputKg ?? 0, f.stdMaterialLossRate ?? 0), { unit: "kg" })}
             </p>
           </div>
           {showMoney && (
           <div>
-            <label className="label">Đơn giá quy đổi (₫/kg)</label>
-            <input
-              type="number"
-              step="1"
-              min="0"
-              className="input"
+            <label className="label" htmlFor="sku-price">
+              Đơn giá quy đổi (₫/kg)
+            </label>
+            <VnNumberInput
+              id="sku-price"
+              min={0}
               value={f.unitPriceVnd}
-              onChange={(e) =>
-                setF({ ...f, unitPriceVnd: Math.round(Number(e.target.value)) })
-              }
+              onValue={(n, bad) => {
+                setF({ ...f, unitPriceVnd: n === null ? null : Math.round(n) });
+                setBadNum((m) => ({ ...m, price: bad }));
+              }}
             />
             <p className="mt-1 text-xs text-ink-500">
               Dùng để quy tổn thất ra tiền. Chỉ BGĐ xem được số đó.
@@ -327,7 +340,13 @@ export default function SkuManager({
           <div className="sm:col-span-3">
             <button
               className="btn-primary"
-              disabled={busy || !f.skuCode || !f.skuName || f.targetOutputKg <= 0}
+              disabled={
+                busy ||
+                formInvalid ||
+                !f.skuCode ||
+                !f.skuName ||
+                (f.targetOutputKg ?? 0) <= 0
+              }
               onClick={create}
             >
               {busy ? "Đang lưu..." : "Tạo mã sản phẩm"}
@@ -364,29 +383,24 @@ export default function SkuManager({
                   <td data-label="Tên sản phẩm" className="font-medium text-ink-800">{s.skuName}</td>
                   <td data-label="Sản lượng chuẩn" className="text-right text-ink-700 tabular-nums">
                     {editing === s.id ? (
-                      <input
-                        type="number"
-                        step="any"
-                        min="0"
-                        inputMode="decimal"
+                      <VnNumberInput
+                        min={0}
                         aria-label={`Sản lượng chuẩn của ${s.skuCode} (kg/ca)`}
                         className={`input w-28 py-1 text-right text-xs ${
                           draftValid ? "" : "border-red-300"
                         }`}
                         value={draft.targetOutputKg}
-                        onChange={(e) =>
-                          setDraft({ ...draft, targetOutputKg: e.target.value })
-                        }
+                        onValue={(n) => setDraft({ ...draft, targetOutputKg: n })}
                       />
                     ) : (
-                      `${fmtNum(s.targetOutputKg)} kg`
+                      fmtKg(s.targetOutputKg)
                     )}
                   </td>
                   <td data-label="Hao hụt ĐM" className="text-right text-ink-700 tabular-nums">
-                    {fmtNum(s.stdMaterialLossRate)}%
+                    {fmtPct(s.stdMaterialLossRate, { digits: 2 })}
                   </td>
                   <td data-label="Định mức NVL" className="text-right font-medium text-ink-900 tabular-nums">
-                    {fmtNum(norm(s.targetOutputKg, s.stdMaterialLossRate))} kg
+                    {fmtKg(norm(s.targetOutputKg, s.stdMaterialLossRate))}
                   </td>
                   <td data-label="NVL chính (kho)">
                     {editing === s.id ? (
@@ -417,7 +431,7 @@ export default function SkuManager({
                   </td>
                   {showMoney && (
                     <td data-label="Đơn giá" className="text-right text-ink-600 tabular-nums">
-                      {new Intl.NumberFormat("vi-VN").format(s.unitPriceVnd ?? 0)} ₫
+                      {fmtVnd(s.unitPriceVnd)}
                     </td>
                   )}
                   <td data-label="Số ca" className="text-right text-ink-600 tabular-nums">

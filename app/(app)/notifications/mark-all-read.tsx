@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "@/components/toast";
 
 export default function MarkAllRead() {
   const router = useRouter();
@@ -23,6 +24,7 @@ export default function MarkAllRead() {
               setError(data.message || "Không đánh dấu được, thử lại sau.");
               return;
             }
+            toast("Đã đánh dấu đã đọc tất cả thông báo.");
             router.refresh();
           } catch {
             // Mất mạng / server không trả lời — không để nút kẹt ở "Đang xử lý".
@@ -32,7 +34,7 @@ export default function MarkAllRead() {
           }
         }}
       >
-        {busy ? "Đang xử lý..." : "Đánh dấu đã đọc tất cả"}
+        {busy ? "Đang xử lý…" : "Đánh dấu đã đọc tất cả"}
       </button>
       {error && <span className="text-xs text-red-600">{error}</span>}
     </span>

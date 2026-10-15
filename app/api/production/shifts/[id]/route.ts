@@ -9,22 +9,19 @@ import {
   redactShiftForViewer,
   lockAndTriggerKpi,
   reopenShift,
+  resubmitShiftDraft,
+  returnShiftToProduction,
   withProductionRole,
 } from "@/lib/services/production-service";
 import { computeShiftMetrics } from "@/lib/production/kpi-engine";
+// Cùng trần an toàn kg với form khai ca (lib/production/draft-schema.ts)
+import { kgField as kg, shiftDraftSchema } from "@/lib/production/draft-schema";
+import { SHIFT_RETURN_MIN_REASON } from "@/lib/production/shift-flow";
+import { parseVnDate } from "@/lib/vn-time";
 import { ERR } from "@/lib/constants";
 
 export const runtime = "nodejs";
 
-// Trần an toàn cho mọi số kg nhập tay: một ca thực tế không tới 100 tấn. Số
-// vô lý (gõ thừa chữ số, Infinity) làm tràn cột tiền Int khi tính tổn thất.
-const MAX_KG = 100_000;
-const kg = (label: string) =>
-  z
-    .number({ invalid_type_error: `${label} phải là số.` })
-    .finite(`${label} không hợp lệ.`)
-    .min(0, `${label} không được âm.`)
-    .max(MAX_KG, `${label} vượt trần ${MAX_KG.toLocaleString("vi-VN")} kg.`);
 const count = z.number().int().min(0).max(10_000);
 
 const actionSchema = z.discriminatedUnion("action", [
@@ -37,6 +34,8 @@ const actionSchema = z.discriminatedUnion("action", [
     qcNote: z.string().max(2000).optional(),
     /** Ban Giám đốc xác nhận thay KCS (vượt quyền) — bắt buộc ghi lý do */
     ceoOverrideReason: z.string().max(500).optional(),
+    /** Lý do lệch cân đối — máy chủ bắt buộc khi lệch quá 5 kg */
+    massBalanceReason: z.string().max(500).optional(),
     participantDefects: z
       .array(
         z.object({
@@ -55,6 +54,14 @@ const actionSchema = z.discriminatedUnion("action", [
     targetOverrideReason: z.string().max(1000).optional(),
     materialOverrideReason: z.string().max(1000).optional(),
     ceoNote: z.string().max(2000).optional(),
+  }),
+  z.object({
+    action: z.literal("RETURN"),
+    reason: z
+      .string()
+      .trim()
+      .min(SHIFT_RETURN_MIN_REASON, "Trả ca về sản xuất phải ghi rõ cần sửa gì.")
+      .max(1000),
   }),
   z.object({
     action: z.literal("REOPEN"),
@@ -215,10 +222,36 @@ export async function POST(
           metrics: r.metrics,
         });
       }
+      case "RETURN": {
+        const r = await returnShiftToProduction(user, id, body.reason, meta);
+        return ok({ shift: r });
+      }
       case "REOPEN": {
         const r = await reopenShift(user, id, body.reason, meta);
         return ok({ shift: r });
       }
     }
+  });
+}
+
+/** Người khai sửa ca bị KCS trả về rồi gửi lại (bước 1 ↺). */
+export async function PUT(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  return handle(async () => {
+    const { id } = await ctx.params;
+    const user = await withProductionRole(await requireUser());
+    const body = shiftDraftSchema.parse(await req.json());
+
+    let shiftDate: Date;
+    try {
+      shiftDate = parseVnDate(body.shiftDate);
+    } catch {
+      throw new BusinessError(ERR.VALIDATION_FAILED, "Ngày ca không hợp lệ.", 400);
+    }
+
+    const r = await resubmitShiftDraft(user, id, { ...body, shiftDate }, clientMeta(req));
+    return ok({ shift: r });
   });
 }

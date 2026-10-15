@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Download,
@@ -12,17 +12,33 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Search,
+  Send,
 } from "lucide-react";
-import {
-  Badge,
-  KpiStatusBadge,
-  ProgressBar,
-  ScoreBadge,
-  fmtScore,
-} from "@/components/ui";
-import { scoreStateOf } from "@/lib/kpi";
+import { Badge, KpiStatusBadge, ScoreBadge } from "@/components/ui";
+import { fmtNum, fmtPct, fmtScore } from "@/lib/format";
+import { round2, scoreStateOf, type GatekeeperRule } from "@/lib/kpi";
 import KpiAdvisoryPanel from "@/components/kpi-advisory";
 import ConfirmDialog from "@/components/confirm-dialog";
+import VnNumberInput from "@/components/vn-number-input";
+import StickyActions from "@/components/sticky-actions";
+import { toast } from "@/components/toast";
+import {
+  AchievementBar,
+  GatekeeperStatus,
+  achievementText,
+  gatekeeperRuleText,
+} from "../achievement";
+import {
+  FILTERS,
+  exceptionRank,
+  groupFlags,
+  initialOpen,
+  matchesFilter,
+  matchesSearch,
+  sortByException,
+  type FilterKey,
+} from "./exceptions";
 
 export type KpiRow = {
   id: string;
@@ -38,6 +54,10 @@ export type KpiRow = {
   achievementPercent: number;
   weightedScore: number;
   isCapped: boolean;
+  /** Trần mức đạt của chỉ tiêu này (150%, Sales 120%) — xem kpiCapFor */
+  cap: number;
+  /** Khác null = chỉ tiêu gatekeeper (không cộng điểm, vượt ngưỡng thì trừ) */
+  gatekeeper: GatekeeperRule | null;
   hasMismatch: boolean;
   mismatchPercent: number | null;
   status: string;
@@ -49,11 +69,21 @@ export type KpiRow = {
 type Group = {
   employeeId: string;
   employeeName: string;
+  employeeEmail: string;
+  employeeRole: string;
   jobTitle: string;
   departmentName: string;
   rows: KpiRow[];
   summary: { totalWeight: number; totalScore: number; count: number };
 };
+
+/** Số nhân viên đang gõ cho một dòng tự khai — giữ ở bảng cha để "Gửi tất cả" gom được. */
+type SelfDraft = { value: number | null; invalid: boolean; note: string };
+
+/** Nhân viên còn sửa được số tự khai của dòng này không (máy chủ cũng chặn y vậy). */
+function selfEditable(row: KpiRow, selfOpen: boolean) {
+  return selfOpen && (row.status === "DRAFT" || row.status === "SELF_REVIEWED");
+}
 
 export default function KpiWorkTable({
   periodId,
@@ -76,25 +106,99 @@ export default function KpiWorkTable({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  // Mở sẵn người ĐANG CẦN mình xử lý (lệch số, chờ mình duyệt) — không phải
-  // dòng của chính mình. Quản trị ngoại lệ: việc cần làm nổi lên trước.
-  const waitingStatus =
-    role === "CEO" ? "MANAGER_REVIEWED" : role === "MANAGER" ? "SELF_REVIEWED" : null;
-  const [openEmp, setOpenEmp] = useState<string | null>(
-    groups.find((g) => g.rows.some((r) => r.hasMismatch))?.employeeId ??
-      (waitingStatus
-        ? groups.find(
-            (g) =>
-              g.employeeId !== currentUserId &&
-              g.rows.some((r) => r.status === waitingStatus)
-          )?.employeeId
-        : undefined) ??
-      groups.find((g) => g.employeeId === currentUserId)?.employeeId ??
-      groups[0]?.employeeId ??
-      null
-  );
 
-  async function call(url: string, payload: unknown) {
+  // Sắp theo ngoại lệ: lệch số → chờ tôi → chạm trần → dưới 70 → còn lại.
+  const ranked = useMemo(() => {
+    const viewer = { userId: currentUserId, role, selfOpen, managerOpen };
+    const list = groups.map((g) => {
+      const state = scoreStateOf(periodStatus, g.rows);
+      const flags = groupFlags(
+        { ...g, rows: g.rows.map((r) => ({ ...r, isGatekeeper: r.gatekeeper !== null })) },
+        viewer,
+        state
+      );
+      return { g, state, flags };
+    });
+    return sortByException(list, (x) => exceptionRank(x.flags));
+  }, [groups, periodStatus, currentUserId, role, selfOpen, managerOpen]);
+  // Thứ tự chốt lúc mở trang: duyệt xong một người thì người đó KHÔNG nhảy
+  // xuống cuối ngay dưới tay — mất chỗ đang làm. Tải lại trang mới xếp lại.
+  const [order] = useState(() => ranked.map((x) => x.g.employeeId));
+  const prepared = useMemo(() => {
+    const pos = new Map(order.map((id, i) => [id, i]));
+    return [...ranked].sort(
+      (a, b) =>
+        (pos.get(a.g.employeeId) ?? order.length) - (pos.get(b.g.employeeId) ?? order.length)
+    );
+  }, [ranked, order]);
+
+  const [filter, setFilter] = useState<FilterKey>("all");
+  const [query, setQuery] = useState("");
+  // Mở sẵn những người ĐANG CẦN mình xử lý — việc cần làm nổi lên trước.
+  const [openSet, setOpenSet] = useState<Set<string>>(
+    () =>
+      new Set(
+        initialOpen(
+          prepared.map((x) => ({ employeeId: x.g.employeeId, flags: x.flags })),
+          currentUserId
+        )
+      )
+  );
+  function toggle(id: string) {
+    setOpenSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const counts = useMemo(() => {
+    const c = {} as Record<FilterKey, number>;
+    for (const f of FILTERS) {
+      c[f.key] = prepared.filter((x) => matchesFilter(x.flags, f.key)).length;
+    }
+    return c;
+  }, [prepared]);
+  const visible = prepared.filter(
+    (x) => matchesFilter(x.flags, filter) && matchesSearch(x.g, query)
+  );
+  // Nhân viên chỉ thấy bảng của chính mình — bộ lọc/tìm kiếm là thừa
+  const showFilters = groups.length > 1;
+
+  /* ---------------- tự khai: nháp chung cho cả hai bố cục + "Gửi tất cả" */
+
+  const own = groups.find((g) => g.employeeId === currentUserId) ?? null;
+  const [selfDrafts, setSelfDrafts] = useState<Record<string, SelfDraft>>(() => {
+    const init: Record<string, SelfDraft> = {};
+    for (const r of own?.rows ?? []) {
+      init[r.id] = {
+        value: r.actualSelf ?? r.actualSystem ?? null,
+        invalid: false,
+        note: r.selfNote ?? "",
+      };
+    }
+    return init;
+  });
+  function setDraft(id: string, patch: Partial<SelfDraft>) {
+    setSelfDrafts((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] ?? { value: null, invalid: false, note: "" }), ...patch },
+    }));
+  }
+  const ownEditable = (own?.rows ?? []).filter((r) => selfEditable(r, selfOpen));
+  // Dòng đã điền số hợp lệ mà chưa gửi (hoặc sửa khác số đã gửi)
+  const bulkItems = ownEditable.filter((r) => {
+    const d = selfDrafts[r.id];
+    if (!d || d.value === null || d.invalid) return false;
+    return (
+      r.status === "DRAFT" ||
+      d.value !== r.actualSelf ||
+      d.note.trim() !== (r.selfNote ?? "").trim()
+    );
+  });
+
+  async function call(url: string, payload: unknown, success?: string) {
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -109,6 +213,7 @@ export default function KpiWorkTable({
         setError(data.message || "Thao tác thất bại.");
         return null;
       }
+      if (success) toast(success);
       router.refresh();
       return data;
     } catch {
@@ -116,6 +221,27 @@ export default function KpiWorkTable({
       return null;
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function submitAll() {
+    if (bulkItems.length === 0) return;
+    const nameOf = new Map(bulkItems.map((r) => [r.id, r.kpiName]));
+    const data = await call("/api/kpi/results/self-review", {
+      items: bulkItems.map((r) => ({
+        resultId: r.id,
+        actualSelf: selfDrafts[r.id].value as number,
+        selfNote: selfDrafts[r.id].note.trim() || undefined,
+      })),
+    });
+    if (!data) return;
+    if (data.submitted > 0) toast(`Đã gửi ${fmtNum(data.submitted)} chỉ tiêu tự khai`);
+    const failed = (data.failed ?? []) as { resultId: string; message: string }[];
+    if (failed.length > 0) {
+      setError(
+        `Chưa gửi được ${failed.length} chỉ tiêu: ` +
+          failed.map((f) => `${nameOf.get(f.resultId) ?? "—"} (${f.message})`).join("; ")
+      );
     }
   }
 
@@ -142,11 +268,13 @@ export default function KpiWorkTable({
       const skippedText = [...reasons.entries()]
         .map(([r, n]) => `${n} dòng: ${r}`)
         .join("; ");
-      setMessage(
-        `Đã chốt ${data.finalized} dòng KPI.${
-          skippedText ? ` Chưa chốt — ${skippedText}.` : ""
-        }${data.periodFinalized ? " Toàn kỳ đã khoá." : ""}`
+      toast(
+        `Đã chốt ${fmtNum(data.finalized)} dòng KPI${data.periodFinalized ? " · toàn kỳ đã khoá" : ""}`
       );
+      // Còn dòng bị bỏ qua thì giữ thông báo chi tiết trên trang để xử lý tiếp
+      if (skippedText) {
+        setMessage(`Đã chốt ${data.finalized} dòng KPI. Chưa chốt — ${skippedText}.`);
+      }
     }
   }
 
@@ -163,6 +291,10 @@ export default function KpiWorkTable({
     mismatch: scopeRows.filter((r) => r.hasMismatch && r.status !== "FINALIZED").length,
     locked: scopeRows.filter((r) => r.status === "FINALIZED").length,
   };
+
+  const periodFinalized = periodStatus === "FINALIZED";
+  // Kỳ đã chốt: cột Thao tác của người không phải BGĐ toàn chữ "Đã khoá" — ẩn
+  const showActions = !(periodFinalized && role !== "CEO");
 
   return (
     <>
@@ -190,7 +322,7 @@ export default function KpiWorkTable({
             <ImportButton periodId={periodId} />
           </>
         )}
-        {role === "CEO" && periodStatus !== "FINALIZED" && (
+        {role === "CEO" && !periodFinalized && (
           <button
             className="btn-primary btn-sm ml-auto inline-flex items-center gap-1.5"
             disabled={busy}
@@ -255,10 +387,67 @@ export default function KpiWorkTable({
         </div>
       )}
       {message && (
-        // Báo thành công: thẻ trung tính + dấu tích màu lá, không tô nền xanh
+        // Báo kết quả chi tiết: thẻ trung tính + dấu tích màu lá, không tô nền xanh
         <div className="card mb-4 flex items-start gap-2 px-3 py-2 text-sm text-ink-700">
           <Check size={16} strokeWidth={2.5} className="mt-0.5 shrink-0 text-leaf-600" aria-hidden />
           <span>{message}</span>
+        </div>
+      )}
+
+      {/* ---------- Bộ lọc nhanh + tìm kiếm ---------- */}
+      {showFilters && (
+        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div role="group" aria-label="Lọc nhân sự" className="flex flex-wrap gap-1.5">
+            {FILTERS.map((f) => {
+              const active = filter === f.key;
+              const n = counts[f.key];
+              // Bộ lọc không có ai thì làm mờ (vẫn bấm được) — đỡ rối mắt
+              return (
+                <button
+                  key={f.key}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setFilter(f.key)}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-medium transition ${
+                    active
+                      ? "border-ink-900 bg-ink-900 text-white"
+                      : n === 0
+                        ? "border-ink-200 text-ink-400 hover:text-ink-600"
+                        : "border-ink-300 text-ink-700 hover:border-ink-400 hover:text-ink-900"
+                  }`}
+                >
+                  {f.label}
+                  <span
+                    className={`tabular-nums text-xs ${
+                      active
+                        ? "text-white/80"
+                        : f.key === "mismatch" && n > 0
+                          ? "font-semibold text-red-700"
+                          : "text-ink-500"
+                    }`}
+                  >
+                    {fmtNum(n)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <label className="relative block lg:w-72">
+            <span className="sr-only">Tìm nhân sự</span>
+            <Search
+              size={16}
+              strokeWidth={2}
+              aria-hidden
+              className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink-400"
+            />
+            <input
+              type="search"
+              className="input pl-9"
+              placeholder="Tìm theo tên, email, phòng ban…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
         </div>
       )}
 
@@ -267,29 +456,62 @@ export default function KpiWorkTable({
           Không có dòng KPI nào trong tầm quản lý của bạn ở kỳ này.
         </div>
       )}
+      {groups.length > 0 && visible.length === 0 && (
+        <div className="card p-8 text-center text-sm text-ink-500">
+          Không có nhân sự nào khớp bộ lọc.{" "}
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => {
+              setFilter("all");
+              setQuery("");
+            }}
+          >
+            Xoá bộ lọc
+          </button>
+        </div>
+      )}
+      {showFilters && visible.length > 0 && visible.length < groups.length && (
+        <div className="mb-2 text-xs text-ink-500">
+          Đang hiển thị {fmtNum(visible.length)}/{fmtNum(groups.length)} nhân sự
+        </div>
+      )}
 
       {/* ---------- Từng nhân sự ---------- */}
       <div className="space-y-4">
-        {groups.map((g) => {
-          const isOpen = openEmp === g.employeeId;
-          const pendingSelf = g.rows.filter((r) => r.status === "DRAFT").length;
+        {visible.map(({ g, state, flags }) => {
+          const isOpen = openSet.has(g.employeeId);
+          const isOwn = g.employeeId === currentUserId;
+          const pendingSelf = flags.draft;
           const pendingManager = g.rows.filter(
             (r) => r.status === "SELF_REVIEWED"
           ).length;
           const pendingCeo = g.rows.filter(
             (r) => r.status === "MANAGER_REVIEWED"
           ).length;
-          const mismatches = g.rows.filter((r) => r.hasMismatch).length;
-          const state = scoreStateOf(periodStatus, g.rows);
           // Dòng lệch số lên đầu — đó là thứ phải quyết trước khi chốt
           const rows = [...g.rows].sort(
             (a, b) => Number(b.hasMismatch) - Number(a.hasMismatch)
           );
+          // Kỳ đã chốt: dòng số nào cả bảng toàn "—" thì bỏ, đỡ nhiễu
+          const showSystem = !periodFinalized || g.rows.some((r) => r.actualSystem !== null);
+          const showSelf = !periodFinalized || g.rows.some((r) => r.actualSelf !== null);
+          const editorProps = {
+            role,
+            isMine: isOwn,
+            selfOpen,
+            managerOpen,
+            busy,
+            onCall: call,
+            showSystem,
+            showSelf,
+            showActions,
+          };
 
           return (
             <div key={g.employeeId} className="card overflow-hidden">
               <button
-                onClick={() => setOpenEmp(isOpen ? null : g.employeeId)}
+                onClick={() => toggle(g.employeeId)}
                 aria-expanded={isOpen}
                 className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-ink-50/60"
               >
@@ -298,37 +520,40 @@ export default function KpiWorkTable({
                     <span className="font-semibold text-ink-900">
                       {g.employeeName}
                     </span>
-                    {g.employeeId === currentUserId && (
+                    {isOwn && (
                       <span className="text-xs font-medium text-brand-700">
                         Bạn
                       </span>
                     )}
-                    {mismatches > 0 && (
+                    {flags.mismatch > 0 && (
                       <span className="badge border-transparent bg-red-50 text-red-700">
-                        <AlertTriangle size={12} strokeWidth={2.5} aria-hidden /> Lệch số {mismatches}
+                        <AlertTriangle size={12} strokeWidth={2.5} aria-hidden /> Lệch số {flags.mismatch}
                       </span>
+                    )}
+                    {/* Bảng của chính mình đã có "n chưa khai" — không lặp */}
+                    {flags.needsMe > 0 && !isOwn && (
+                      <Badge tone="brand">{flags.needsMe} chờ bạn</Badge>
                     )}
                   </div>
                   <div className="mt-0.5 text-xs text-ink-500">
                     {g.jobTitle || "—"} · {g.departmentName} · {g.rows.length}{" "}
-                    chỉ tiêu · trọng số {g.summary.totalWeight}%
+                    chỉ tiêu · trọng số {fmtNum(g.summary.totalWeight)}%
                   </div>
                 </div>
-                {/* Đếm trạng thái: trung tính; chỉ "chờ <vai trò của mình>" mang
-                    màu thương hiệu — đó là phần việc của người đang xem. */}
+                {/* Đếm trạng thái: trung tính; phần việc của người đang xem đã
+                    có nhãn "chờ bạn" màu thương hiệu ở bên trái. */}
                 <div className="flex flex-wrap items-center gap-2">
                   {pendingSelf > 0 && (
                     <Badge tone="slate">{pendingSelf} chưa khai</Badge>
                   )}
                   {pendingManager > 0 && (
-                    <Badge tone={role === "MANAGER" ? "brand" : "slate"}>
-                      {pendingManager} chờ trưởng phòng
-                    </Badge>
+                    <Badge tone="slate">{pendingManager} chờ trưởng phòng</Badge>
                   )}
                   {pendingCeo > 0 && (
-                    <Badge tone={role === "CEO" ? "brand" : "slate"}>
-                      {pendingCeo} chờ Ban Giám đốc
-                    </Badge>
+                    <Badge tone="slate">{pendingCeo} chờ Ban Giám đốc</Badge>
+                  )}
+                  {flags.capped > 0 && (
+                    <Badge tone="slate">{flags.capped} chạm trần</Badge>
                   )}
                   <ScoreBadge score={g.summary.totalScore} state={state} />
                   <span className="text-ink-400" aria-hidden>
@@ -347,16 +572,13 @@ export default function KpiWorkTable({
                         key={r.id}
                         layout="card"
                         row={r}
-                        role={role}
-                        isMine={g.employeeId === currentUserId}
-                        selfOpen={selfOpen}
-                        managerOpen={managerOpen}
-                        busy={busy}
-                        onCall={call}
+                        {...editorProps}
+                        selfDraft={selfDrafts[r.id]}
+                        onSelfDraft={(patch) => setDraft(r.id, patch)}
                       />
                     ))}
                     <li className="flex items-center justify-between bg-ink-50/70 px-4 py-3 text-sm font-semibold">
-                      <span>Tổng · trọng số {g.summary.totalWeight}%</span>
+                      <span>Tổng · trọng số {fmtNum(g.summary.totalWeight)}%</span>
                       <ScoreBadge score={g.summary.totalScore} state={state} />
                     </li>
                   </ul>
@@ -371,12 +593,14 @@ export default function KpiWorkTable({
                           <th className="text-right">Trọng số</th>
                           <th className="text-right">Giao</th>
                           <th className="text-right">Số liệu</th>
-                          <th className="min-w-28">Mức đạt</th>
+                          <th className="min-w-36">Mức đạt</th>
                           <th className="text-right">Điểm</th>
                           <th>Trạng thái</th>
-                          <th className="sticky right-0 z-10 w-60 min-w-60 bg-ink-50 shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.12)]">
-                            Thao tác
-                          </th>
+                          {showActions && (
+                            <th className="sticky right-0 z-10 w-60 min-w-60 bg-ink-50 shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.12)]">
+                              Thao tác
+                            </th>
+                          )}
                         </tr>
                       </thead>
                       <tbody>
@@ -385,12 +609,9 @@ export default function KpiWorkTable({
                             key={r.id}
                             layout="row"
                             row={r}
-                            role={role}
-                            isMine={g.employeeId === currentUserId}
-                            selfOpen={selfOpen}
-                            managerOpen={managerOpen}
-                            busy={busy}
-                            onCall={call}
+                            {...editorProps}
+                            selfDraft={selfDrafts[r.id]}
+                            onSelfDraft={(patch) => setDraft(r.id, patch)}
                           />
                         ))}
                         <tr className="bg-ink-50/70 font-semibold">
@@ -403,7 +624,7 @@ export default function KpiWorkTable({
                                   : ""
                               }
                             >
-                              {g.summary.totalWeight}%
+                              {fmtNum(g.summary.totalWeight)}%
                             </span>
                           </td>
                           <td colSpan={3}></td>
@@ -412,20 +633,46 @@ export default function KpiWorkTable({
                               ? "—"
                               : fmtScore(g.summary.totalScore)}
                           </td>
-                          <td></td>
-                          <td className="sticky right-0 bg-ink-50">
-                            <ScoreBadge
-                              score={g.summary.totalScore}
-                              state={state}
-                            />
+                          <td>
+                            {!showActions && (
+                              <ScoreBadge score={g.summary.totalScore} state={state} />
+                            )}
                           </td>
+                          {showActions && (
+                            <td className="sticky right-0 bg-ink-50">
+                              <ScoreBadge
+                                score={g.summary.totalScore}
+                                state={state}
+                              />
+                            </td>
+                          )}
                         </tr>
                       </tbody>
                     </table>
                   </div>
 
+                  {/* Nhân viên: gửi một lượt mọi chỉ tiêu đã điền. Trên điện
+                      thoại nút dính đáy màn hình, không phải cuộn hết 8 thẻ. */}
+                  {isOwn && ownEditable.length > 0 && (
+                    <div className="border-t border-ink-100 px-4 pb-3 sm:pt-0">
+                      <StickyActions>
+                        <button
+                          type="button"
+                          className="btn-primary inline-flex items-center justify-center gap-1.5"
+                          disabled={busy || bulkItems.length === 0}
+                          onClick={submitAll}
+                        >
+                          <Send size={16} strokeWidth={2} aria-hidden />
+                          {bulkItems.length > 0
+                            ? `Gửi tất cả (${bulkItems.length})`
+                            : "Đã gửi hết"}
+                        </button>
+                      </StickyActions>
+                    </div>
+                  )}
+
                   {role === "CEO" &&
-                    periodStatus !== "FINALIZED" &&
+                    !periodFinalized &&
                     pendingCeo + pendingManager + pendingSelf > 0 && (
                       <div className="border-t border-ink-100 p-3">
                         <button
@@ -463,6 +710,11 @@ function RowEditor({
   managerOpen,
   busy,
   onCall,
+  selfDraft,
+  onSelfDraft,
+  showSystem,
+  showSelf,
+  showActions,
 }: {
   layout: "row" | "card";
   row: KpiRow;
@@ -471,20 +723,22 @@ function RowEditor({
   selfOpen: boolean;
   managerOpen: boolean;
   busy: boolean;
-  onCall: (url: string, payload: unknown) => Promise<unknown>;
+  onCall: (url: string, payload: unknown, success?: string) => Promise<unknown>;
+  selfDraft: SelfDraft | undefined;
+  onSelfDraft: (patch: Partial<SelfDraft>) => void;
+  showSystem: boolean;
+  showSelf: boolean;
+  showActions: boolean;
 }) {
-  const [selfValue, setSelfValue] = useState(
-    row.actualSelf ?? row.actualSystem ?? ""
+  const [finalValue, setFinalValue] = useState<number | null>(
+    row.actualFinal ?? row.actualSelf ?? row.actualSystem ?? null
   );
-  const [selfNote, setSelfNote] = useState(row.selfNote ?? "");
-  const [finalValue, setFinalValue] = useState(
-    row.actualFinal ?? row.actualSelf ?? row.actualSystem ?? ""
-  );
+  const [finalInvalid, setFinalInvalid] = useState(false);
   const [reason, setReason] = useState("");
   const [editing, setEditing] = useState(false);
 
   const locked = row.status === "FINALIZED";
-  const canSelf = isMine && selfOpen && !locked;
+  const canSelf = isMine && selfEditable(row, selfOpen);
   // Trưởng phòng chỉ vào cuộc sau khi nhân viên đã khai, và phải trong hạn ngày 4.
   // Ban Giám đốc thì vào được bất cứ lúc nào, kể cả dòng nhân viên chưa khai —
   // để không bị kẹt khi có người nghỉ việc hoặc bỏ khai giữa chừng.
@@ -500,58 +754,65 @@ function RowEditor({
   const actual = row.actualFinal ?? row.actualSelf ?? row.actualSystem;
   const needsReason =
     row.actualSelf !== null &&
-    finalValue !== "" &&
-    Number(finalValue) !== row.actualSelf;
+    finalValue !== null &&
+    round2(finalValue) !== round2(row.actualSelf);
+
+  const selfValue = selfDraft?.value ?? null;
+  const selfInvalid = selfDraft?.invalid ?? false;
+  const selfNote = selfDraft?.note ?? "";
 
   // Vì sao dòng này không có ô nhập — nói đúng lý do, không chung chung.
   const idleText = locked
     ? "Đã khoá"
-    : isMine && !selfOpen
-      ? role === "EMPLOYEE"
-        ? "Hết hạn tự khai"
-        : "Ban Giám đốc duyệt KPI của bạn"
-      : isMine && role === "MANAGER"
-        ? "Ban Giám đốc duyệt KPI của bạn"
-        : role === "MANAGER" && !managerOpen
-          ? "Hết hạn duyệt (ngày 4)"
-          : row.status === "DRAFT"
-            ? "Chờ nhân viên tự khai"
-            : "Chờ bước trước";
+    : isMine && selfOpen && row.status === "MANAGER_REVIEWED"
+      ? "Trưởng phòng đã duyệt"
+      : isMine && !selfOpen
+        ? role === "EMPLOYEE"
+          ? "Hết hạn tự khai"
+          : "Ban Giám đốc duyệt KPI của bạn"
+        : isMine && role === "MANAGER"
+          ? "Ban Giám đốc duyệt KPI của bạn"
+          : role === "MANAGER" && !managerOpen
+            ? "Hết hạn duyệt (ngày 4)"
+            : row.status === "DRAFT"
+              ? "Chờ nhân viên tự khai"
+              : "Chờ bước trước";
 
   const actions = (
     <>
       {/* Nhân viên tự khai */}
       {canSelf && (
         <div className="space-y-1.5">
-          <input
-            type="number"
-            step="any"
-            inputMode="decimal"
+          <VnNumberInput
             className="input py-1.5 text-sm"
             aria-label={`Số thực tế (${row.unit})`}
             placeholder={`Số thực tế (${row.unit})`}
             value={selfValue}
-            onChange={(e) => setSelfValue(e.target.value)}
+            onValue={(n, invalid) => onSelfDraft({ value: n, invalid })}
           />
           <input
             className="input py-1.5 text-sm"
             aria-label="Giải trình ngắn"
             placeholder="Giải trình ngắn (tuỳ chọn)"
             value={selfNote}
-            onChange={(e) => setSelfNote(e.target.value)}
+            onChange={(e) => onSelfDraft({ note: e.target.value })}
           />
           <button
-            className="btn-primary btn-sm w-full"
-            disabled={busy || selfValue === ""}
+            className="btn-ghost btn-sm w-full"
+            disabled={busy || selfValue === null || selfInvalid}
             onClick={() =>
-              onCall(url, {
-                action: "SELF_REVIEW",
-                actualSelf: Number(selfValue),
-                selfNote: selfNote || undefined,
-              })
+              onCall(
+                url,
+                {
+                  action: "SELF_REVIEW",
+                  actualSelf: selfValue,
+                  selfNote: selfNote.trim() || undefined,
+                },
+                `Đã gửi số tự khai · ${row.kpiName}`
+              )
             }
           >
-            Gửi số tự khai
+            {row.status === "DRAFT" ? "Gửi dòng này" : "Gửi lại dòng này"}
           </button>
         </div>
       )}
@@ -559,15 +820,15 @@ function RowEditor({
       {/* Trưởng phòng / BGĐ duyệt */}
       {canManager && (
         <div className="space-y-1.5">
-          <input
-            type="number"
-            step="any"
-            inputMode="decimal"
+          <VnNumberInput
             className="input py-1.5 text-sm"
             aria-label="Số chốt"
             placeholder="Số chốt"
             value={finalValue}
-            onChange={(e) => setFinalValue(e.target.value)}
+            onValue={(n, invalid) => {
+              setFinalValue(n);
+              setFinalInvalid(invalid);
+            }}
           />
           {needsReason && (
             <input
@@ -581,14 +842,21 @@ function RowEditor({
           <button
             className="btn-primary btn-sm w-full"
             disabled={
-              busy || finalValue === "" || (needsReason && reason.trim() === "")
+              busy ||
+              finalValue === null ||
+              finalInvalid ||
+              (needsReason && reason.trim() === "")
             }
             onClick={() =>
-              onCall(url, {
-                action: "MANAGER_REVIEW",
-                actualFinal: Number(finalValue),
-                reason: reason || undefined,
-              })
+              onCall(
+                url,
+                {
+                  action: "MANAGER_REVIEW",
+                  actualFinal: finalValue,
+                  reason: reason || undefined,
+                },
+                needsReason ? `Đã điều chỉnh & duyệt · ${row.kpiName}` : `Đã duyệt · ${row.kpiName}`
+              )
             }
           >
             {needsReason ? "Điều chỉnh & duyệt" : "Duyệt số này"}
@@ -604,14 +872,14 @@ function RowEditor({
       {canEditLocked &&
         (editing ? (
           <div className="space-y-1.5">
-            <input
-              type="number"
-              step="any"
-              inputMode="decimal"
+            <VnNumberInput
               className="input py-1.5 text-sm"
               aria-label="Số chốt mới"
               value={finalValue}
-              onChange={(e) => setFinalValue(e.target.value)}
+              onValue={(n, invalid) => {
+                setFinalValue(n);
+                setFinalInvalid(invalid);
+              }}
             />
             <input
               className="input py-1.5 text-sm"
@@ -622,25 +890,31 @@ function RowEditor({
             />
             <div className="flex gap-1.5">
               <button
+                className="btn-ghost btn-sm"
+                onClick={() => setEditing(false)}
+              >
+                Huỷ
+              </button>
+              <button
                 className="btn-danger btn-sm flex-1"
-                disabled={busy || reason.trim().length < 10}
+                disabled={
+                  busy || finalValue === null || finalInvalid || reason.trim().length < 10
+                }
                 onClick={async () => {
-                  const ok = await onCall(url, {
-                    action: "EDIT_LOCKED",
-                    actualFinal: Number(finalValue),
-                    reason,
-                  });
+                  const ok = await onCall(
+                    url,
+                    {
+                      action: "EDIT_LOCKED",
+                      actualFinal: finalValue,
+                      reason,
+                    },
+                    `Đã sửa điểm đã khoá · ${row.kpiName}`
+                  );
                   // Lỗi thì giữ khung sửa (và lý do đã gõ) để sửa lại
                   if (ok) setEditing(false);
                 }}
               >
                 Xác nhận sửa
-              </button>
-              <button
-                className="btn-ghost btn-sm"
-                onClick={() => setEditing(false)}
-              >
-                Huỷ
               </button>
             </div>
           </div>
@@ -659,34 +933,40 @@ function RowEditor({
     </>
   );
 
-  const achievement =
-    actual === null ? (
-      <span className="text-xs text-ink-500">chưa có số</span>
-    ) : (
-      <>
-        <div className="mb-1 text-xs text-ink-600">
-          {pct(row.achievementPercent)}
-          {row.isCapped && <span className="ml-1 text-amber-800">· chạm trần</span>}
-        </div>
-        <ProgressBar
-          value={(row.achievementPercent / 150) * 100}
-          tone={
-            row.achievementPercent >= 100
-              ? "green"
-              : row.achievementPercent >= 80
-                ? "amber"
-                : "red"
-          }
-        />
-      </>
-    );
+  const gate = row.gatekeeper;
+  // Gatekeeper: không có mức đạt / trần — hiện luật ngưỡng và đạt hay vượt
+  const achievement = gate ? (
+    <GatekeeperStatus rule={gate} actual={actual} />
+  ) : actual === null ? (
+    <span className="text-xs text-ink-500">chưa có số</span>
+  ) : (
+    <>
+      <div className="mb-1 text-xs text-ink-600">
+        {achievementText(row.achievementPercent, row.isCapped, row.cap)}
+      </div>
+      <AchievementBar percent={row.achievementPercent} cap={row.cap} />
+    </>
+  );
+  // Gatekeeper chỉ có điểm khi bị trừ; trong ngưỡng là "không trừ", không phải 0 điểm
+  const score = gate
+    ? row.weightedScore < 0
+      ? <span className="text-red-700">{fmtScore(row.weightedScore)}</span>
+      : "—"
+    : actual === null
+      ? "—"
+      : fmtScore(row.weightedScore);
+  const subtitle = gate
+    ? gatekeeperRuleText(gate)
+    : row.isHigherBetter
+      ? "càng cao càng tốt"
+      : "càng thấp càng tốt";
 
   const notes = (
     <>
       {row.hasMismatch && (
         <div className="mt-1 flex items-center gap-1 text-xs font-medium text-red-600">
-          <AlertTriangle size={11} strokeWidth={2.5} /> Lệch{" "}
-          {pct(row.mismatchPercent ?? 0)} so với số hệ thống
+          <AlertTriangle size={12} strokeWidth={2.5} aria-hidden /> Lệch{" "}
+          {fmtPct(row.mismatchPercent, { signed: true })} so với số hệ thống
         </div>
       )}
       {row.selfNote && (
@@ -705,8 +985,7 @@ function RowEditor({
           <div className="min-w-0">
             <div className="font-medium text-ink-800">{row.kpiName}</div>
             <div className="text-xs text-ink-500">
-              Trọng số {row.weightPercent}% ·{" "}
-              {row.isHigherBetter ? "càng cao càng tốt" : "càng thấp càng tốt"}
+              {gate ? subtitle : `Trọng số ${fmtNum(row.weightPercent)}% · ${subtitle}`}
             </div>
           </div>
           <KpiStatusBadge status={row.status} />
@@ -715,20 +994,31 @@ function RowEditor({
         <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm tabular-nums">
           <dt className="text-ink-500">Giao</dt>
           <dd className="text-right text-ink-700">
-            {fmt(row.targetValue)} {row.unit}
+            {fmtNum(row.targetValue)} {row.unit}
           </dd>
-          <dt className="text-ink-500">Hệ thống / nhân viên khai</dt>
-          <dd className="text-right text-ink-700">
-            {fmt(row.actualSystem)} / {fmt(row.actualSelf)}
-          </dd>
+          {(showSystem || showSelf) && (
+            <>
+              <dt className="text-ink-500">
+                {showSystem && showSelf
+                  ? "Hệ thống / nhân viên khai"
+                  : showSystem
+                    ? "Hệ thống"
+                    : "Nhân viên khai"}
+              </dt>
+              <dd className="text-right text-ink-700">
+                {showSystem && showSelf
+                  ? `${fmtNum(row.actualSystem)} / ${fmtNum(row.actualSelf)}`
+                  : fmtNum(showSystem ? row.actualSystem : row.actualSelf)}
+              </dd>
+            </>
+          )}
           <dt className="text-ink-500">Số chốt · Điểm</dt>
           <dd className="text-right font-medium text-ink-900">
-            {fmt(row.actualFinal)} ·{" "}
-            {actual === null ? "—" : fmtScore(row.weightedScore)}
+            {fmtNum(row.actualFinal)} · {score}
           </dd>
         </dl>
         <div className="mt-2">{achievement}</div>
-        <div className="mt-3">{actions}</div>
+        {showActions && <div className="mt-3">{actions}</div>}
       </li>
     );
   }
@@ -738,43 +1028,52 @@ function RowEditor({
       <td>
         <div className="font-medium text-ink-800">{row.kpiName}</div>
         <div className="text-xs text-ink-500">
-          {row.isHigherBetter ? "↑ càng cao càng tốt" : "↓ càng thấp càng tốt"} ·{" "}
+          {gate ? subtitle : `${row.isHigherBetter ? "↑" : "↓"} ${subtitle}`} ·{" "}
           {row.unit} · nguồn {sourceLabel(row.dataSource)}
         </div>
         {notes}
       </td>
-      <td className="text-right text-ink-600 tabular-nums">{row.weightPercent}%</td>
+      <td
+        className="text-right text-ink-600 tabular-nums"
+        title={gate ? "Không cộng điểm — chỉ trừ khi vượt ngưỡng" : undefined}
+      >
+        {gate ? "—" : `${fmtNum(row.weightPercent)}%`}
+      </td>
       <td className="text-right whitespace-nowrap text-ink-600 tabular-nums">
-        {fmt(row.targetValue)}
+        {fmtNum(row.targetValue)}
       </td>
       <td className="text-right text-xs whitespace-nowrap tabular-nums">
-        <div className="text-ink-500" title="Số hệ thống">
-          HT <span className="text-ink-700">{fmt(row.actualSystem)}</span>
-        </div>
-        <div className="text-ink-500" title="Nhân viên tự khai">
-          NV <span className="text-ink-700">{fmt(row.actualSelf)}</span>
-        </div>
+        {showSystem && (
+          <div className="text-ink-500" title="Số hệ thống">
+            HT <span className="text-ink-700">{fmtNum(row.actualSystem)}</span>
+          </div>
+        )}
+        {showSelf && (
+          <div className="text-ink-500" title="Nhân viên tự khai">
+            NV <span className="text-ink-700">{fmtNum(row.actualSelf)}</span>
+          </div>
+        )}
         <div className="text-ink-500" title="Số chốt">
           Chốt{" "}
           <span className="text-sm font-semibold text-ink-900">
-            {fmt(row.actualFinal)}
+            {fmtNum(row.actualFinal)}
           </span>
         </div>
       </td>
       <td>{achievement}</td>
-      <td className="text-right font-semibold text-ink-900">
-        {actual === null ? "—" : fmtScore(row.weightedScore)}
-      </td>
+      <td className="text-right font-semibold text-ink-900 tabular-nums">{score}</td>
       <td>
         <KpiStatusBadge status={row.status} />
       </td>
-      <td
-        className={`sticky right-0 z-10 shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.12)] ${
-          row.hasMismatch ? "bg-red-50" : "bg-white"
-        }`}
-      >
-        {actions}
-      </td>
+      {showActions && (
+        <td
+          className={`sticky right-0 z-10 shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.12)] ${
+            row.hasMismatch ? "bg-red-50" : "bg-white"
+          }`}
+        >
+          {actions}
+        </td>
+      )}
     </tr>
   );
 }
@@ -800,11 +1099,13 @@ function ImportButton({ periodId }: { periodId: string }) {
         return;
       }
       setResult(
-        `Đã nạp ${data.rowsOk}/${data.rowsTotal} dòng.${
-          data.rowsError ? ` ${data.rowsError} dòng lỗi.` : ""
+        `Đã nạp ${fmtNum(data.rowsOk)}/${fmtNum(data.rowsTotal)} dòng.${
+          data.rowsError ? ` ${fmtNum(data.rowsError)} dòng lỗi.` : ""
         }`
       );
       router.refresh();
+    } catch {
+      setResult("Lỗi: mất kết nối tới máy chủ.");
     } finally {
       setBusy(false);
     }
@@ -838,15 +1139,6 @@ function ImportButton({ periodId }: { periodId: string }) {
 }
 
 /* ------------------------------------------------------------------ tiện ích */
-
-function pct(n: number) {
-  return `${n.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%`;
-}
-
-function fmt(n: number | null | undefined) {
-  if (n === null || n === undefined) return "—";
-  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
-}
 
 function sourceLabel(s: string) {
   return s === "IPOS_API" ? "iPOS/API" : s === "EXCEL" ? "Excel" : "nhập tay";

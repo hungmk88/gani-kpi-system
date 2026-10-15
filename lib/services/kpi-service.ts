@@ -1,16 +1,12 @@
 import { prisma } from "../db";
 import { BusinessError } from "../rbac";
-import {
-  ERR,
-  KPI_SCORE_CAP,
-  KPI_STATUS_ORDER,
-  SALES_DEPARTMENT_CODE,
-  SALES_KPI_CAP,
-  SALES_RETURN_RATE_GATEKEEPER,
-} from "../constants";
+import { ERR, KPI_SCORE_CAP, KPI_STATUS_ORDER } from "../constants";
 import {
   calculateKpiScore,
   detectMismatch,
+  gatekeeperOutcome,
+  gatekeeperRuleFor,
+  kpiCapFor,
   isManagerReviewOpen,
   isSelfReviewOpen,
   round2,
@@ -267,22 +263,196 @@ export async function managerReview(
 export async function ceoApprove(
   actor: SessionUser,
   resultIds: string[],
-  input: { ceoNote?: string } = {},
+  input: {
+    ceoNote?: string;
+    /**
+     * Khoá luôn cả kỳ khi không còn dòng nào chưa chốt — chạy TRONG cùng giao
+     * dịch với việc khoá dòng, để không có trạng thái "dòng đã khoá hết mà kỳ
+     * vẫn mở" khi lệnh thứ hai lỗi giữa chừng.
+     */
+    finalizePeriodId?: string;
+  } = {},
   meta: Meta = {}
 ) {
   const results = await prisma.kpiResult.findMany({
     where: { id: { in: resultIds } },
-    include: { employee: true, kpiDefinition: true },
+    include: { kpiDefinition: { include: { department: true } } },
   });
-
-  const finalized: string[] = [];
-  const skipped: { id: string; reason: string }[] = [];
 
   // Ô còn lệch số chưa ai chốt thì không được khoá: khoá lúc này là ngầm chọn
   // số nhân viên tự khai — đúng điều bộ đối soát cấm.
   const openMismatch = await openMismatchKeys(results.map((r) => r.periodId));
+  const plan = planCeoApproval(results, openMismatch);
+  const skipped = [...plan.skipped];
+  const ceoNote = input.ceoNote ?? null;
+  const now = new Date();
 
-  for (const r of results) {
+  // MỘT giao dịch cho cả lượt chốt, ghi theo tập (updateMany / createMany)
+  // thay vì 4–5 lệnh mỗi dòng: chốt kỳ 50 người × 8 chỉ tiêu trước đây là
+  // ~2.000 lệnh rời, đứt giữa chừng thì nửa kỳ khoá nửa kỳ không.
+  const outcome = await prisma.$transaction(
+    async (tx) => {
+      let claimedIds: string[] = [];
+      if (plan.eligible.length > 0) {
+        const ids = plan.eligible.map((e) => e.id);
+        // Khoá có điều kiện: duyệt trên web và Telegram cùng lúc thì chỉ một
+        // lượt thắng (Postgres khoá dòng, lượt sau thấy status đã đổi).
+        const res = await tx.kpiResult.updateMany({
+          where: { id: { in: ids }, status: "MANAGER_REVIEWED" },
+          data: { status: "FINALIZED", ceoNote, finalizedAt: now },
+        });
+        if (res.count === ids.length) {
+          claimedIds = ids;
+        } else {
+          // Có dòng vừa bị lượt khác chốt — dòng của lượt này mang đúng mốc
+          // finalizedAt vừa ghi.
+          const mine = await tx.kpiResult.findMany({
+            where: { id: { in: ids }, status: "FINALIZED", finalizedAt: now },
+            select: { id: true },
+          });
+          claimedIds = mine.map((m) => m.id);
+        }
+      }
+      const claimedSet = new Set(claimedIds);
+      const claimed = plan.eligible.filter((e) => claimedSet.has(e.id));
+      for (const e of plan.eligible) {
+        if (!claimedSet.has(e.id)) {
+          skipped.push({ id: e.id, reason: "Đã được chốt ở lượt khác" });
+        }
+      }
+
+      // Số chốt còn trống: gom theo giá trị, mỗi giá trị một lệnh. Thường
+      // không có dòng nào (trưởng phòng / cron ngày 4 đã điền số chốt).
+      const fills = new Map<number, string[]>();
+      for (const e of claimed) {
+        if (e.fillActualFinal === null) continue;
+        fills.set(e.fillActualFinal, [...(fills.get(e.fillActualFinal) ?? []), e.id]);
+      }
+      for (const [value, ids] of fills) {
+        await tx.kpiResult.updateMany({
+          where: { id: { in: ids } },
+          data: { actualFinal: value },
+        });
+      }
+      // Điểm dẫn xuất lệch với dữ liệu (chưa kịp tự chữa) thì ghi đúng trước
+      // khi khoá — mỗi dòng một bộ số riêng, nên ghi từng dòng; thường là 0.
+      for (const e of claimed) {
+        if (!e.derivedChanged) continue;
+        await tx.kpiResult.update({ where: { id: e.id }, data: e.derived });
+      }
+
+      if (claimed.length > 0) {
+        await tx.kpiReview.createMany({
+          data: claimed.map((e) => ({
+            kpiResultId: e.id,
+            reviewerId: actor.id,
+            stage: "CEO",
+            action: "APPROVE",
+            valueBefore: e.before.actualFinal,
+            valueAfter: e.actualFinal,
+            scoreBefore: e.before.weightedScore,
+            scoreAfter: e.derived.weightedScore,
+            reason: ceoNote,
+          })),
+        });
+        // Nhật ký ghi TRONG giao dịch: khoá mà không có dấu vết thì thà không khoá
+        await tx.auditLog.createMany({
+          data: claimed.map((e) =>
+            auditRow(actor, meta, {
+              action: "KPI_CEO_APPROVE_LOCK",
+              entityName: "kpi_results",
+              entityId: e.id,
+              before: { status: e.before.status, weightedScore: e.before.weightedScore },
+              after: { status: "FINALIZED", weightedScore: e.derived.weightedScore },
+              reason: ceoNote,
+            })
+          ),
+        });
+      }
+
+      let periodFinalized = false;
+      if (input.finalizePeriodId) {
+        const remaining = await tx.kpiResult.count({
+          where: { periodId: input.finalizePeriodId, status: { not: "FINALIZED" } },
+        });
+        if (remaining === 0) {
+          const p = await tx.kpiPeriod.updateMany({
+            where: { id: input.finalizePeriodId, status: { not: "FINALIZED" } },
+            data: { status: "FINALIZED", isLocked: true, finalizedAt: now },
+          });
+          if (p.count === 1) {
+            periodFinalized = true;
+            await tx.auditLog.create({
+              data: auditRow(actor, meta, {
+                action: "KPI_PERIOD_FINALIZE",
+                entityName: "kpi_periods",
+                entityId: input.finalizePeriodId,
+                after: { status: "FINALIZED" },
+              }),
+            });
+          }
+        }
+      }
+
+      return { claimed, periodFinalized };
+    },
+    // Kỳ đông người + vài dòng phải tính lại: nới hạn mặc định 5 giây
+    { timeout: 30_000, maxWait: 10_000 }
+  );
+
+  // Báo cho từng nhân viên có KPI vừa được chốt — SAU giao dịch: tin nhắn đã
+  // gửi thì không rút lại được nếu giao dịch phải huỷ.
+  const employees = [...new Set(outcome.claimed.map((e) => e.employeeId))];
+  for (const empId of employees) {
+    await notify({
+      userId: empId,
+      title: "KPI của bạn đã được Ban Giám đốc chốt",
+      body: "Điểm KPI kỳ này đã khoá. Bạn có thể xem phiếu KPI trong hệ thống.",
+      level: "INFO",
+      linkUrl: "/kpi",
+    });
+  }
+
+  return {
+    finalized: outcome.claimed.length,
+    skipped,
+    periodFinalized: outcome.periodFinalized,
+  };
+}
+
+type ApprovalRow = Parameters<typeof computeDerivedFields>[0] & {
+  id: string;
+  periodId: string;
+  employeeId: string;
+  kpiDefinitionId: string | null;
+  status: string;
+  achievementPercent: number;
+  weightedScore: number;
+  isCapped: boolean;
+  hasMismatch: boolean;
+  mismatchPercent: number | null;
+};
+
+/**
+ * Phần THUẦN của bước chốt: dòng nào được khoá, số chốt là gì, điểm sau khoá
+ * bao nhiêu, dòng nào bị bỏ qua vì sao. Tách ra để test không cần database.
+ */
+export function planCeoApproval(rows: ApprovalRow[], openMismatch: Set<string>) {
+  const skipped: { id: string; reason: string }[] = [];
+  const eligible: {
+    id: string;
+    employeeId: string;
+    /** Số chốt sau khi khoá */
+    actualFinal: number | null;
+    /** Khác null = số chốt đang trống, phải ghi giá trị này */
+    fillActualFinal: number | null;
+    derived: ReturnType<typeof computeDerivedFields>;
+    /** Điểm dẫn xuất đang lưu lệch so với dữ liệu → phải ghi lại */
+    derivedChanged: boolean;
+    before: { actualFinal: number | null; weightedScore: number; status: string };
+  }[] = [];
+
+  for (const r of rows) {
     if (r.status === "FINALIZED") continue;
     // Đúng thứ tự 3 cấp: chỉ chốt dòng đã qua trưởng phòng (duyệt tay hoặc
     // tự khoá ngày 4). Dòng còn ở bước nhân viên thì bỏ qua và báo lại.
@@ -302,67 +472,52 @@ export async function ceoApprove(
     // nào thì để TRỐNG (chấm 0 điểm) — tuyệt đối không quy về 0, vì với chỉ
     // tiêu "càng thấp càng tốt" số 0 là điểm tối đa.
     const actualFinal = r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null;
+    const derived = computeDerivedFields({ ...r, actualFinal });
+    const derivedChanged =
+      r.achievementPercent !== derived.achievementPercent ||
+      r.weightedScore !== derived.weightedScore ||
+      r.isCapped !== derived.isCapped ||
+      r.hasMismatch !== derived.hasMismatch ||
+      r.mismatchPercent !== derived.mismatchPercent;
 
-    // Khoá có điều kiện: duyệt trên web và Telegram cùng lúc thì chỉ một lượt thắng
-    const claimed = await prisma.kpiResult.updateMany({
-      where: { id: r.id, status: "MANAGER_REVIEWED" },
-      data: {
-        actualFinal,
-        ceoNote: input.ceoNote ?? null,
-        status: "FINALIZED",
-        finalizedAt: new Date(),
-      },
-    });
-    if (claimed.count !== 1) {
-      skipped.push({ id: r.id, reason: "Đã được chốt ở lượt khác" });
-      continue;
-    }
-    const updated = await recalcResult(r.id);
-
-    await prisma.kpiReview.create({
-      data: {
-        kpiResultId: r.id,
-        reviewerId: actor.id,
-        stage: "CEO",
-        action: "APPROVE",
-        valueBefore: r.actualFinal,
-        valueAfter: actualFinal,
-        scoreBefore: r.weightedScore,
-        scoreAfter: updated.weightedScore,
-        reason: input.ceoNote ?? null,
-      },
-    });
-
-    await writeAudit({
-      actor,
-      action: "KPI_CEO_APPROVE_LOCK",
-      entityName: "kpi_results",
-      entityId: r.id,
-      before: { status: r.status, weightedScore: r.weightedScore },
-      after: { status: "FINALIZED", weightedScore: updated.weightedScore },
-      reason: input.ceoNote ?? null,
-      ...meta,
-    });
-
-    finalized.push(r.id);
-  }
-
-  // Báo cho từng nhân viên có KPI vừa được chốt
-  const finalizedSet = new Set(finalized);
-  const employees = [
-    ...new Set(results.filter((r) => finalizedSet.has(r.id)).map((r) => r.employeeId)),
-  ];
-  for (const empId of employees) {
-    await notify({
-      userId: empId,
-      title: "KPI của bạn đã được Ban Giám đốc chốt",
-      body: "Điểm KPI kỳ này đã khoá. Bạn có thể xem phiếu KPI trong hệ thống.",
-      level: "INFO",
-      linkUrl: "/kpi",
+    eligible.push({
+      id: r.id,
+      employeeId: r.employeeId,
+      actualFinal,
+      fillActualFinal: r.actualFinal === null ? actualFinal : null,
+      derived,
+      derivedChanged,
+      before: { actualFinal: r.actualFinal, weightedScore: r.weightedScore, status: r.status },
     });
   }
+  return { eligible, skipped };
+}
 
-  return { finalized: finalized.length, skipped };
+/** Một dòng audit_logs đúng định dạng writeAudit — để ghi hàng loạt trong giao dịch. */
+function auditRow(
+  actor: SessionUser,
+  meta: Meta,
+  e: {
+    action: string;
+    entityName: string;
+    entityId: string;
+    before?: unknown;
+    after?: unknown;
+    reason?: string | null;
+  }
+) {
+  return {
+    userId: actor.id,
+    userEmail: actor.email ?? null,
+    action: e.action,
+    entityName: e.entityName,
+    entityId: e.entityId,
+    beforePayload: e.before ? JSON.stringify(e.before) : null,
+    afterPayload: e.after ? JSON.stringify(e.after) : null,
+    reason: e.reason ?? null,
+    ipAddress: meta.ip ?? null,
+    userAgent: meta.userAgent ?? null,
+  };
 }
 
 /**
@@ -518,10 +673,7 @@ function computeDerivedFields(r: {
   } | null;
 }) {
   const effective = r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null;
-  const cap =
-    r.kpiDefinition?.department?.code === SALES_DEPARTMENT_CODE
-      ? SALES_KPI_CAP
-      : undefined;
+  const cap = kpiCapFor(r.kpiDefinition?.department?.code);
 
   let calc = r.kpiDefinition
     ? calculateKpiScore({
@@ -538,15 +690,17 @@ function computeDerivedFields(r: {
         rawAchievementPercent: 0,
       };
 
-  if (
-    r.kpiDefinition?.code === SALES_RETURN_RATE_GATEKEEPER.KPI_CODE &&
-    effective !== null &&
-    effective !== undefined &&
-    effective > SALES_RETURN_RATE_GATEKEEPER.THRESHOLD_PERCENT
-  ) {
+  const gate = gatekeeperRuleFor(r.kpiDefinition?.code);
+  if (gate) {
+    // Gatekeeper không có "mức đạt": không bao giờ "chạm trần" (trước đây số
+    // trả hàng 0% tính ra chạm trần → giao diện ghi "0,00 điểm · chạm trần").
     calc = {
       ...calc,
-      weightedScore: -SALES_RETURN_RATE_GATEKEEPER.PENALTY_POINTS,
+      isCapped: false,
+      weightedScore:
+        gatekeeperOutcome(gate, effective) === "FAIL"
+          ? -gate.penaltyPoints
+          : calc.weightedScore,
     };
   }
 

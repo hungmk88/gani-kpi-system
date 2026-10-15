@@ -4,11 +4,11 @@ import { ERR } from "@/lib/constants";
 import type { SessionUser } from "@/lib/auth";
 import {
   BONUS_TIERS,
-  SHIFT_STATUSES,
   SHIFT_TYPES,
   type ShiftStatus,
 } from "@/lib/production/constants";
 import { computeShiftMetrics } from "@/lib/production/kpi-engine";
+import { SHIFT_STAGES, shiftStage, type ShiftStage } from "@/lib/production/shift-flow";
 import {
   addDays,
   vnDateKey,
@@ -143,6 +143,8 @@ export async function getDashboardSummary(periodInput: DashboardPeriod | string)
     select: {
       id: true,
       status: true,
+      // Đọc dấu "KCS trả về" (ca vẫn DRAFT) để đếm riêng — xem shift-flow.ts
+      qcNote: true,
       shiftDate: true,
       shiftType: true,
       sku: { select: { skuCode: true, skuName: true } },
@@ -157,9 +159,12 @@ export async function getDashboardSummary(periodInput: DashboardPeriod | string)
     },
   });
 
+  // Đếm theo chặng: DRAFT = chờ KCS thật sự, RETURNED = KCS trả về đang chờ
+  // sản xuất sửa (trong DB vẫn là DRAFT). DRAFT + RETURNED + QC_APPROVED +
+  // LOCKED = mọi ca trong kỳ.
   const statusCounts = Object.fromEntries(
-    SHIFT_STATUSES.map((st) => [st, shifts.filter((s) => s.status === st).length])
-  ) as Record<ShiftStatus, number>;
+    SHIFT_STAGES.map((st) => [st, shifts.filter((s) => shiftStage(s) === st).length])
+  ) as Record<ShiftStage, number>;
 
   const locked = shifts.filter((s) => s.status === LOCKED);
   const results = locked.flatMap((s) => s.kpiResults);

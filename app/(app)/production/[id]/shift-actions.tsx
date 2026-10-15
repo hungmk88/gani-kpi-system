@@ -2,13 +2,33 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Lock, LockOpen, Check, CircleCheck, ShieldAlert } from "lucide-react";
+import Link from "next/link";
+import {
+  Lock,
+  LockOpen,
+  Check,
+  CircleCheck,
+  Pencil,
+  ShieldAlert,
+  Undo2,
+} from "lucide-react";
 import { STAGE_LABEL } from "@/lib/production/constants";
+import {
+  MASS_GAP_MIN_REASON,
+  MASS_GAP_REASON_KG,
+  SHIFT_RETURN_MIN_REASON,
+  massGapKg,
+  needsMassGapReason,
+} from "@/lib/production/shift-flow";
+import { fmtKg, fmtNum, fmtPct, fmtVnd } from "@/lib/format";
 import {
   computeQualityLoss,
   computeStdMaterialNorm,
 } from "@/lib/production/kpi-engine";
 import ConfirmDialog from "@/components/confirm-dialog";
+import StickyActions from "@/components/sticky-actions";
+import VnNumberInput from "@/components/vn-number-input";
+import { toast } from "@/components/toast";
 
 type Shift = {
   id: string;
@@ -29,6 +49,8 @@ type Shift = {
   qcOverridden: boolean;
   /** Đơn giá quy đổi — chỉ có khi người xem được xem tiền, còn lại null */
   unitPriceVnd: number | null;
+  /** KCS đã trả ca về sản xuất sửa (ca vẫn DRAFT) — người trả + lý do */
+  returned: { by: string; reason: string } | null;
 };
 
 type Participant = {
@@ -39,16 +61,7 @@ type Participant = {
   violationCount: number;
 };
 
-/** Lệch cân đối quá ngưỡng này thì hệ thống bắt bất thường — phải xác nhận */
-const BIG_GAP_KG = 5;
 const OVERRIDE_MIN_REASON = 10;
-
-/** 374,5 kg — số kiểu Việt Nam, tối đa 2 chữ số thập phân */
-const fmtNum = (n: number) =>
-  new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
-const fmtKg = (n: number) => fmtNum(n) + " kg";
-const fmtVnd = (n: number) =>
-  new Intl.NumberFormat("vi-VN").format(Math.round(n)) + " ₫";
 
 export default function ShiftActions({
   shift,
@@ -118,7 +131,32 @@ export default function ShiftActions({
         </div>
       )}
 
+      {/* Ca bị KCS trả về: việc nằm ở phía người khai, không ai xác nhận
+          được cho tới khi gửi lại. */}
       {shift.status === "DRAFT" &&
+        shift.returned &&
+        (isCreator ? (
+          <div className="space-y-3">
+            <p className="text-sm text-ink-700">
+              KCS đã trả ca này về cho bạn sửa. Sửa số liệu theo lý do ở trên rồi
+              gửi lại — ca sẽ quay về chờ KCS xác nhận.
+            </p>
+            <Link
+              href={`/production/${shift.id}/edit`}
+              className="btn-primary inline-flex w-full items-center justify-center gap-1.5"
+            >
+              <Pencil size={15} strokeWidth={2} aria-hidden /> Sửa và gửi lại KCS
+            </Link>
+          </div>
+        ) : (
+          <div className="text-sm text-ink-500">
+            Ca đã được trả về cho người khai sửa. Khi họ gửi lại, ca quay về chờ
+            KCS xác nhận.
+          </div>
+        ))}
+
+      {shift.status === "DRAFT" &&
+        !shift.returned &&
         (isCreator && (isQcOfficer || isCeo) ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             Bạn là người khai ca này nên không được tự xác nhận phẩm chất. Phải
@@ -129,6 +167,7 @@ export default function ShiftActions({
             shift={shift}
             participants={participants}
             busy={busy}
+            error={error}
             onCall={call}
           />
         ) : isCeo ? (
@@ -136,6 +175,7 @@ export default function ShiftActions({
             shift={shift}
             participants={participants}
             busy={busy}
+            error={error}
             onCall={call}
             prefix={ceoQcOverridePrefix}
           />
@@ -156,8 +196,9 @@ export default function ShiftActions({
             onCall={async (p) => {
               const d = await call(p);
               if (d) {
+                toast("Đã khoá số và chấm điểm ca.");
                 setMessage(
-                  `Đã khoá số. Điểm toàn xưởng ${d.tier2Score}, chấm cho ${d.scored} người.` +
+                  `Đã khoá số. Điểm toàn xưởng ${fmtNum(d.tier2Score)}, chấm cho ${fmtNum(d.scored)} người.` +
                     (d.findings?.length
                       ? ` Phát hiện ${d.findings.length} cảnh báo — thưởng đang tạm khoá.`
                       : "")
@@ -197,78 +238,97 @@ function QcForm({
   shift,
   participants,
   busy,
+  error,
   onCall,
   override,
 }: {
   shift: Shift;
   participants: Participant[];
   busy: boolean;
+  error: string | null;
   onCall: (p: unknown) => Promise<unknown>;
   /** BGĐ vượt quyền KCS: bắt buộc lý do, lý do thành dòng đầu của qcNote */
   override?: { prefix: string };
 }) {
-  const [qcPassedKg, setQcPassedKg] = useState("");
-  const [reworkKg, setReworkKg] = useState("0");
-  const [scrapKg, setScrapKg] = useState("0");
-  const [haccp, setHaccp] = useState("0");
+  const [qcPassedKg, setQcPassedKg] = useState<number | null>(null);
+  const [reworkKg, setReworkKg] = useState<number | null>(0);
+  const [scrapKg, setScrapKg] = useState<number | null>(0);
+  const [haccp, setHaccp] = useState<number | null>(0);
+  // Ô nào đang gõ sai (chữ, số âm) — chặn gửi thay vì lặng lẽ coi là 0
+  const [invalid, setInvalid] = useState<Record<string, boolean>>({});
   const [qcNote, setQcNote] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
+  const [gapReason, setGapReason] = useState("");
+  const [returnOpen, setReturnOpen] = useState(false);
   // Ô lỗi cá nhân để trống (placeholder "0") — trước đây điền sẵn "0" nên
   // placeholder không bao giờ hiện và người nhập không biết ô nào là ô nào.
-  const [defects, setDefects] = useState<Record<string, { d: string; v: string }>>(
-    Object.fromEntries(participants.map((p) => [p.userId, { d: "", v: "" }]))
-  );
-  // Lưu đúng con số lệch đã được xác nhận — sửa số khác thì phải xác nhận lại
-  const [ackedDiff, setAckedDiff] = useState<number | null>(null);
+  const [defects, setDefects] = useState<
+    Record<string, { d: number | null; v: number | null }>
+  >(Object.fromEntries(participants.map((p) => [p.userId, { d: null, v: null }])));
 
-  const accounted =
-    (Number(qcPassedKg) || 0) + (Number(reworkKg) || 0) + (Number(scrapKg) || 0);
-  const diff = Math.round((shift.rawOutputKg - accounted) * 100) / 100;
-  // Chỉ cảnh báo lệch khi đã gõ số đạt — form còn trống mà báo đỏ "lệch N kg"
-  // là doạ người dùng vô cớ.
-  const entered = qcPassedKg.trim() !== "";
-  const bigGap = entered && Math.abs(diff) > BIG_GAP_KG;
-  const gapAcked = !bigGap || ackedDiff === diff;
+  const mark = (key: string) => (bad: boolean) =>
+    setInvalid((m) => (m[key] === bad ? m : { ...m, [key]: bad }));
+  const anyInvalid = Object.values(invalid).some(Boolean);
+
+  // Chỉ tính và báo lệch khi đã gõ số Đạt QC — form còn trống mà báo đỏ
+  // "lệch N kg" là doạ người dùng vô cớ.
+  const entered = qcPassedKg !== null;
+  const parts = {
+    qcPassedKg: qcPassedKg ?? 0,
+    reworkKg: reworkKg ?? 0,
+    scrapKg: scrapKg ?? 0,
+  };
+  const accounted = parts.qcPassedKg + parts.reworkKg + parts.scrapKg;
+  const diff = massGapKg(shift.rawOutputKg, parts);
+  const bigGap = entered && needsMassGapReason(diff);
+  // Lệch lớn: ghi lý do (máy chủ cũng chặn) — thay ô tick "tôi xác nhận" cũ
+  // vốn không để lại dấu vết gì.
+  const gapReasonLen = gapReason.replace(/\s+/g, " ").trim().length;
+  const gapOk = !bigGap || gapReasonLen >= MASS_GAP_MIN_REASON;
 
   const reasonLen = overrideReason.trim().length;
   const reasonOk = !override || reasonLen >= OVERRIDE_MIN_REASON;
 
-  const canSubmit = !busy && entered && gapAcked && reasonOk;
+  const canSubmit = !busy && entered && !anyInvalid && gapOk && reasonOk;
   const blockedHint = !entered
     ? "Nhập số kg Đạt QC để bật nút xác nhận."
-    : !gapAcked
-      ? `Tick ô xác nhận số lệch ${fmtKg(diff)} ở trên để bật nút.`
-      : !reasonOk
-        ? `Ghi lý do vượt quyền — còn thiếu ${OVERRIDE_MIN_REASON - reasonLen} ký tự.`
-        : null;
+    : anyInvalid
+      ? "Có ô số chưa hợp lệ (đang tô đỏ) — sửa lại để bật nút."
+      : !gapOk
+        ? `Ghi lý do lệch ${fmtKg(Math.abs(diff), { unit: "kg" })} — còn thiếu ${MASS_GAP_MIN_REASON - gapReasonLen} ký tự.`
+        : !reasonOk
+          ? `Ghi lý do vượt quyền — còn thiếu ${OVERRIDE_MIN_REASON - reasonLen} ký tự.`
+          : null;
 
-  function setDefect(userId: string, key: "d" | "v", value: string) {
-    setDefects({
-      ...defects,
-      [userId]: { ...(defects[userId] ?? { d: "", v: "" }), [key]: value },
-    });
+  function setDefect(userId: string, key: "d" | "v", value: number | null) {
+    setDefects((cur) => ({
+      ...cur,
+      [userId]: { ...(cur[userId] ?? { d: null, v: null }), [key]: value },
+    }));
   }
 
-  function submit() {
+  async function submit() {
     const note = qcNote.trim();
     // Vượt quyền: lý do gửi ở trường riêng; máy chủ tự ghép vào dòng đầu ghi
     // chú KCS ("[BGĐ vượt quyền KCS] <lý do>") và ghi vào nhật ký.
-    return onCall({
+    const d = await onCall({
       action: "QC_APPROVE",
-      qcPassedKg: Number(qcPassedKg),
-      reworkKg: Number(reworkKg) || 0,
-      scrapKg: Number(scrapKg) || 0,
-      haccpViolationCount: Number(haccp) || 0,
+      qcPassedKg: parts.qcPassedKg,
+      reworkKg: parts.reworkKg,
+      scrapKg: parts.scrapKg,
+      haccpViolationCount: haccp ?? 0,
       qcNote: note || undefined,
       ceoOverrideReason: override
         ? overrideReason.replace(/\s+/g, " ").trim()
         : undefined,
+      massBalanceReason: bigGap ? gapReason.replace(/\s+/g, " ").trim() : undefined,
       participantDefects: participants.map((p) => ({
         userId: p.userId,
-        personalDefectKg: Number(defects[p.userId]?.d) || 0,
-        violationCount: Number(defects[p.userId]?.v) || 0,
+        personalDefectKg: defects[p.userId]?.d ?? 0,
+        violationCount: defects[p.userId]?.v ?? 0,
       })),
     });
+    if (d) toast("Đã xác nhận KCS — ca chuyển Ban Giám đốc khoá số.");
   }
 
   return (
@@ -293,48 +353,69 @@ function QcForm({
       )}
 
       <p className="text-xs text-ink-500">
-        Sản xuất khai sản lượng thô <b>{fmtKg(shift.rawOutputKg)}</b>. Phân loại cho
-        đủ số đó.
+        Sản xuất khai sản lượng thô{" "}
+        <b>{fmtKg(shift.rawOutputKg, { unit: "kg" })}</b>. Phân loại cho đủ số đó.
       </p>
 
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="label">Đạt QC (kg)</label>
-          <input
-            type="number"
-            step="any"
-            className="input"
+          <label className="label" htmlFor="qc-passed">
+            Đạt QC (kg)
+          </label>
+          <VnNumberInput
+            id="qc-passed"
+            min={0}
             value={qcPassedKg}
-            onChange={(e) => setQcPassedKg(e.target.value)}
+            placeholder="vd 1.000"
+            onValue={(n, bad) => {
+              setQcPassedKg(n);
+              mark("passed")(bad);
+            }}
           />
         </div>
         <div>
-          <label className="label">Làm lại (kg)</label>
-          <input
-            type="number"
-            step="any"
-            className="input"
+          <label className="label" htmlFor="qc-rework">
+            Làm lại (kg)
+          </label>
+          <VnNumberInput
+            id="qc-rework"
+            min={0}
             value={reworkKg}
-            onChange={(e) => setReworkKg(e.target.value)}
+            placeholder="0"
+            onValue={(n, bad) => {
+              setReworkKg(n);
+              mark("rework")(bad);
+            }}
           />
         </div>
         <div>
-          <label className="label">Phế phẩm (kg)</label>
-          <input
-            type="number"
-            step="any"
-            className="input"
+          <label className="label" htmlFor="qc-scrap">
+            Phế phẩm (kg)
+          </label>
+          <VnNumberInput
+            id="qc-scrap"
+            min={0}
             value={scrapKg}
-            onChange={(e) => setScrapKg(e.target.value)}
+            placeholder="0"
+            onValue={(n, bad) => {
+              setScrapKg(n);
+              mark("scrap")(bad);
+            }}
           />
         </div>
         <div>
-          <label className="label">Vi phạm HACCP</label>
-          <input
-            type="number"
-            className="input"
+          <label className="label" htmlFor="qc-haccp">
+            Vi phạm HACCP (vụ)
+          </label>
+          <VnNumberInput
+            id="qc-haccp"
+            min={0}
             value={haccp}
-            onChange={(e) => setHaccp(e.target.value)}
+            placeholder="0"
+            onValue={(n, bad) => {
+              setHaccp(n === null ? null : Math.round(n));
+              mark("haccp")(bad);
+            }}
           />
         </div>
       </div>
@@ -343,23 +424,35 @@ function QcForm({
         <div
           className={`rounded-md px-3 py-2 text-xs tabular-nums ${
             bigGap
-              ? "border border-red-200 bg-red-50 text-red-800"
+              ? "border border-amber-200 bg-amber-50 text-amber-900"
               : "bg-ink-50 text-ink-600"
           }`}
+          aria-live="polite"
         >
-          Tổng phân loại {fmtKg(accounted)} · lệch {fmtKg(diff)} so với sản lượng thô
-          {bigGap &&
-            ` — lệch quá ${BIG_GAP_KG} kg sẽ bị hệ thống bắt là bất thường cân đối.`}
+          Tổng phân loại {fmtKg(accounted, { unit: "kg" })} ·{" "}
+          {diff === 0
+            ? "khớp sản lượng thô"
+            : `${diff > 0 ? "thiếu" : "thừa"} ${fmtKg(Math.abs(diff), { unit: "kg" })} so với sản lượng thô`}
           {bigGap && (
-            <label className="mt-2 flex items-start gap-2 font-medium">
+            <>
+              {" "}
+              — lệch quá {MASS_GAP_REASON_KG} kg, hệ thống sẽ bắt là bất thường
+              cân đối khi khoá số.
+              <label className="mt-2 block font-medium" htmlFor="qc-gap-reason">
+                Lý do lệch (bắt buộc)
+              </label>
               <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={ackedDiff === diff}
-                onChange={(e) => setAckedDiff(e.target.checked ? diff : null)}
+                id="qc-gap-reason"
+                className="input mt-1"
+                placeholder="Ví dụ: cân sót lô 2, hàng rơi vãi khi chuyển kho lạnh"
+                value={gapReason}
+                onChange={(e) => setGapReason(e.target.value)}
               />
-              Tôi xác nhận số lệch này là đúng
-            </label>
+              <div className="mt-1 font-normal text-amber-800">
+                {gapReasonLen}/{MASS_GAP_MIN_REASON} ký tự tối thiểu · ghi vào ghi
+                chú KCS và nhật ký
+              </div>
+            </>
           )}
         </div>
       )}
@@ -370,50 +463,72 @@ function QcForm({
         </summary>
         <p className="mt-2 mb-2 text-xs text-ink-500">
           Đây là thứ duy nhất phân biệt được người làm tốt và người làm ẩu trong
-          cùng một ca. Bỏ trống thì cả ca chấm như nhau.
+          cùng một ca. Bỏ trống là không lỗi — cả ca chấm như nhau.
         </p>
-        <div className="mb-1 grid grid-cols-[1.6fr_1fr_1fr] gap-2 text-xs font-medium text-ink-500">
-          <div>Người · công đoạn</div>
-          <div>Lỗi cá nhân (kg)</div>
-          <div>Vi phạm</div>
-        </div>
-        <div className="space-y-2">
-          {participants.map((p) => (
-            <div
-              key={p.userId}
-              className="grid grid-cols-[1.6fr_1fr_1fr] items-center gap-2"
-            >
-              <div className="min-w-0 text-xs">
-                <div className="truncate font-medium text-ink-800">{p.name}</div>
-                <div className="text-ink-500">
-                  {STAGE_LABEL[p.stage] ?? p.stage}
-                </div>
-              </div>
-              <input
-                type="number"
-                step="any"
-                className="input py-1 text-xs"
-                placeholder="0"
-                aria-label={`Lỗi cá nhân (kg) — ${p.name}`}
-                value={defects[p.userId]?.d ?? ""}
-                onChange={(e) => setDefect(p.userId, "d", e.target.value)}
-              />
-              <input
-                type="number"
-                className="input py-1 text-xs"
-                placeholder="0"
-                aria-label={`Vi phạm — ${p.name}`}
-                value={defects[p.userId]?.v ?? ""}
-                onChange={(e) => setDefect(p.userId, "v", e.target.value)}
-              />
-            </div>
-          ))}
-        </div>
+        <table className="w-full table-fixed border-separate border-spacing-x-0 border-spacing-y-1.5 text-xs">
+          <colgroup>
+            <col className="w-[44%]" />
+            <col className="w-[30%]" />
+            <col className="w-[26%]" />
+          </colgroup>
+          <thead>
+            <tr className="text-left text-ink-500">
+              <th scope="col" className="pb-0.5 font-medium">
+                Người · công đoạn
+              </th>
+              <th scope="col" className="px-1 pb-0.5 font-medium">
+                Lỗi công đoạn (kg)
+              </th>
+              <th scope="col" className="pb-0.5 font-medium">
+                Vi phạm nội quy (lần)
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {participants.map((p) => (
+              <tr key={p.userId}>
+                <th scope="row" className="pr-2 text-left font-normal">
+                  <div className="truncate font-medium text-ink-800">{p.name}</div>
+                  <div className="text-ink-500">{STAGE_LABEL[p.stage] ?? p.stage}</div>
+                </th>
+                <td className="px-1">
+                  <VnNumberInput
+                    className="input py-1 text-xs"
+                    min={0}
+                    placeholder="0"
+                    aria-label={`Lỗi công đoạn (kg) — ${p.name}`}
+                    value={defects[p.userId]?.d ?? null}
+                    onValue={(n, bad) => {
+                      setDefect(p.userId, "d", n);
+                      mark(`d:${p.userId}`)(bad);
+                    }}
+                  />
+                </td>
+                <td>
+                  <VnNumberInput
+                    className="input py-1 text-xs"
+                    min={0}
+                            placeholder="0"
+                    aria-label={`Vi phạm nội quy (lần) — ${p.name}`}
+                    value={defects[p.userId]?.v ?? null}
+                    onValue={(n, bad) => {
+                      setDefect(p.userId, "v", n === null ? null : Math.round(n));
+                      mark(`v:${p.userId}`)(bad);
+                    }}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </details>
 
       <div>
-        <label className="label">Ghi chú của KCS</label>
+        <label className="label" htmlFor="qc-note">
+          Ghi chú của KCS
+        </label>
         <input
+          id="qc-note"
           className="input"
           value={qcNote}
           onChange={(e) => setQcNote(e.target.value)}
@@ -421,27 +536,65 @@ function QcForm({
         />
       </div>
 
-      <button
-        className={`${override ? "btn-danger" : "btn-primary"} inline-flex w-full items-center justify-center gap-1.5`}
-        disabled={!canSubmit}
-        onClick={submit}
-      >
-        {busy ? (
-          "Đang lưu..."
-        ) : override ? (
-          <>
-            <ShieldAlert size={15} strokeWidth={2} /> Vượt quyền KCS & chuyển
-            khoá số
-          </>
-        ) : (
-          <>
-            <Check size={15} strokeWidth={2.5} /> Xác nhận & chuyển Ban Giám đốc
-          </>
-        )}
-      </button>
       {blockedHint && !busy && (
         <p className="text-xs text-ink-500">{blockedHint}</p>
       )}
+
+      <StickyActions>
+        {/* Số khai sai từ gốc (thô, người, mã) thì KCS không nên "xác nhận
+            cho qua" — trả về để người khai sửa, có ghi lý do. */}
+        <button
+          className="btn-ghost inline-flex items-center justify-center gap-1.5"
+          disabled={busy}
+          onClick={() => setReturnOpen(true)}
+        >
+          <Undo2 size={15} strokeWidth={2} aria-hidden /> Trả về sản xuất
+        </button>
+        <button
+          className={`${override ? "btn-danger" : "btn-primary"} inline-flex items-center justify-center gap-1.5`}
+          disabled={!canSubmit}
+          onClick={submit}
+        >
+          {busy ? (
+            "Đang lưu..."
+          ) : override ? (
+            <>
+              <ShieldAlert size={15} strokeWidth={2} /> Vượt quyền KCS & chuyển
+              khoá số
+            </>
+          ) : (
+            <>
+              <Check size={15} strokeWidth={2.5} /> Xác nhận & chuyển BGĐ
+            </>
+          )}
+        </button>
+      </StickyActions>
+
+      <ConfirmDialog
+        open={returnOpen}
+        title="Trả ca về sản xuất để sửa?"
+        confirmLabel="Trả về sản xuất"
+        reason={{
+          label: "Cần sửa gì",
+          placeholder: "Ví dụ: sản lượng thô khai 1.030 kg nhưng phiếu cân ghi 1.300 kg",
+          minLength: SHIFT_RETURN_MIN_REASON,
+        }}
+        busy={busy}
+        error={returnOpen ? error : null}
+        onClose={() => setReturnOpen(false)}
+        onConfirm={async (reason) => {
+          const d = await onCall({ action: "RETURN", reason });
+          if (d) {
+            setReturnOpen(false);
+            toast("Đã trả ca về sản xuất — người khai nhận thông báo.");
+          }
+        }}
+      >
+        <p>
+          Ca quay lại người khai để sửa số liệu (sản lượng thô, người làm ca, mã
+          sản phẩm…) rồi gửi lại. Số KCS bạn đang nhập ở form sẽ không được lưu.
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }
@@ -452,12 +605,14 @@ function CeoQcOverride({
   shift,
   participants,
   busy,
+  error,
   onCall,
   prefix,
 }: {
   shift: Shift;
   participants: Participant[];
   busy: boolean;
+  error: string | null;
   onCall: (p: unknown) => Promise<unknown>;
   prefix: string;
 }) {
@@ -482,6 +637,7 @@ function CeoQcOverride({
             shift={shift}
             participants={participants}
             busy={busy}
+            error={error}
             onCall={onCall}
             override={{ prefix }}
           />
@@ -523,20 +679,22 @@ function CeoLockForm({
   error: string | null;
   onCall: (p: unknown) => Promise<unknown>;
 }) {
-  const [target, setTarget] = useState(String(shift.skuStandardTargetKg));
-  const [nvl, setNvl] = useState(String(shift.rawMaterialInputKg));
+  const [target, setTarget] = useState<number | null>(shift.skuStandardTargetKg);
+  const [nvl, setNvl] = useState<number | null>(shift.rawMaterialInputKg);
+  const [badInput, setBadInput] = useState({ target: false, nvl: false });
   const [targetReason, setTargetReason] = useState("");
   const [nvlReason, setNvlReason] = useState("");
   const [ceoNote, setCeoNote] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const targetChanged =
-    Math.abs(Number(target) - shift.skuStandardTargetKg) > 0.01;
-  const nvlChanged = Math.abs(Number(nvl) - shift.rawMaterialInputKg) > 0.01;
+  const targetKg = target ?? 0;
+  const nvlKg = nvl ?? 0;
+  const targetChanged = Math.abs(targetKg - shift.skuStandardTargetKg) > 0.01;
+  const nvlChanged = Math.abs(nvlKg - shift.rawMaterialInputKg) > 0.01;
 
   // Cùng công thức máy chủ dùng khi khoá (kpi-engine) — số trong hộp xác
   // nhận khớp với số sẽ ghi vào ca.
-  const stdNorm = computeStdMaterialNorm(Number(target) || 0, shift.skuLossRate);
+  const stdNorm = computeStdMaterialNorm(targetKg, shift.skuLossRate);
   const projectedLoss =
     shift.unitPriceVnd === null
       ? null
@@ -544,14 +702,17 @@ function CeoLockForm({
           {
             scrapKg: shift.scrapKg,
             reworkKg: shift.reworkKg,
-            rawMaterialInputKg: Number(nvl) || 0,
+            rawMaterialInputKg: nvlKg,
             stdMaterialNormKg: stdNorm,
           },
           shift.unitPriceVnd
         );
 
   const canSubmit =
-    Number(target) > 0 &&
+    targetKg > 0 &&
+    nvl !== null &&
+    !badInput.target &&
+    !badInput.nvl &&
     (!targetChanged || targetReason.trim().length > 0) &&
     (!nvlChanged || nvlReason.trim().length > 0);
 
@@ -569,19 +730,24 @@ function CeoLockForm({
 
       <div className="rounded-md bg-ink-50 px-3 py-2 text-xs text-ink-600 tabular-nums">
         Chuẩn của mã <b className="font-mono">{shift.skuCode}</b>: sản lượng{" "}
-        <b>{fmtKg(shift.skuStandardTargetKg)}</b>, hao hụt{" "}
-        <b>{fmtNum(shift.skuLossRate)}%</b>. Kho khai cấp{" "}
-        <b>{fmtKg(shift.rawMaterialInputKg)}</b>.
+        <b>{fmtKg(shift.skuStandardTargetKg, { unit: "kg" })}</b>, hao hụt{" "}
+        <b>{fmtPct(shift.skuLossRate, { digits: 2 })}</b>. Kho khai cấp{" "}
+        <b>{fmtKg(shift.rawMaterialInputKg, { unit: "kg" })}</b>.
       </div>
 
       <div>
-        <label className="label">Chỉ tiêu sản lượng ca (kg)</label>
-        <input
-          type="number"
-          step="any"
+        <label className="label" htmlFor="lock-target">
+          Chỉ tiêu sản lượng ca (kg)
+        </label>
+        <VnNumberInput
+          id="lock-target"
+          min={0}
           className={`input ${targetChanged ? "border-amber-300" : ""}`}
           value={target}
-          onChange={(e) => setTarget(e.target.value)}
+          onValue={(n, bad) => {
+            setTarget(n);
+            setBadInput((b) => ({ ...b, target: bad }));
+          }}
         />
         {targetChanged && (
           <div className="mt-2">
@@ -600,13 +766,18 @@ function CeoLockForm({
       </div>
 
       <div>
-        <label className="label">Nguyên liệu thực cấp (kg)</label>
-        <input
-          type="number"
-          step="any"
+        <label className="label" htmlFor="lock-nvl">
+          Nguyên liệu thực cấp (kg)
+        </label>
+        <VnNumberInput
+          id="lock-nvl"
+          min={0}
           className={`input ${nvlChanged ? "border-amber-300" : ""}`}
           value={nvl}
-          onChange={(e) => setNvl(e.target.value)}
+          onValue={(n, bad) => {
+            setNvl(n);
+            setBadInput((b) => ({ ...b, nvl: bad }));
+          }}
         />
         {nvlChanged && (
           <div className="mt-2">
@@ -624,17 +795,18 @@ function CeoLockForm({
       </div>
 
       <div className="rounded-md bg-ink-50 px-3 py-2 text-xs text-ink-700 tabular-nums">
-        Định mức nguyên liệu hệ thống tự tính: <b>{fmtKg(stdNorm)}</b>
-        {Number(nvl) > 0 && (
+        Định mức nguyên liệu hệ thống tự tính:{" "}
+        <b>{fmtKg(stdNorm, { unit: "kg" })}</b>
+        {nvlKg > 0 && (
           <>
             {" · "}
-            {Number(nvl) > stdNorm ? (
+            {nvlKg > stdNorm ? (
               <span className="text-red-700">
-                vượt {fmtKg(Math.round((Number(nvl) - stdNorm) * 100) / 100)}
+                vượt {fmtKg(nvlKg - stdNorm, { unit: "kg" })}
               </span>
             ) : (
               <span className="text-leaf-700">
-                dưới {fmtKg(Math.round((stdNorm - Number(nvl)) * 100) / 100)}
+                dưới {fmtKg(stdNorm - nvlKg, { unit: "kg" })}
               </span>
             )}
           </>
@@ -650,16 +822,18 @@ function CeoLockForm({
         />
       </div>
 
-      <button
-        className="btn-primary inline-flex w-full items-center justify-center gap-1.5"
-        disabled={busy || !canSubmit}
-        onClick={() => setConfirmOpen(true)}
-      >
-        <Lock size={15} strokeWidth={2} /> Duyệt & khoá số liệu
-      </button>
       <p className="text-xs text-ink-500">
         Khoá xong hệ thống mới chấm điểm và quét chống chạy chỉ tiêu.
       </p>
+      <StickyActions>
+        <button
+          className="btn-primary inline-flex items-center justify-center gap-1.5"
+          disabled={busy || !canSubmit}
+          onClick={() => setConfirmOpen(true)}
+        >
+          <Lock size={15} strokeWidth={2} /> Duyệt & khoá số liệu
+        </button>
+      </StickyActions>
 
       {/* Khoá là thao tác không đảo ngược được (mở lại phải ghi lý do, xoá
           điểm, hoàn kho) — trước đây một chạm là khoá. Giờ phải xem lại số
@@ -675,8 +849,8 @@ function CeoLockForm({
         onConfirm={async () => {
           const d = await onCall({
             action: "CEO_LOCK",
-            targetOutputKg: Number(target),
-            rawMaterialInputKg: Number(nvl),
+            targetOutputKg: targetKg,
+            rawMaterialInputKg: nvlKg,
             targetOverrideReason: targetChanged ? targetReason : undefined,
             materialOverrideReason: nvlChanged ? nvlReason : undefined,
             ceoNote: ceoNote || undefined,
@@ -687,24 +861,24 @@ function CeoLockForm({
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 tabular-nums">
           <dt className="text-ink-500">Chỉ tiêu sản lượng</dt>
           <dd className="font-semibold text-ink-900">
-            {fmtKg(Number(target) || 0)}
+            {fmtKg(targetKg, { unit: "kg" })}
             {targetChanged && (
               <span className="ml-1 text-xs font-normal text-amber-800">
-                (chuẩn {fmtKg(shift.skuStandardTargetKg)})
+                (chuẩn {fmtKg(shift.skuStandardTargetKg, { unit: "kg" })})
               </span>
             )}
           </dd>
           <dt className="text-ink-500">Nguyên liệu cấp vào</dt>
           <dd className="font-semibold text-ink-900">
-            {fmtKg(Number(nvl) || 0)}
+            {fmtKg(nvlKg, { unit: "kg" })}
             {nvlChanged && (
               <span className="ml-1 text-xs font-normal text-amber-800">
-                (kho khai {fmtKg(shift.rawMaterialInputKg)})
+                (kho khai {fmtKg(shift.rawMaterialInputKg, { unit: "kg" })})
               </span>
             )}
           </dd>
           <dt className="text-ink-500">Định mức NVL</dt>
-          <dd className="text-ink-900">{fmtKg(stdNorm)}</dd>
+          <dd className="text-ink-900">{fmtKg(stdNorm, { unit: "kg" })}</dd>
           {projectedLoss && (
             <>
               <dt className="text-ink-500">Tổn thất chất lượng (dự tính)</dt>
@@ -717,7 +891,7 @@ function CeoLockForm({
           )}
           <dt className="text-ink-500">Chấm điểm cho</dt>
           <dd className="font-semibold text-ink-900">
-            {participantsCount.toLocaleString("vi-VN")} người
+            {fmtNum(participantsCount)} người
           </dd>
         </dl>
         <p>
@@ -769,7 +943,10 @@ function ReopenForm({
         onClose={() => setOpen(false)}
         onConfirm={async (reason) => {
           const d = await onCall({ action: "REOPEN", reason });
-          if (d) setOpen(false);
+          if (d) {
+            setOpen(false);
+            toast("Đã mở lại ca — điểm đã xoá, kho NVL đã hoàn.");
+          }
         }}
       >
         <p>

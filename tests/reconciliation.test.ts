@@ -3,6 +3,7 @@ import {
   computeVariance,
   latestSources,
   planCell,
+  reconPeriodState,
   sourcesFingerprint,
   sourcesFingerprint as fp,
 } from "@/lib/services/reconciliation-service";
@@ -77,5 +78,18 @@ describe("đối soát — planCell (quét hàng loạt chỉ ghi ô có thay đ
     const existing = existingFrom("RESOLVED", feeds);
     expect(planCell({ row: row(), feeds, existing, priorities }).action).toBe("noop");
     expect(fp(JSON.parse(existing.sourcesJson))).toBe(fp(latestSources(feeds, null)));
+  });
+});
+
+describe("đối soát — tình trạng kỳ trên màn hình", () => {
+  it("kỳ chưa có ô đối soát nào là 'chưa có dữ liệu', không phải 'khớp'", () => {
+    expect(reconPeriodState({ matched: 0, mismatched: 0, resolved: 0 })).toBe("no_data");
+  });
+  it("chỉ nói khớp khi đã có số và không còn ô lệch", () => {
+    expect(reconPeriodState({ matched: 12, mismatched: 0, resolved: 0 })).toBe("all_matched");
+    expect(reconPeriodState({ matched: 0, mismatched: 0, resolved: 3 })).toBe("all_matched");
+  });
+  it("còn ô lệch chưa chốt thì là có lệch", () => {
+    expect(reconPeriodState({ matched: 12, mismatched: 1, resolved: 3 })).toBe("has_mismatch");
   });
 });

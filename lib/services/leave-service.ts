@@ -230,6 +230,78 @@ export async function assertNoLeaveOverlap(
   }
 }
 
+/* ------------------------------------- VIỆC CÓ HẠN TRONG THỜI GIAN NGHỈ */
+
+/** Trạng thái việc coi như đã xong — không còn là "việc trùng ngày nghỉ" */
+const CLOSED_TASK_STATUSES = ["DONE", "CANCELLED"];
+
+type LeaveRange = { id: string; employeeId: string; startDate: Date; endDate: Date };
+type DueTask = { id: string; assigneeId: string | null; dueDate: Date };
+
+/**
+ * Ghép việc vào đơn nghỉ: việc của CHÍNH người xin nghỉ, có hạn rơi vào một
+ * ngày nghỉ (tính trọn ngày lịch VN, gồm cả ngày đầu và ngày cuối). Hàm thuần
+ * — phần truy vấn nằm ở findTasksDueDuringLeave.
+ */
+export function matchTasksToLeaves<T extends DueTask>(
+  requests: LeaveRange[],
+  tasks: T[]
+): Map<string, T[]> {
+  const byAssignee = new Map<string, T[]>();
+  for (const t of tasks) {
+    if (!t.assigneeId) continue;
+    const list = byAssignee.get(t.assigneeId) ?? [];
+    list.push(t);
+    byAssignee.set(t.assigneeId, list);
+  }
+  const out = new Map<string, T[]>();
+  for (const r of requests) {
+    const from = vnStartOfDay(r.startDate).getTime();
+    const toExclusive = addDays(vnStartOfDay(r.endDate), 1).getTime();
+    const hits = (byAssignee.get(r.employeeId) ?? [])
+      .filter((t) => {
+        const due = new Date(t.dueDate).getTime();
+        return due >= from && due < toExclusive;
+      })
+      .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+    if (hits.length > 0) out.set(r.id, hits);
+  }
+  return out;
+}
+
+/**
+ * Việc chưa xong của người xin nghỉ có hạn trong thời gian nghỉ — cho người
+ * duyệt thấy ngay "duyệt đơn này thì 2 việc kia ai lo". MỘT truy vấn cho cả
+ * danh sách đơn (không truy vấn từng đơn), rồi ghép bằng matchTasksToLeaves.
+ */
+export type LeaveConflictTask = {
+  id: string;
+  code: string;
+  title: string;
+  dueDate: Date;
+  assigneeId: string | null;
+};
+
+export async function findTasksDueDuringLeave(
+  requests: LeaveRange[]
+): Promise<Map<string, LeaveConflictTask[]>> {
+  if (requests.length === 0) return new Map();
+  const from = Math.min(...requests.map((r) => vnStartOfDay(r.startDate).getTime()));
+  const to = Math.max(
+    ...requests.map((r) => addDays(vnStartOfDay(r.endDate), 1).getTime())
+  );
+  const tasks = await prisma.task.findMany({
+    where: {
+      assigneeId: { in: [...new Set(requests.map((r) => r.employeeId))] },
+      status: { notIn: CLOSED_TASK_STATUSES },
+      dueDate: { gte: new Date(from), lt: new Date(to) },
+    },
+    select: { id: true, code: true, title: true, dueDate: true, assigneeId: true },
+    orderBy: { dueDate: "asc" },
+  });
+  return matchTasksToLeaves(requests, tasks);
+}
+
 /* -------------------------------------------------- QUYỀN DUYỆT / HUỶ ĐƠN */
 
 type LeaveActor = { id: string; role: string; departmentId: string | null };

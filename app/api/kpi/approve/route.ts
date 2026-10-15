@@ -2,7 +2,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { handle, ok, requireUser } from "@/lib/api";
 import { assertPermission } from "@/lib/rbac";
-import { clientMeta, writeAudit } from "@/lib/audit";
+import { clientMeta } from "@/lib/audit";
 import { ceoApprove } from "@/lib/services/kpi-service";
 
 const schema = z.object({
@@ -39,34 +39,19 @@ export async function POST(req: Request) {
       ids = rows.map((r) => r.id);
     }
 
-    const res = await ceoApprove(user, ids, { ceoNote: body.ceoNote }, meta);
+    // Khoá dòng + khoá kỳ (nếu yêu cầu) chạy chung MỘT giao dịch trong
+    // ceoApprove — không còn bước khoá kỳ rời bên ngoài.
+    const res = await ceoApprove(
+      user,
+      ids,
+      {
+        ceoNote: body.ceoNote,
+        finalizePeriodId:
+          body.finalizePeriod && body.periodId ? body.periodId : undefined,
+      },
+      meta
+    );
 
-    let periodFinalized = false;
-    if (body.finalizePeriod && body.periodId) {
-      const remaining = await prisma.kpiResult.count({
-        where: { periodId: body.periodId, status: { not: "FINALIZED" } },
-      });
-      if (remaining === 0) {
-        await prisma.kpiPeriod.update({
-          where: { id: body.periodId },
-          data: {
-            status: "FINALIZED",
-            isLocked: true,
-            finalizedAt: new Date(),
-          },
-        });
-        periodFinalized = true;
-        await writeAudit({
-          actor: user,
-          action: "KPI_PERIOD_FINALIZE",
-          entityName: "kpi_periods",
-          entityId: body.periodId,
-          after: { status: "FINALIZED" },
-          ...meta,
-        });
-      }
-    }
-
-    return ok({ ...res, periodFinalized });
+    return ok(res);
   });
 }

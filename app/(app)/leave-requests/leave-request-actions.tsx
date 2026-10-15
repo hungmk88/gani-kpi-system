@@ -4,6 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import ConfirmDialog from "@/components/confirm-dialog";
+import { toast } from "@/components/toast";
+
+const DONE_MESSAGE = {
+  APPROVE: "Đã duyệt đơn nghỉ.",
+  REJECT: "Đã từ chối đơn nghỉ.",
+  CANCEL: "Đã huỷ đơn nghỉ.",
+} as const;
 
 /**
  * Nút thao tác trên một đơn nghỉ.
@@ -39,12 +46,15 @@ export default function LeaveRequestActions({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, note: note || undefined }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.message || "Không xử lý được.");
         return;
       }
+      toast(DONE_MESSAGE[action]);
       router.refresh();
+    } catch {
+      setError("Mất kết nối tới máy chủ. Kiểm tra mạng rồi thử lại.");
     } finally {
       setBusy(false);
     }

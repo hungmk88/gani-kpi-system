@@ -25,6 +25,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { ROLE_LABEL } from "@/lib/constants";
+import { Toaster } from "@/components/toast";
 
 type NavItem = {
   href: string;
@@ -189,6 +190,7 @@ export default function Shell({
 
   return (
     <div className="flex min-h-screen">
+      <Toaster />
       {logoutFailed && (
         <div
           role="alert"

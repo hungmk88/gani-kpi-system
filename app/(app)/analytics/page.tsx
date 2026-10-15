@@ -20,19 +20,25 @@ import {
   Badge,
   PageHeader,
   ProgressBar,
+  ShowingCount,
   StatCard,
-  formatDate,
-  formatDateTime,
 } from "@/components/ui";
+import { fmtDate, fmtDateTime, fmtDeadline, fmtNum, fmtPct } from "@/lib/format";
 import BriefingPanel from "./briefing-panel";
 import AnomalyActions from "@/components/anomaly-actions";
 import { plainAnomalyReason } from "@/components/dashboard";
 
 export const dynamic = "force-dynamic";
 
-export default async function AnalyticsPage() {
+export default async function AnalyticsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
   const user = (await requireSession())!;
   if (user.role !== "CEO" && user.role !== "MANAGER") redirect("/dashboard");
+  // Bảng tải nhân sự: mặc định chỉ người quá tải (?tai=all để xem cả bảng)
+  const showAllWorkload = (await searchParams).tai === "all";
 
   const isCeo = user.role === "CEO";
   const departmentId = isCeo ? null : (user.departmentId ?? "__none__");
@@ -43,19 +49,28 @@ export default async function AnalyticsPage() {
     dueDate: { lt: now },
     ...(departmentId ? { departmentId } : {}),
   };
-  const [scan, capacity, accuracy, snapshot, anomalies, overdue, overdueCount] =
-    await Promise.all([
+  const anomalyWhere = {
+    status: { in: ["OPEN", "EXPLAINED"] },
+    ...(isCeo
+      ? {}
+      : { employee: { departmentId: user.departmentId ?? "__none__" } }),
+  };
+  const [
+    scan,
+    capacity,
+    accuracy,
+    snapshot,
+    anomalies,
+    anomalyCount,
+    overdue,
+    overdueCount,
+  ] = await Promise.all([
     runPredictiveScan({ departmentId, persist: false }),
     getCapacityReports(departmentId),
     getPredictionAccuracy(),
     isCeo ? buildHealthSnapshot() : Promise.resolve(null),
     prisma.kpiAnomaly.findMany({
-      where: {
-        status: { in: ["OPEN", "EXPLAINED"] },
-        ...(isCeo
-          ? {}
-          : { employee: { departmentId: user.departmentId ?? "__none__" } }),
-      },
+      where: anomalyWhere,
       include: {
         employee: { include: { department: true } },
         kpiDefinition: true,
@@ -65,6 +80,7 @@ export default async function AnalyticsPage() {
       orderBy: [{ severity: "desc" }, { robustScore: "desc" }],
       take: 20,
     }),
+    prisma.kpiAnomaly.count({ where: anomalyWhere }),
     // Việc ĐÃ trễ không còn là chuyện dự báo — tách nhóm riêng, cũ nhất trước
     prisma.task.findMany({
       where: overdueWhere,
@@ -74,6 +90,10 @@ export default async function AnalyticsPage() {
     }),
     prisma.task.count({ where: overdueWhere }),
   ]);
+
+  const atRisk = scan.predictions.filter((p) => p.riskCategory !== "ON_TRACK").length;
+  const overloaded = capacity.reports.filter((r) => r.workloadStatus === "OVERLOADED");
+  const workloadRows = showAllWorkload ? capacity.reports : overloaded;
 
   return (
     <>
@@ -117,7 +137,7 @@ export default async function AnalyticsPage() {
           <span className="text-xs text-ink-500">
             {accuracy.accuracyPercent === null
               ? "chưa đo được độ chính xác"
-              : `độ chính xác ${fmt(accuracy.accuracyPercent)}% trên ${fmt(accuracy.total)} việc đã đóng`}
+              : `độ chính xác ${fmtPct(accuracy.accuracyPercent)} trên ${fmtNum(accuracy.total)} việc đã đóng`}
           </span>
         </div>
 
@@ -151,7 +171,7 @@ export default async function AnalyticsPage() {
           <div className="card mb-4 border-red-200 p-4">
             <div className="mb-2 flex items-center justify-between gap-2">
               <div className="font-semibold text-red-700">
-                Đã trễ hạn ({overdueCount}) — không còn là dự báo
+                Đã trễ hạn ({fmtNum(overdueCount)}) — không còn là dự báo
               </div>
               <Link
                 href="/tasks?filter=overdue"
@@ -162,10 +182,7 @@ export default async function AnalyticsPage() {
             </div>
             <ul className="divide-y divide-ink-100">
               {overdue.map((t) => {
-                const days = Math.max(
-                  1,
-                  Math.floor((now.getTime() - new Date(t.dueDate).getTime()) / 86_400_000)
-                );
+                const due = fmtDeadline(t.dueDate, { now });
                 return (
                   <li key={t.id} className="flex items-center justify-between gap-3 py-2">
                     <Link
@@ -178,13 +195,21 @@ export default async function AnalyticsPage() {
                         {t.progress}%
                       </span>
                     </Link>
-                    <span className="shrink-0 text-xs font-semibold text-red-700">
-                      trễ {days} ngày
+                    <span
+                      className="shrink-0 text-right text-xs font-semibold text-red-700"
+                      title={`Hạn ${due.date}`}
+                    >
+                      {due.relative}
                     </span>
                   </li>
                 );
               })}
             </ul>
+            <ShowingCount
+              shown={overdue.length}
+              total={overdueCount}
+              hint="cũ nhất trước"
+            />
           </div>
         )}
 
@@ -216,7 +241,7 @@ export default async function AnalyticsPage() {
                       </Link>
                       <div className="mt-0.5 text-xs text-ink-500">
                         {p.departmentName} · {p.assigneeName ?? "chưa giao"} ·
-                        hạn {formatDate(p.dueDate)}
+                        hạn {fmtDate(p.dueDate)}
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -230,7 +255,7 @@ export default async function AnalyticsPage() {
                         {RISK_CATEGORY_LABEL[p.riskCategory]}
                       </Badge>
                       <Badge tone="slate">
-                        {fmt(p.completionProbabilityPercent)}% kịp
+                        {fmtPct(p.completionProbabilityPercent)} kịp
                       </Badge>
                       {p.projectedDelayDays > 0 && (
                         <Badge tone="red">
@@ -244,14 +269,14 @@ export default async function AnalyticsPage() {
                     <div>
                       <div className="mb-1 flex justify-between text-xs text-ink-500">
                         <span>Đáng lẽ phải xong</span>
-                        <span className="tabular-nums">{fmt(p.expectedProgressPercent)}%</span>
+                        <span className="tabular-nums">{fmtPct(p.expectedProgressPercent)}</span>
                       </div>
                       <ProgressBar value={p.expectedProgressPercent} tone="brand" />
                     </div>
                     <div>
                       <div className="mb-1 flex justify-between text-xs text-ink-500">
                         <span>Thực tế</span>
-                        <span className="tabular-nums">{fmt(p.actualProgressPercent)}%</span>
+                        <span className="tabular-nums">{fmtPct(p.actualProgressPercent)}</span>
                       </div>
                       <ProgressBar
                         value={p.actualProgressPercent}
@@ -286,10 +311,15 @@ export default async function AnalyticsPage() {
                   Không có việc nào đang bị dự báo trễ
                 </div>
                 <div className="mt-1 text-sm text-ink-500">
-                  Cả {scan.scanned} việc tới hạn trong 30 ngày đều đang bám kế hoạch.
+                  Cả {fmtNum(scan.scanned)} việc tới hạn trong 30 ngày đều đang bám kế hoạch.
                 </div>
               </div>
             )}
+            <ShowingCount
+              shown={Math.min(12, atRisk)}
+              total={atRisk}
+              hint="việc nguy cơ cao nhất trước"
+            />
           </div>
         )}
 
@@ -314,7 +344,7 @@ export default async function AnalyticsPage() {
       </section>
 
       {/* ============ 2. CÂN BẰNG TẢI ============ */}
-      <section className="mt-8">
+      <section id="can-bang-tai" className="mt-8 scroll-mt-4">
         <h2 className="section-title mb-3">2. Cân bằng tải nhân sự</h2>
 
         <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -352,9 +382,9 @@ export default async function AnalyticsPage() {
               {capacity.suggestions.map((s, i) => (
                 <li key={i}>
                   Phòng <b>{s.departmentName}</b>: chuyển khoảng{" "}
-                  <b>{fmt(s.suggestedHours)} giờ</b> từ {s.from.fullName} (
-                  {fmt(s.from.utilizationPercent)}%) sang {s.to.fullName} (
-                  {fmt(s.to.utilizationPercent)}%) — chênh {fmt(s.gapPercent)} điểm
+                  <b>{fmtNum(s.suggestedHours, 1)} giờ</b> từ {s.from.fullName} (
+                  {fmtPct(s.from.utilizationPercent)}) sang {s.to.fullName} (
+                  {fmtPct(s.to.utilizationPercent)}) — chênh {fmtNum(s.gapPercent, 1)} điểm
                   phần trăm.
                 </li>
               ))}
@@ -366,6 +396,30 @@ export default async function AnalyticsPage() {
           </div>
         )}
 
+        {/* Mặc định chỉ người QUÁ TẢI — cả trăm dòng "vừa sức" làm chìm vài
+            người đang gánh quá sức. Bảng đầy đủ là một cú bấm. */}
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span className="text-ink-600">
+            {showAllWorkload
+              ? `Tất cả ${fmtNum(capacity.reports.length)} người`
+              : overloaded.length > 0
+                ? `${fmtNum(overloaded.length)} người đang quá tải`
+                : "Không ai đang quá tải"}
+          </span>
+          {capacity.reports.length > overloaded.length && (
+            <Link
+              href={showAllWorkload ? "/analytics#can-bang-tai" : "/analytics?tai=all#can-bang-tai"}
+              scroll={false}
+              className="font-medium text-brand-700 hover:underline"
+            >
+              {showAllWorkload
+                ? "Chỉ xem người quá tải"
+                : `Xem tất cả ${fmtNum(capacity.reports.length)} người`}
+            </Link>
+          )}
+        </div>
+
+        {workloadRows.length > 0 && (
         <div className="table-wrap">
           <table className="tbl tbl-stack">
             <thead>
@@ -380,24 +434,24 @@ export default async function AnalyticsPage() {
               </tr>
             </thead>
             <tbody>
-              {capacity.reports.map((r) => (
+              {workloadRows.map((r) => (
                 <tr key={r.userId}>
                   <td className="font-medium text-ink-800">{r.fullName}</td>
                   <td data-label="Phòng ban" className="text-ink-600">{r.departmentName ?? "—"}</td>
                   <td data-label="Việc đang mở" className="text-right text-ink-600">
-                    {r.assignedTasksCount}
+                    {fmtNum(r.assignedTasksCount)}
                   </td>
                   <td data-label="Giờ ước tính" className="text-right text-ink-700">
-                    {fmt(r.totalEstimatedHours)}
+                    {fmtNum(r.totalEstimatedHours, 1)}
                     {r.overdueHours > 0 && (
                       <div className="text-xs text-red-700">
-                        {fmt(r.overdueHours)} giờ đã quá hạn
+                        {fmtNum(r.overdueHours, 1)} giờ đã quá hạn
                       </div>
                     )}
                   </td>
                   <td data-label="Mức tải">
                     <div className="mb-1 text-xs text-ink-600 tabular-nums">
-                      {fmt(r.utilizationPercent)}%
+                      {fmtPct(r.utilizationPercent)}
                     </div>
                     <LoadBar
                       value={r.utilizationPercent}
@@ -425,12 +479,13 @@ export default async function AnalyticsPage() {
             </tbody>
           </table>
         </div>
+        )}
       </section>
 
       {/* ============ 3. BẤT THƯỜNG KPI ============ */}
       <section className="mt-8">
         <h2 className="section-title mb-3">
-          3. Khai báo KPI bất thường ({anomalies.length})
+          3. Khai báo KPI bất thường ({fmtNum(anomalyCount)})
         </h2>
 
         <p className="mb-3 max-w-3xl text-sm text-ink-500">
@@ -481,7 +536,7 @@ export default async function AnalyticsPage() {
                     </div>
                     <div className="mt-0.5 text-xs text-ink-500">
                       {a.employee.department?.name ?? "—"} · Kỳ {a.period.name} ·
-                      Phát hiện {formatDateTime(a.createdAt)}
+                      Phát hiện {fmtDateTime(a.createdAt)}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -506,11 +561,11 @@ export default async function AnalyticsPage() {
                   <p className="text-sm text-ink-700">{plainAnomalyReason(a.reason)}</p>
 
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    <Mini label="Khai kỳ này" value={fmt(a.reportedValue)} tone="amber" />
-                    <Mini label="Trung vị lịch sử" value={fmt(a.historicalMedian)} />
+                    <Mini label="Khai kỳ này" value={fmtNum(a.reportedValue)} tone="amber" />
+                    <Mini label="Trung vị lịch sử" value={fmtNum(a.historicalMedian)} />
                     <Mini
                       label="Mức lệch so với nếp cũ"
-                      value={`gấp ${fmt(a.robustScore)} lần`}
+                      value={`gấp ${fmtNum(a.robustScore, 1)} lần`}
                       tone="red"
                     />
                     <Mini
@@ -524,7 +579,7 @@ export default async function AnalyticsPage() {
                     <div className="rounded-md bg-ink-50 px-3 py-2">
                       <div className="text-xs font-medium text-ink-500">
                         Giải trình — {a.explainedBy?.fullName} ·{" "}
-                        {formatDateTime(a.explainedAt)}
+                        {fmtDateTime(a.explainedAt)}
                       </div>
                       <div className="mt-1 text-sm text-ink-700">
                         {a.explanationText}
@@ -541,6 +596,11 @@ export default async function AnalyticsPage() {
                 </div>
               </div>
             ))}
+            <ShowingCount
+              shown={anomalies.length}
+              total={anomalyCount}
+              hint="nặng nhất trước"
+            />
           </div>
         )}
       </section>
@@ -599,9 +659,4 @@ function LoadBar({ value, status }: { value: number; status: string }) {
       />
     </div>
   );
-}
-
-function fmt(n: number | null) {
-  if (n === null) return "—";
-  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
 }

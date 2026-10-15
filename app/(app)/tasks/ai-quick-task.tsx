@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Wand2, Check } from "lucide-react";
 import { TASK_PRIORITIES, TASK_PRIORITY_LABEL } from "@/lib/constants";
+import { fmtNum } from "@/lib/format";
 
 type Draft = {
   title: string;
@@ -256,7 +257,7 @@ export default function AiQuickTask({
                 : "Bộ đọc luật cứng (chưa cấu hình khoá AI)"}
             </span>
             <span className="text-xs text-ink-500 tabular-nums">
-              {res.latencyMs.toLocaleString("vi-VN")} ms
+              {fmtNum(res.latencyMs, 0)} ms
             </span>
           </div>
 

@@ -3,10 +3,20 @@ import { redirect } from "next/navigation";
 import { CircleCheck, Plus } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { Badge, EmptyState, PageHeader, PriorityBadge, formatDateTime } from "@/components/ui";
+import {
+  Badge,
+  EmptyState,
+  PageHeader,
+  PriorityBadge,
+  ShowingCount,
+} from "@/components/ui";
+import { fmtDateTime, fmtDeadline, fmtNum } from "@/lib/format";
 import RequestActions from "./request-actions";
 
 export const dynamic = "force-dynamic";
+
+/** Lịch sử đã xử lý hiện tối đa chừng này yêu cầu gần nhất */
+const HISTORY_LIMIT = 50;
 
 export default async function RequestsPage() {
   const user = (await requireSession())!;
@@ -37,6 +47,8 @@ export default async function RequestsPage() {
   );
   const outbox = requests.filter((r) => r.requesterId === user.id);
   const history = requests.filter((r) => r.status !== "PENDING");
+  const historyShown = history.slice(0, HISTORY_LIMIT);
+  const now = new Date();
 
   const myTeam = await prisma.user.findMany({
     where: {
@@ -62,7 +74,7 @@ export default async function RequestsPage() {
 
       <section className="mb-8">
         <h2 className="section-title mb-3">
-          Đang chờ bạn xử lý ({inbox.length})
+          Đang chờ bạn xử lý ({fmtNum(inbox.length)})
         </h2>
         {inbox.length === 0 ? (
           <EmptyState
@@ -80,7 +92,7 @@ export default async function RequestsPage() {
                     <div className="mt-1 text-xs text-ink-500">
                       Từ {r.requester.fullName} · Phòng{" "}
                       {r.requester.department?.name ?? "—"} · Gửi lúc{" "}
-                      {formatDateTime(r.createdAt)}
+                      {fmtDateTime(r.createdAt)}
                     </div>
                   </div>
                   <PriorityBadge priority={r.priority} />
@@ -92,7 +104,8 @@ export default async function RequestsPage() {
                 )}
                 <div className="mb-3 text-sm text-ink-600">
                   Hạn mong muốn:{" "}
-                  <b className="text-ink-800">{formatDateTime(r.dueDate)}</b>
+                  <b className="text-ink-800">{fmtDateTime(r.dueDate)}</b>
+                  <DueHint due={r.dueDate} now={now} />
                 </div>
                 <RequestActions
                   requestId={r.id}
@@ -108,7 +121,7 @@ export default async function RequestsPage() {
       </section>
 
       <section className="mb-8">
-        <h2 className="section-title mb-3">Bạn đã gửi đi ({outbox.length})</h2>
+        <h2 className="section-title mb-3">Bạn đã gửi đi ({fmtNum(outbox.length)})</h2>
         {outbox.length === 0 ? (
           <div className="card p-4 text-sm text-ink-500">
             Bạn chưa gửi yêu cầu nào cho phòng ban khác.
@@ -137,7 +150,10 @@ export default async function RequestsPage() {
                       )}
                     </td>
                     <td data-label="Gửi tới" className="text-ink-600">{r.targetDept.name}</td>
-                    <td data-label="Hạn" className="text-ink-600">{formatDateTime(r.dueDate)}</td>
+                    <td data-label="Hạn" className="text-ink-600">
+                      {fmtDateTime(r.dueDate)}
+                      {r.status === "PENDING" && <DueHint due={r.dueDate} now={now} block />}
+                    </td>
                     <td data-label="Ưu tiên">
                       <PriorityBadge priority={r.priority} />
                     </td>
@@ -175,7 +191,7 @@ export default async function RequestsPage() {
                 </tr>
               </thead>
               <tbody>
-                {history.map((r) => (
+                {historyShown.map((r) => (
                   <tr key={r.id}>
                     <td className="text-ink-800">{r.title}</td>
                     <td data-label="Người gửi" className="text-ink-600">{r.requester.fullName}</td>
@@ -191,9 +207,29 @@ export default async function RequestsPage() {
               </tbody>
             </table>
           </div>
+          <ShowingCount
+            shown={historyShown.length}
+            total={history.length}
+            hint="các yêu cầu gần nhất"
+          />
         </section>
       )}
     </>
+  );
+}
+
+/** "còn 2 ngày" / "trễ 1 ngày" cạnh hạn mong muốn — đỏ chỉ khi đã trễ */
+function DueHint({ due, now, block }: { due: Date; now: Date; block?: boolean }) {
+  const d = fmtDeadline(due, { now });
+  if (!d.relative) return null;
+  return (
+    <span
+      className={`${block ? "block" : "ml-2"} text-xs ${
+        d.late ? "font-medium text-red-700" : "text-ink-500"
+      }`}
+    >
+      {d.relative}
+    </span>
   );
 }
 

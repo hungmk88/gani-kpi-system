@@ -8,7 +8,17 @@ import { scoreTaskRisk } from "@/lib/risk";
 import { riskContextFor } from "@/lib/services/risk-service";
 import { PUBLIC_USER_SELECT } from "@/lib/services/task-service";
 import { formatVnDateTime } from "@/lib/vn-time";
-import { ERR, TASK_PRIORITIES, TASK_STATUSES } from "@/lib/constants";
+import {
+  ERR,
+  TASK_PRIORITIES,
+  TASK_STATUSES,
+  TASK_STATUS_LABEL,
+} from "@/lib/constants";
+import {
+  TASK_REASON_MIN_LENGTH,
+  isValidReason,
+  reasonRequiredFor,
+} from "@/lib/task-rules";
 
 const patchSchema = z.object({
   title: z.string().min(3).max(255).optional(),
@@ -166,6 +176,23 @@ export async function PATCH(
       }
     }
 
+    // Báo tắc và mở lại / trả về làm lại phải có lý do — kiểm cả ở đây chứ
+    // không chỉ tin vào hộp xác nhận phía trình duyệt (luật ở lib/task-rules).
+    const reasonKind =
+      body.status !== undefined
+        ? reasonRequiredFor(task.status, body.status)
+        : null;
+    if (reasonKind && !isValidReason(body.note)) {
+      throw new BusinessError(
+        ERR.REASON_REQUIRED,
+        reasonKind === "BLOCK"
+          ? `Báo tắc phải ghi lý do (ít nhất ${TASK_REASON_MIN_LENGTH} ký tự) để trưởng phòng biết cần gỡ gì.`
+          : `Mở lại hoặc trả việc về làm lại phải ghi lý do (ít nhất ${TASK_REASON_MIN_LENGTH} ký tự) để người làm biết cần sửa gì.`,
+        400
+      );
+    }
+    const note = body.note?.trim() || null;
+
     const before = {
       status: task.status,
       priority: task.priority,
@@ -229,16 +256,25 @@ export async function PATCH(
       },
     });
 
-    // Ghi vết đổi trạng thái vào dòng thời gian của task
+    // Ghi vết đổi trạng thái vào dòng thời gian của task — lý do báo tắc /
+    // mở lại nằm ngay trong dòng này, ai mở việc ra cũng đọc được.
     if (body.status && body.status !== task.status) {
+      const from = TASK_STATUS_LABEL[task.status] ?? task.status;
+      const to = TASK_STATUS_LABEL[body.status] ?? body.status;
+      const head =
+        reasonKind === "BLOCK"
+          ? `Báo tắc (${from} → ${to})`
+          : reasonKind === "REOPEN"
+            ? `${task.status === "REVIEW" ? "Trả về làm lại" : "Mở lại việc"} (${from} → ${to})`
+            : `Chuyển trạng thái: ${from} → ${to}`;
       await prisma.taskComment.create({
         data: {
           taskId: id,
           userId: user.id,
           kind: "STATUS_CHANGE",
-          body: `Chuyển trạng thái: ${task.status} → ${body.status}${
-            body.note ? ` · ${body.note}` : ""
-          }`,
+          body: reasonKind
+            ? `${head}\nLý do: ${note}`
+            : `${head}${note ? ` · ${note}` : ""}`,
         },
       });
     }
@@ -256,7 +292,7 @@ export async function PATCH(
         assigneeId: updated.assigneeId,
         dueDate: updated.dueDate,
       },
-      reason: body.note ?? null,
+      reason: note,
       ...clientMeta(req),
     });
 
@@ -292,9 +328,7 @@ export async function PATCH(
         await notify({
           userId: m.id,
           title: `Việc bị chặn: ${updated.title}`,
-          body: `${user.fullName} báo việc đang tắc.${
-            body.note ? ` Lý do: ${body.note}` : ""
-          }`,
+          body: `${user.fullName} báo việc đang tắc. Lý do: ${note}`,
           level: "WARNING",
           linkUrl: `/tasks/${id}`,
         });

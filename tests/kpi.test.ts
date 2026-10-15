@@ -6,9 +6,12 @@ import {
   calculateKpiScore,
   computeDeadlines,
   detectMismatch,
+  gatekeeperOutcome,
+  gatekeeperRuleFor,
+  kpiCapFor,
   spreadPercent,
 } from "@/lib/kpi";
-import { KPI_SCORE_CAP } from "@/lib/constants";
+import { KPI_SCORE_CAP, SALES_KPI_CAP } from "@/lib/constants";
 
 describe("computeDeadlines — lịch 2-4-5", () => {
   it("KPI tháng 10 chốt 23:59:59 giờ VN ngày 2/4/5 tháng 11", () => {
@@ -106,5 +109,27 @@ describe("scoreStateOf / classifyScoreFor — không xếp loại khi kỳ chưa
     expect(combineScoreStates(["FINAL", "FINAL"])).toBe("FINAL");
     expect(combineScoreStates(["FINAL", "UNSCORED"])).toBe("PROVISIONAL");
     expect(combineScoreStates(["UNSCORED", "UNSCORED"])).toBe("UNSCORED");
+  });
+});
+
+describe("trần theo chỉ tiêu & gatekeeper", () => {
+  it("trần theo phòng SỞ HỮU chỉ tiêu: Sales 120%, còn lại 150%", () => {
+    expect(kpiCapFor("SALES")).toBe(SALES_KPI_CAP);
+    expect(kpiCapFor("PRODUCTION")).toBe(KPI_SCORE_CAP);
+    expect(kpiCapFor(null)).toBe(KPI_SCORE_CAP);
+  });
+
+  it("chỉ SALES_RETURN là gatekeeper: ngưỡng 2%, trừ 5 điểm", () => {
+    expect(gatekeeperRuleFor("SALES_RETURN")).toEqual({ thresholdPercent: 2, penaltyPoints: 5 });
+    expect(gatekeeperRuleFor("SALES_REVENUE")).toBeNull();
+    expect(gatekeeperRuleFor(undefined)).toBeNull();
+  });
+
+  it("đúng bằng ngưỡng vẫn đạt; vượt mới bị trừ; chưa có số thì chưa kết luận", () => {
+    const rule = gatekeeperRuleFor("SALES_RETURN")!;
+    expect(gatekeeperOutcome(rule, 0)).toBe("PASS");
+    expect(gatekeeperOutcome(rule, 2)).toBe("PASS");
+    expect(gatekeeperOutcome(rule, 2.01)).toBe("FAIL");
+    expect(gatekeeperOutcome(rule, null)).toBe("NO_DATA");
   });
 });

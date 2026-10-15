@@ -20,6 +20,19 @@ import {
   BASE_BONUS_PER_SHIFT_VND,
   BEHAVIOR_LABEL,
 } from "../production/constants";
+import {
+  MASS_GAP_MIN_REASON,
+  MASS_GAP_REASON_KG,
+  SHIFT_RETURN_MIN_REASON,
+  SHIFT_RETURN_PREFIX,
+  buildMassGapNoteLine,
+  buildShiftReturnNote,
+  extractShiftReturn,
+  isShiftReturned,
+  massGapKg,
+  needsMassGapReason,
+} from "../production/shift-flow";
+import { fmtKg } from "../format";
 import { formatVnDate, vnStartOfDay } from "../vn-time";
 import type { SessionUser } from "../auth";
 
@@ -27,7 +40,8 @@ import type { SessionUser } from "../auth";
  * LUỒNG DUYỆT SỐ LIỆU CA SẢN XUẤT — 3 BƯỚC BẮT BUỘC.
  *
  *   DRAFT          Sản xuất khai sản lượng, giờ công, NVL kho cấp
- *      ↓
+ *      ↓  ↺        (KCS có thể TRẢ VỀ: ca vẫn DRAFT, qcNote đánh dấu "[KCS trả
+ *      ↓            về]" — người khai sửa rồi gửi lại, xem lib/production/shift-flow.ts)
  *   QC_APPROVED    KCS xác nhận đạt / làm lại / phế / vi phạm HACCP
  *      ↓
  *   LOCKED         Ban Giám đốc chốt chỉ tiêu và khoá số
@@ -75,7 +89,7 @@ export const MAX_QUALITY_LOSS_VND = 2_000_000_000;
 
 /* ------------------------------------------------------------ PHÂN QUYỀN */
 
-function canEnterDraft(u: SessionUser & { productionRole?: string | null }) {
+function canEnterDraft(u: { role: string; productionRole?: string | null }) {
   if (u.role === "CEO") return true;
   return ["WORKER", "TEAM_LEADER", "SUPERVISOR", "PRODUCTION_DIRECTOR"].includes(
     u.productionRole ?? ""
@@ -165,6 +179,34 @@ export function buildCeoOverrideQcNote(reason: string, qcNote?: string | null) {
     ? t.split("\n").slice(1).join("\n").trim()
     : t;
   return `${CEO_QC_OVERRIDE_PREFIX} ${reason.trim()}${rest ? `\n${rest}` : ""}`;
+}
+
+/**
+ * Lệch cân đối khối lượng lúc KCS phân loại: thô − (đạt + làm lại + phế).
+ * Lệch quá ngưỡng (5 kg — cùng ngưỡng Luật 3 chống chạy chỉ tiêu) thì bắt buộc
+ * ghi lý do ngay lúc cân; lý do thành một dòng trong ghi chú KCS và vào nhật
+ * ký. Trước đây chỉ có ô tick "tôi xác nhận số lệch" — tick xong không còn lại
+ * dấu vết gì, tới lúc bị cảnh báo thì không ai nhớ vì sao lệch.
+ *
+ * Trả về dòng ghi chú cần nối vào qcNote (null nếu không lệch đáng kể). Hàm
+ * thuần, không đụng DB — để kiểm thử được.
+ */
+export function resolveMassGapReason(
+  rawOutputKg: number,
+  parts: { qcPassedKg: number; reworkKg: number; scrapKg: number },
+  reason?: string | null
+): { gapKg: number; noteLine: string | null } {
+  const gapKg = massGapKg(rawOutputKg, parts);
+  if (!needsMassGapReason(gapKg)) return { gapKg, noteLine: null };
+  const why = (reason ?? "").replace(/\s+/g, " ").trim();
+  if (why.length < MASS_GAP_MIN_REASON) {
+    throw new BusinessError(
+      ERR.REASON_REQUIRED,
+      `Tổng phân loại lệch ${fmtKg(Math.abs(gapKg), { unit: "kg" })} so với sản lượng thô ${fmtKg(rawOutputKg, { unit: "kg" })} — lệch quá ${fmtKg(MASS_GAP_REASON_KG, { unit: "kg" })} thì phải ghi lý do (tối thiểu ${MASS_GAP_MIN_REASON} ký tự).`,
+      400
+    );
+  }
+  return { gapKg, noteLine: buildMassGapNoteLine(gapKg, why) };
 }
 
 /** Lọc sơ trước khi đọc ca: chỉ KCS hoặc BGĐ (vượt quyền) mới tới được bước 2. */
@@ -267,35 +309,76 @@ export async function withProductionRole(user: SessionUser) {
   return { ...user, productionRole: row?.productionRole ?? null };
 }
 
+/* ------------------------------------------- CA ĐANG CHỜ VAI TRÒ CỦA TÔI */
+
+/** Ca chờ KCS: DRAFT và chưa bị trả về sản xuất */
+export const WAITING_QC_WHERE = {
+  status: "DRAFT",
+  OR: [{ qcNote: null }, { NOT: { qcNote: { startsWith: SHIFT_RETURN_PREFIX } } }],
+} satisfies Prisma.ProductionShiftLogWhereInput;
+
+/** Ca KCS đã trả về, đang chờ người khai sửa */
+export const RETURNED_WHERE = {
+  status: "DRAFT",
+  qcNote: { startsWith: SHIFT_RETURN_PREFIX },
+} satisfies Prisma.ProductionShiftLogWhereInput;
+
+/**
+ * Điều kiện lọc những ca đang chờ ĐÚNG bước của người này — để danh sách xưởng
+ * đưa việc của họ lên đầu thay vì bắt họ dò trong 60 ca theo ngày:
+ *
+ *   - KCS: ca chờ KCS, trừ ca chính mình khai (không được tự xác nhận).
+ *   - Ban Giám đốc: ca KCS đã xác nhận, chờ khoá số. (Vượt quyền KCS là ngoại
+ *     lệ, không đưa ca DRAFT vào "việc của BGĐ".)
+ *   - Người khai ca (công nhân, tổ trưởng, quản đốc, GĐ SX, BGĐ): ca của chính
+ *     mình bị KCS trả về, chờ sửa và gửi lại.
+ *
+ * Không có bước nào chờ người này → null. Hàm thuần — để kiểm thử được.
+ */
+export function awaitingMyStepWhere(user: {
+  id: string;
+  role: string;
+  productionRole?: string | null;
+}): Prisma.ProductionShiftLogWhereInput | null {
+  const or: Prisma.ProductionShiftLogWhereInput[] = [];
+  if (user.productionRole === "QC_OFFICER") {
+    or.push({ ...WAITING_QC_WHERE, createdById: { not: user.id } });
+  }
+  if (user.role === "CEO") {
+    or.push({ status: "QC_APPROVED" });
+  }
+  if (canEnterDraft(user)) {
+    or.push({ ...RETURNED_WHERE, createdById: user.id });
+  }
+  if (or.length === 0) return null;
+  return or.length === 1 ? or[0] : { OR: or };
+}
+
 /* ======================================================= BƯỚC 1 — DRAFT */
 
-export async function submitShiftDraft(
-  actor: SessionUser & { productionRole?: string | null },
-  input: {
-    shiftDate: Date;
-    shiftType: string;
-    skuId: string;
-    rawOutputKg: number;
-    totalLaborHours: number;
-    downtimeHours: number;
-    rawMaterialInputKg: number;
-    draftNote?: string | null;
-    participants: {
-      userId: string;
-      stage: string;
-      hoursWorked: number;
-      scheduledHours: number;
-    }[];
-  },
-  meta: Meta = {}
-) {
-  if (!canEnterDraft(actor)) {
-    throw new BusinessError(
-      ERR.FORBIDDEN,
-      "Bạn không có vai trò trong xưởng để khai báo ca sản xuất.",
-      403
-    );
-  }
+type DraftInput = {
+  shiftDate: Date;
+  shiftType: string;
+  skuId: string;
+  rawOutputKg: number;
+  totalLaborHours: number;
+  downtimeHours: number;
+  rawMaterialInputKg: number;
+  draftNote?: string | null;
+  participants: {
+    userId: string;
+    stage: string;
+    hoursWorked: number;
+    scheduledHours: number;
+  }[];
+};
+
+/**
+ * Kiểm tra một bản khai ca — dùng chung cho khai mới và gửi lại ca bị KCS trả
+ * về. `excludeLogId`: ca đang sửa, để kiểm tra trùng (ngày, ca, mã) không tự
+ * va vào chính nó.
+ */
+async function validateDraftInput(input: DraftInput, excludeLogId?: string) {
   if (input.participants.length === 0) {
     throw new BusinessError(
       ERR.VALIDATION_FAILED,
@@ -355,7 +438,7 @@ export async function submitShiftDraft(
       },
     },
   });
-  if (dup) {
+  if (dup && dup.id !== excludeLogId) {
     throw new BusinessError(
       ERR.VALIDATION_FAILED,
       `Ca ${input.shiftType} ngày ${formatVnDate(day)} cho mã ${sku.skuCode} đã được khai rồi.`,
@@ -372,59 +455,102 @@ export async function submitShiftDraft(
     );
   }
 
+  return { sku, day };
+}
+
+/** Lỗi ghi DB của bản khai ca → thông báo dễ hiểu thay vì lỗi 500. */
+function draftWriteError(
+  e: unknown,
+  ctx: { shiftType: string; day: Date; skuCode: string }
+): never {
+  if (e instanceof Prisma.PrismaClientKnownRequestError) {
+    // Hai người khai cùng ca cùng lúc: kiểm tra trùng ở trên đều lọt, ràng
+    // buộc unique của DB chặn người thứ hai — trả 409 thay vì lỗi 500.
+    // CHỈ khi đúng là khoá (ngày, ca, mã) — trùng ở bảng người làm ca là
+    // chuyện khác, không được báo nhầm thành "ca đã khai".
+    if (e.code === "P2002" && isShiftUniqueViolation(e)) {
+      shiftAlreadyHandled(
+        `Ca ${ctx.shiftType} ngày ${formatVnDate(ctx.day)} cho mã ${ctx.skuCode} đã được khai rồi.`
+      );
+    }
+    if (e.code === "P2002") {
+      throw new BusinessError(
+        ERR.VALIDATION_FAILED,
+        "Danh sách người làm ca bị trùng người. Mỗi người chỉ khai một dòng.",
+        400
+      );
+    }
+    // Tham chiếu tới người / mã sản phẩm vừa bị xoá giữa lúc kiểm tra và lúc ghi
+    if (e.code === "P2003") {
+      throw new BusinessError(
+        ERR.VALIDATION_FAILED,
+        "Có người làm ca hoặc mã sản phẩm không còn tồn tại trong hệ thống. Tải lại trang rồi khai lại.",
+        400
+      );
+    }
+  }
+  throw e;
+}
+
+/** Báo các KCS đang làm việc vào xác nhận một ca. */
+async function notifyQcOfficers(title: string, body: string, logId: string) {
+  const qcOfficers = await prisma.user.findMany({
+    where: { productionRole: "QC_OFFICER", isActive: true },
+    select: { id: true },
+  });
+  for (const qc of qcOfficers) {
+    await notify({
+      userId: qc.id,
+      title,
+      body,
+      level: "INFO",
+      linkUrl: `/production/${logId}`,
+    });
+  }
+}
+
+export async function submitShiftDraft(
+  actor: SessionUser & { productionRole?: string | null },
+  input: DraftInput,
+  meta: Meta = {}
+) {
+  if (!canEnterDraft(actor)) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Bạn không có vai trò trong xưởng để khai báo ca sản xuất.",
+      403
+    );
+  }
+
+  const { sku, day } = await validateDraftInput(input);
+
   const log = await prisma.productionShiftLog
     .create({
-    data: {
-      shiftDate: day,
-      shiftType: input.shiftType,
-      skuId: input.skuId,
-      status: "DRAFT",
-      rawOutputKg: input.rawOutputKg,
-      totalLaborHours: input.totalLaborHours,
-      downtimeHours: input.downtimeHours,
-      rawMaterialInputKg: input.rawMaterialInputKg,
-      draftNote: input.draftNote ?? null,
-      createdById: actor.id,
-      participants: {
-        create: input.participants.map((p) => ({
-          userId: p.userId,
-          stage: p.stage,
-          hoursWorked: p.hoursWorked,
-          scheduledHours: p.scheduledHours,
-        })),
+      data: {
+        shiftDate: day,
+        shiftType: input.shiftType,
+        skuId: input.skuId,
+        status: "DRAFT",
+        rawOutputKg: input.rawOutputKg,
+        totalLaborHours: input.totalLaborHours,
+        downtimeHours: input.downtimeHours,
+        rawMaterialInputKg: input.rawMaterialInputKg,
+        draftNote: input.draftNote ?? null,
+        createdById: actor.id,
+        participants: {
+          create: input.participants.map((p) => ({
+            userId: p.userId,
+            stage: p.stage,
+            hoursWorked: p.hoursWorked,
+            scheduledHours: p.scheduledHours,
+          })),
+        },
       },
-    },
-    include: { sku: true, participants: true },
-  })
-    .catch((e: unknown) => {
-      if (e instanceof Prisma.PrismaClientKnownRequestError) {
-        // Hai người khai cùng ca cùng lúc: kiểm tra trùng ở trên đều lọt, ràng
-        // buộc unique của DB chặn người thứ hai — trả 409 thay vì lỗi 500.
-        // CHỈ khi đúng là khoá (ngày, ca, mã) — trùng ở bảng người làm ca là
-        // chuyện khác, không được báo nhầm thành "ca đã khai".
-        if (e.code === "P2002" && isShiftUniqueViolation(e)) {
-          shiftAlreadyHandled(
-            `Ca ${input.shiftType} ngày ${formatVnDate(day)} cho mã ${sku.skuCode} đã được khai rồi.`
-          );
-        }
-        if (e.code === "P2002") {
-          throw new BusinessError(
-            ERR.VALIDATION_FAILED,
-            "Danh sách người làm ca bị trùng người. Mỗi người chỉ khai một dòng.",
-            400
-          );
-        }
-        // Tham chiếu tới người / mã sản phẩm vừa bị xoá giữa lúc kiểm tra và lúc ghi
-        if (e.code === "P2003") {
-          throw new BusinessError(
-            ERR.VALIDATION_FAILED,
-            "Có người làm ca hoặc mã sản phẩm không còn tồn tại trong hệ thống. Tải lại trang rồi khai lại.",
-            400
-          );
-        }
-      }
-      throw e;
-    });
+      include: { sku: true, participants: true },
+    })
+    .catch((e: unknown) =>
+      draftWriteError(e, { shiftType: input.shiftType, day, skuCode: sku.skuCode })
+    );
 
   await writeAudit({
     actor,
@@ -442,21 +568,214 @@ export async function submitShiftDraft(
   });
 
   // Báo KCS vào xác nhận
-  const qcOfficers = await prisma.user.findMany({
-    where: { productionRole: "QC_OFFICER", isActive: true },
-    select: { id: true },
-  });
-  for (const qc of qcOfficers) {
-    await notify({
-      userId: qc.id,
-      title: `Ca sản xuất chờ KCS xác nhận: ${sku.skuName}`,
-      body: `${actor.fullName} vừa khai ca ${input.shiftType} ngày ${formatVnDate(day)}, sản lượng thô ${input.rawOutputKg} kg.`,
-      level: "INFO",
-      linkUrl: `/production/${log.id}`,
-    });
-  }
+  await notifyQcOfficers(
+    `Ca sản xuất chờ KCS xác nhận: ${sku.skuName}`,
+    `${actor.fullName} vừa khai ca ${input.shiftType} ngày ${formatVnDate(day)}, sản lượng thô ${fmtKg(input.rawOutputKg)}.`,
+    log.id
+  );
 
   return log;
+}
+
+/* ============================ BƯỚC 1 ↺ — KCS TRẢ VỀ, SẢN XUẤT SỬA RỒI GỬI LẠI */
+
+/**
+ * KCS (hoặc BGĐ) trả một ca đang chờ KCS về cho sản xuất sửa — số thô khai
+ * sai, thiếu người, nhầm mã... Trước đây KCS chỉ có một nút "Xác nhận": gặp
+ * ca khai sai thì hoặc xác nhận cho qua (số sai đi thẳng vào điểm), hoặc bỏ
+ * mặc ca nằm đó. Ca vẫn DRAFT (xem lib/production/shift-flow.ts), lý do vào
+ * qcNote và nhật ký, người khai nhận thông báo.
+ */
+export async function returnShiftToProduction(
+  actor: SessionUser & { productionRole?: string | null },
+  logId: string,
+  reason: string,
+  meta: Meta = {}
+) {
+  if (!canQcApprove(actor)) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Chỉ KCS (hoặc Ban Giám đốc) mới trả ca về sản xuất được.",
+      403
+    );
+  }
+  const why = reason.replace(/\s+/g, " ").trim();
+  if (why.length < SHIFT_RETURN_MIN_REASON) {
+    throw new BusinessError(
+      ERR.REASON_REQUIRED,
+      `Trả ca về sản xuất phải ghi rõ cần sửa gì (tối thiểu ${SHIFT_RETURN_MIN_REASON} ký tự).`,
+      400
+    );
+  }
+
+  const log = await prisma.productionShiftLog.findUnique({
+    where: { id: logId },
+    include: { sku: true },
+  });
+  if (!log) {
+    throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy ca sản xuất.", 404);
+  }
+  if (log.status !== "DRAFT") {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      "Chỉ ca đang chờ KCS mới trả về sản xuất được. Ca đã qua KCS muốn sửa thì Ban Giám đốc xử lý.",
+      409
+    );
+  }
+  if (isShiftReturned(log)) {
+    shiftAlreadyHandled("Ca này đã được trả về sản xuất rồi, đang chờ người khai sửa.");
+  }
+
+  // Có điều kiện: chỉ ca DRAFT chưa bị trả về. KCS khác vừa xác nhận / vừa trả
+  // về cùng lúc thì lệnh này nhận 409.
+  const res = await prisma.productionShiftLog.updateMany({
+    where: {
+      id: logId,
+      status: "DRAFT",
+      OR: [{ qcNote: null }, { NOT: { qcNote: { startsWith: SHIFT_RETURN_PREFIX } } }],
+    },
+    data: { qcNote: buildShiftReturnNote(actor.fullName, why) },
+  });
+  if (res.count !== 1) {
+    shiftAlreadyHandled("Ca này vừa được người khác xử lý (xác nhận hoặc trả về).");
+  }
+
+  await writeAudit({
+    actor,
+    action: "PRODUCTION_SHIFT_RETURN",
+    entityName: "production_shift_logs",
+    entityId: logId,
+    before: { status: "DRAFT" },
+    after: { status: "DRAFT", traVeSanXuat: true },
+    reason: why,
+    ...meta,
+  });
+
+  await notify({
+    userId: log.createdById,
+    title: `KCS trả ca về để sửa: ${log.sku.skuName}`,
+    body: `${actor.fullName} trả lại ca ${log.shiftType} ngày ${formatVnDate(log.shiftDate)}. Cần sửa: ${why}`,
+    level: "WARNING",
+    linkUrl: `/production/${logId}/edit`,
+  });
+
+  return { id: logId };
+}
+
+/**
+ * Người khai sửa ca bị trả về rồi gửi lại cho KCS. Chỉ CHÍNH người khai — để
+ * "người khai ca" (createdById) vẫn đúng là người chịu trách nhiệm số liệu,
+ * và luật "không tự xác nhận ca mình khai" ở bước 2 vẫn còn nghĩa.
+ */
+export async function resubmitShiftDraft(
+  actor: SessionUser & { productionRole?: string | null },
+  logId: string,
+  input: DraftInput,
+  meta: Meta = {}
+) {
+  if (!canEnterDraft(actor)) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Bạn không có vai trò trong xưởng để khai báo ca sản xuất.",
+      403
+    );
+  }
+  const log = await prisma.productionShiftLog.findUnique({
+    where: { id: logId },
+    include: { sku: true, participants: true },
+  });
+  if (!log) {
+    throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy ca sản xuất.", 404);
+  }
+  if (log.createdById !== actor.id) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Chỉ người đã khai ca này mới sửa và gửi lại được.",
+      403
+    );
+  }
+  const returned = extractShiftReturn(log.qcNote);
+  if (log.status !== "DRAFT" || !returned) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      "Chỉ sửa được ca đang bị KCS trả về.",
+      409
+    );
+  }
+
+  const { sku, day } = await validateDraftInput(input, logId);
+
+  await prisma
+    .$transaction(async (tx) => {
+      // Có điều kiện: ca vẫn đang ở trạng thái "trả về" — bấm gửi hai lần thì
+      // lần sau nhận 409, không ghi đè danh sách người hai lần.
+      const res = await tx.productionShiftLog.updateMany({
+        where: {
+          id: logId,
+          status: "DRAFT",
+          qcNote: { startsWith: SHIFT_RETURN_PREFIX },
+        },
+        data: {
+          shiftDate: day,
+          shiftType: input.shiftType,
+          skuId: input.skuId,
+          rawOutputKg: input.rawOutputKg,
+          totalLaborHours: input.totalLaborHours,
+          downtimeHours: input.downtimeHours,
+          rawMaterialInputKg: input.rawMaterialInputKg,
+          draftNote: input.draftNote ?? null,
+          // Xoá dấu "trả về" — ca lại chờ KCS như mới khai
+          qcNote: null,
+        },
+      });
+      if (res.count !== 1) {
+        shiftAlreadyHandled("Ca này vừa được gửi lại rồi.");
+      }
+      await tx.productionShiftParticipant.deleteMany({ where: { shiftLogId: logId } });
+      await tx.productionShiftParticipant.createMany({
+        data: input.participants.map((p) => ({
+          shiftLogId: logId,
+          userId: p.userId,
+          stage: p.stage,
+          hoursWorked: p.hoursWorked,
+          scheduledHours: p.scheduledHours,
+        })),
+      });
+    })
+    .catch((e: unknown) =>
+      draftWriteError(e, { shiftType: input.shiftType, day, skuCode: sku.skuCode })
+    );
+
+  await writeAudit({
+    actor,
+    action: "PRODUCTION_SHIFT_RESUBMIT",
+    entityName: "production_shift_logs",
+    entityId: logId,
+    before: {
+      ca: `${log.shiftType} ${formatVnDate(log.shiftDate)}`,
+      sku: log.sku.skuCode,
+      sanLuongTho: log.rawOutputKg,
+      nvlCapVao: log.rawMaterialInputKg,
+      soNguoi: log.participants.length,
+    },
+    after: {
+      ca: `${input.shiftType} ${formatVnDate(day)}`,
+      sku: sku.skuCode,
+      sanLuongTho: input.rawOutputKg,
+      nvlCapVao: input.rawMaterialInputKg,
+      soNguoi: input.participants.length,
+    },
+    reason: `Sửa theo yêu cầu KCS (${returned.by}): ${returned.reason}`.slice(0, 1000),
+    ...meta,
+  });
+
+  await notifyQcOfficers(
+    `Ca đã sửa, chờ KCS xác nhận lại: ${sku.skuName}`,
+    `${actor.fullName} đã sửa và gửi lại ca ${input.shiftType} ngày ${formatVnDate(day)}, sản lượng thô ${fmtKg(input.rawOutputKg)}.`,
+    logId
+  );
+
+  return { id: logId };
 }
 
 /* ================================================== BƯỚC 2 — QC XÁC NHẬN */
@@ -475,6 +794,8 @@ export async function approveByQc(
      * "[BGĐ vượt quyền KCS] <lý do>" (giao diện gửi theo cách này).
      */
     ceoOverrideReason?: string | null;
+    /** Lý do lệch cân đối — bắt buộc khi lệch quá 5 kg (resolveMassGapReason) */
+    massBalanceReason?: string | null;
     /** Lỗi quy về từng công đoạn — thứ duy nhất phân biệt được người trong cùng ca */
     participantDefects?: {
       userId: string;
@@ -507,6 +828,13 @@ export async function approveByQc(
       409
     );
   }
+  if (isShiftReturned(log)) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      "Ca này đã được trả về sản xuất để sửa — chờ người khai gửi lại rồi mới xác nhận được.",
+      409
+    );
+  }
 
   // Tách bạch trách nhiệm + BGĐ chỉ được vượt quyền có lý do (xem resolveQcApproval)
   const approval = resolveQcApproval(actor, log.createdById, input);
@@ -517,7 +845,7 @@ export async function approveByQc(
   const plainNote = input.qcNote?.startsWith(CEO_QC_OVERRIDE_PREFIX)
     ? input.qcNote.slice(CEO_QC_OVERRIDE_PREFIX.length).trim() || null
     : (input.qcNote ?? null);
-  const qcNote = isOverride
+  const baseNote = isOverride
     ? buildCeoOverrideQcNote(approval.reason, input.qcNote)
     : plainNote;
 
@@ -525,16 +853,27 @@ export async function approveByQc(
   if (accounted > log.rawOutputKg * 1.5) {
     throw new BusinessError(
       ERR.VALIDATION_FAILED,
-      `Tổng KCS xác nhận ${accounted} kg vượt quá 150% sản lượng thô đã khai (${log.rawOutputKg} kg). Kiểm tra lại số cân.`,
+      `Tổng KCS xác nhận ${fmtKg(accounted, { unit: "kg" })} vượt quá 150% sản lượng thô đã khai (${fmtKg(log.rawOutputKg, { unit: "kg" })}). Kiểm tra lại số cân.`,
       400
     );
   }
+
+  // Lệch cân đối quá ngưỡng → bắt buộc lý do; lý do nối thành dòng cuối ghi
+  // chú KCS (dòng đầu vẫn dành cho tiền tố vượt quyền nếu có).
+  const gap = resolveMassGapReason(log.rawOutputKg, input, input.massBalanceReason);
+  const qcNote =
+    [baseNote, gap.noteLine].filter((x): x is string => !!x).join("\n") || null;
 
   // Chuyển trạng thái có điều kiện (status = DRAFT) — hai KCS bấm cùng lúc
   // thì chỉ một người ghi được.
   const updated = await prisma.$transaction(async (tx) => {
     const res = await tx.productionShiftLog.updateMany({
-      where: { id: logId, status: "DRAFT" },
+      // ...và chưa bị KCS khác trả về sản xuất trong lúc đang nhập
+      where: {
+        id: logId,
+        status: "DRAFT",
+        OR: [{ qcNote: null }, { NOT: { qcNote: { startsWith: SHIFT_RETURN_PREFIX } } }],
+      },
       data: {
         qcPassedKg: input.qcPassedKg,
         reworkKg: input.reworkKg,
@@ -547,7 +886,7 @@ export async function approveByQc(
       },
     });
     if (res.count !== 1) {
-      shiftAlreadyHandled("Ca này vừa được người khác xác nhận KCS.");
+      shiftAlreadyHandled("Ca này vừa được người khác xác nhận KCS hoặc trả về sản xuất.");
     }
 
     for (const d of input.participantDefects ?? []) {
@@ -584,10 +923,15 @@ export async function approveByQc(
       phe: input.scrapKg,
       viPhamHaccp: input.haccpViolationCount,
       vuotQuyenKcs: isOverride,
+      lechCanDoiKg: gap.gapKg,
     },
-    reason: isOverride
-      ? `${CEO_QC_OVERRIDE_PREFIX} ${approval.reason}`
-      : (input.qcNote ?? null),
+    reason:
+      [
+        isOverride ? `${CEO_QC_OVERRIDE_PREFIX} ${approval.reason}` : plainNote,
+        gap.noteLine,
+      ]
+        .filter(Boolean)
+        .join(" | ") || null,
     ...meta,
   });
 
@@ -609,8 +953,8 @@ export async function approveByQc(
       userId: c.id,
       title: `Ca sản xuất chờ khoá số: ${updated.sku.skuName}`,
       body: isOverride
-        ? `${actor.fullName} (Ban Giám đốc) đã VƯỢT QUYỀN KCS xác nhận. Lý do: ${approval.reason}. Đạt ${input.qcPassedKg} kg, phế ${input.scrapKg} kg, làm lại ${input.reworkKg} kg.`
-        : `KCS ${actor.fullName} đã xác nhận. Đạt ${input.qcPassedKg} kg, phế ${input.scrapKg} kg, làm lại ${input.reworkKg} kg.`,
+        ? `${actor.fullName} (Ban Giám đốc) đã VƯỢT QUYỀN KCS xác nhận. Lý do: ${approval.reason}. Đạt ${fmtKg(input.qcPassedKg)}, phế ${fmtKg(input.scrapKg)}, làm lại ${fmtKg(input.reworkKg)}.`
+        : `KCS ${actor.fullName} đã xác nhận. Đạt ${fmtKg(input.qcPassedKg)}, phế ${fmtKg(input.scrapKg)}, làm lại ${fmtKg(input.reworkKg)}.`,
       level: "INFO",
       linkUrl: `/production/${logId}`,
     });

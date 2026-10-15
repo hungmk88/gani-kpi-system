@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
+import { toast } from "@/components/toast";
 
 export default function RequestActions({
   requestId,
@@ -31,12 +32,19 @@ export default function RequestActions({
           rejectReason: reason || undefined,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.message || "Không xử lý được.");
         return;
       }
+      toast(
+        action === "ACCEPT"
+          ? "Đã tiếp nhận yêu cầu — việc đã được tạo cho phòng bạn."
+          : "Đã từ chối yêu cầu."
+      );
       router.refresh();
+    } catch {
+      setError("Mất kết nối tới máy chủ. Kiểm tra mạng rồi thử lại.");
     } finally {
       setBusy(false);
     }

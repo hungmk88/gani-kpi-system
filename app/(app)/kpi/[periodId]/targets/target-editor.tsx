@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, Lock, Save } from "lucide-react";
 import { formatVnNumber, parseVnNumber } from "@/lib/vn-number";
+import { fmtNum } from "@/lib/format";
+import { toast } from "@/components/toast";
 
 export type TargetRow = {
   resultId: string;
@@ -14,6 +16,8 @@ export type TargetRow = {
   targetValue: number | null;
   /** Dòng KPI đã chốt — API không cho sửa mục tiêu nữa */
   locked: boolean;
+  /** Khác null = chỉ tiêu ngưỡng (gatekeeper): hiện luật thay cho ô mục tiêu */
+  gatekeeperText: string | null;
 };
 
 export type TargetGroup = {
@@ -121,7 +125,7 @@ export default function TargetEditor({
             isOwnRowsLocked(g, currentUserId, currentUserRole)
               ? []
               : g.rows
-                  .filter((r) => !r.locked)
+                  .filter((r) => !r.locked && r.gatekeeperText === null)
                   .map((r) => ({ ...r, employeeName: g.employeeName }))
           )
         : [],
@@ -252,6 +256,7 @@ export default function TargetEditor({
           return next;
         });
         setSavedCount(savedIds.length);
+        toast(`Đã lưu ${fmtNum(savedIds.length)} mục tiêu`);
       }
       if (failed.size > 0) {
         setFailedIds(failed);
@@ -302,7 +307,8 @@ export default function TargetEditor({
                 </thead>
                 <tbody>
                   {g.rows.map((r) => {
-                    const rowEditable = canEdit && !ownLocked && !r.locked;
+                    const rowEditable =
+                      canEdit && !ownLocked && !r.locked && r.gatekeeperText === null;
                     const cell = rowEditable ? cells[r.resultId] : undefined;
                     const notSaved = failedIds.has(r.resultId);
                     const tone = cell?.error
@@ -316,33 +322,41 @@ export default function TargetEditor({
                       <tr key={r.resultId} className="border-t border-ink-100">
                         <td className="py-2 pr-4 text-ink-800">{r.kpiName}</td>
                         <td className="py-2 pr-4 text-ink-600 tabular-nums">
-                          {r.weightPercent}%
+                          {r.gatekeeperText ? "—" : `${fmtNum(r.weightPercent)}%`}
                         </td>
                         <td className="py-2">
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              autoComplete="off"
-                              disabled={!rowEditable || busy}
-                              aria-invalid={cell?.error ? true : undefined}
-                              placeholder={rowEditable ? "Chưa đặt" : "—"}
-                              className={`input w-40 ${tone}`}
-                              value={values[r.resultId] ?? ""}
-                              onChange={(e) => onEdit(r.resultId, e.target.value)}
-                            />
-                            <span className="text-xs text-ink-500">{r.unit}</span>
-                            {canEdit && r.locked && !ownLocked && (
-                              <span className="inline-flex items-center gap-1 text-xs text-ink-500">
-                                <Lock size={12} strokeWidth={2} /> Đã chốt
-                              </span>
-                            )}
-                          </div>
-                          {cell?.error && (
-                            <p className="mt-1 text-xs text-red-700">{cell.error}</p>
-                          )}
-                          {!cell?.error && notSaved && (
-                            <p className="mt-1 text-xs text-red-700">Chưa lưu được.</p>
+                          {r.gatekeeperText ? (
+                            <span className="text-xs text-ink-600">
+                              {r.gatekeeperText} · cố định, không cần đặt mục tiêu
+                            </span>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  autoComplete="off"
+                                  disabled={!rowEditable || busy}
+                                  aria-invalid={cell?.error ? true : undefined}
+                                  placeholder={rowEditable ? "Chưa đặt" : "—"}
+                                  className={`input w-40 ${tone}`}
+                                  value={values[r.resultId] ?? ""}
+                                  onChange={(e) => onEdit(r.resultId, e.target.value)}
+                                />
+                                <span className="text-xs text-ink-500">{r.unit}</span>
+                                {canEdit && r.locked && !ownLocked && (
+                                  <span className="inline-flex items-center gap-1 text-xs text-ink-500">
+                                    <Lock size={12} strokeWidth={2} /> Đã chốt
+                                  </span>
+                                )}
+                              </div>
+                              {cell?.error && (
+                                <p className="mt-1 text-xs text-red-700">{cell.error}</p>
+                              )}
+                              {!cell?.error && notSaved && (
+                                <p className="mt-1 text-xs text-red-700">Chưa lưu được.</p>
+                              )}
+                            </>
                           )}
                         </td>
                       </tr>
@@ -375,8 +389,11 @@ export default function TargetEditor({
       )}
 
       {canEdit && (
-        // Thanh lưu bám đáy màn hình — phòng đông người không phải cuộn xuống cuối
-        <div className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-3 border-t border-ink-200 bg-white px-4 py-3">
+        // Thanh lưu bám đáy màn hình — phòng đông người không phải cuộn xuống
+        // cuối. Dưới lg còn thanh điều hướng dưới (56px) nên phải nằm ngay trên
+        // nó, không thì nút Lưu bị che (StickyActions chung chỉ dính dưới sm,
+        // từ sm trở lên thành hàng tĩnh — ở đây cần dính ở mọi cỡ màn hình).
+        <div className="sticky bottom-[calc(56px+env(safe-area-inset-bottom))] z-20 flex flex-wrap items-center justify-between gap-3 border-t border-ink-200 bg-white/95 px-4 py-3 backdrop-blur lg:bottom-0 print:hidden">
           <div className="text-sm">
             {busy ? (
               <span className="text-ink-600">{progress ?? "Đang lưu..."}</span>
@@ -407,7 +424,7 @@ export default function TargetEditor({
           <button
             onClick={save}
             disabled={busy || dirtyCount === 0 || invalidCount > 0}
-            className="btn-primary"
+            className="btn-primary max-sm:w-full"
           >
             {busy ? (
               "Đang lưu..."

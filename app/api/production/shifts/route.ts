@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { handle, ok, requireUser } from "@/lib/api";
@@ -8,47 +7,12 @@ import {
   withProductionRole,
   redactShiftForViewer,
 } from "@/lib/services/production-service";
-import { PRODUCTION_STAGES, SHIFT_TYPES } from "@/lib/production/constants";
+import { shiftDraftSchema } from "@/lib/production/draft-schema";
 import { BusinessError } from "@/lib/rbac";
 import { ERR } from "@/lib/constants";
 import { parseVnDate } from "@/lib/vn-time";
 
 export const runtime = "nodejs";
-
-// Trần an toàn cho số nhập tay (xem app/api/production/shifts/[id]/route.ts)
-const MAX_KG = 100_000;
-const kg = (label: string) =>
-  z
-    .number({ invalid_type_error: `${label} phải là số.` })
-    .finite(`${label} không hợp lệ.`)
-    .min(0, `${label} không được âm.`)
-    .max(MAX_KG, `${label} vượt trần ${MAX_KG.toLocaleString("vi-VN")} kg.`);
-const hours = (max: number) => z.number().finite().min(0).max(max);
-
-const schema = z.object({
-  // Ngày ca là NGÀY: nhận "YYYY-MM-DD", vẫn nhận ISO đầy đủ cho client cũ.
-  shiftDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày ca không hợp lệ.")
-    .or(z.string().datetime("Ngày ca không hợp lệ.")),
-  shiftType: z.enum(SHIFT_TYPES),
-  skuId: z.string().min(1),
-  rawOutputKg: kg("Sản lượng thô"),
-  totalLaborHours: hours(100_000),
-  downtimeHours: hours(100_000).default(0),
-  rawMaterialInputKg: kg("Nguyên liệu cấp vào"),
-  draftNote: z.string().max(2000).optional(),
-  participants: z
-    .array(
-      z.object({
-        userId: z.string().min(1),
-        stage: z.enum(PRODUCTION_STAGES),
-        hoursWorked: hours(24),
-        scheduledHours: hours(24).default(0),
-      })
-    )
-    .min(1, "Phải khai ít nhất một người làm ca này."),
-});
 
 export async function GET(req: Request) {
   return handle(async () => {
@@ -105,7 +69,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   return handle(async () => {
     const user = await withProductionRole(await requireUser());
-    const body = schema.parse(await req.json());
+    const body = shiftDraftSchema.parse(await req.json());
 
     let shiftDate: Date;
     try {

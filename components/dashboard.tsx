@@ -7,6 +7,7 @@ import {
   CONFIDENCE_LABEL,
 } from "@/lib/analytics/constants";
 import { StatCard } from "@/components/ui";
+import { fmtNum } from "@/lib/format";
 import type {
   ActionItem,
   DashboardAlert,
@@ -112,9 +113,7 @@ export function PeriodGateTrack({ gate }: { gate: GateState }) {
  * ra bằng chữ, không giấu — im lặng bỏ qua sẽ khiến con số trông đủ hơn thực tế.
  */
 export function ProductionStatRow({ summary }: { summary: ProductionSummary }) {
-  const outputLabel = new Intl.NumberFormat("vi-VN", {
-    maximumFractionDigits: 1,
-  }).format(summary.outputTonnes);
+  const outputLabel = fmtNum(summary.outputTonnes, 1);
 
   // Xưởng chưa chạy gì: một dòng trung tính, không dựng hai thẻ to tướng
   // "0 người / 0 tấn" chiếm chỗ của ngoại lệ.
@@ -284,9 +283,7 @@ export function LeanTaskList({
           <span
             className={`shrink-0 rounded-md border px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ${chip}`}
           >
-            {t.lateDays
-              ? `trễ ${t.lateDays} ngày`
-              : formatVnTime(t.dueDate)}
+            {t.lateLabel ?? formatVnTime(t.dueDate)}
           </span>
         </Link>
       ))}
@@ -387,10 +384,10 @@ export function SelfAnomalyPanel({
 
             <div className="mb-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-500 tabular-nums">
               <span>
-                bạn khai: <b className="text-ink-800">{fmt(a.reportedValue)}</b>
+                bạn khai: <b className="text-ink-800">{fmtNum(a.reportedValue)}</b>
               </span>
               <span>
-                nếp cũ: <b className="text-ink-800">{fmt(a.historicalMedian)}</b>
+                nếp cũ: <b className="text-ink-800">{fmtNum(a.historicalMedian)}</b>
               </span>
               <span>
                 dựa trên {a.sampleSize} kỳ ·{" "}
@@ -411,9 +408,6 @@ export function SelfAnomalyPanel({
   );
 }
 
-function fmt(n: number) {
-  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
-}
 
 /**
  * Lời giải thích bất thường do bộ máy phân tích viết sẵn (đã lưu trong CSDL)

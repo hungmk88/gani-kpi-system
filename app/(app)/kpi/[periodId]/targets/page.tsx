@@ -4,6 +4,8 @@ import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { can } from "@/lib/rbac";
 import { PageHeader } from "@/components/ui";
+import { gatekeeperRuleFor, isCountedKpiRow } from "@/lib/kpi";
+import { gatekeeperRuleText } from "../../achievement";
 import TargetEditor, { type TargetGroup } from "./target-editor";
 
 export const dynamic = "force-dynamic";
@@ -71,6 +73,9 @@ export default async function KpiTargetsPage({
   for (const r of results) {
     const g = groupsMap.get(r.employeeId);
     if (!g) continue;
+    // Chỉ tiêu đã ngưng dùng, trọng số 0: không tính điểm — không cần mục tiêu
+    if (!isCountedKpiRow(r)) continue;
+    const gate = gatekeeperRuleFor(r.kpiDefinition?.code);
     g.rows.push({
       resultId: r.id,
       kpiName: r.kpiDefinition?.name ?? "—",
@@ -80,6 +85,8 @@ export default async function KpiTargetsPage({
       targetValue: r.targetValue,
       // Dòng đã chốt thì API từ chối sửa → khoá luôn trên giao diện
       locked: r.status === "FINALIZED",
+      // Gatekeeper chấm theo ngưỡng cố định, mục tiêu không tham gia tính điểm
+      gatekeeperText: gate ? gatekeeperRuleText(gate) : null,
     });
   }
   // Nhân sự không có dòng KPI nào trong kỳ này (chưa được gán) thì ẩn khỏi màn hình.

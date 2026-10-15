@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildGantt, ganttRowRank, wouldCreateCycle, type GanttTaskInput } from "@/lib/gantt";
+import {
+  buildGantt,
+  ganttRowRank,
+  predecessorsDueAfter,
+  wouldCreateCycle,
+  type GanttTaskInput,
+} from "@/lib/gantt";
 
 const DAY = 86_400_000;
 const T0 = new Date("2026-10-01T02:00:00.000Z");
@@ -157,5 +163,43 @@ describe("wouldCreateCycle", () => {
   it("thêm cạnh xuôi chiều hoặc việc mới không tạo vòng", () => {
     expect(wouldCreateCycle(edges, "C", "A")).toBe(false);
     expect(wouldCreateCycle(edges, "D", "C")).toBe(false);
+  });
+});
+
+describe("predecessorsDueAfter — việc phải chờ có hạn muộn hơn việc này", () => {
+  // Hạn việc đang xem: 15/10 17:00 giờ VN
+  const due = new Date("2026-10-15T10:00:00Z");
+  const p = (id: string, status: string, dueDate: string) => ({
+    id,
+    status,
+    dueDate: new Date(dueDate),
+  });
+
+  it("nêu việc đang mở có hạn sang ngày sau", () => {
+    const r = predecessorsDueAfter(due, [
+      p("x", "IN_PROGRESS", "2026-10-20T10:00:00Z"),
+      p("y", "TO_DO", "2026-10-14T10:00:00Z"),
+    ]);
+    expect(r.map((i) => i.id)).toEqual(["x"]);
+  });
+
+  it("cùng ngày lịch VN khác giờ không tính là mâu thuẫn", () => {
+    // 15/10 22:00 giờ VN — muộn hơn vài giờ nhưng vẫn cùng ngày
+    expect(
+      predecessorsDueAfter(due, [p("z", "TO_DO", "2026-10-15T15:00:00Z")])
+    ).toHaveLength(0);
+    // 16/10 01:00 giờ VN (vẫn là 15/10 theo giờ UTC) — đã sang ngày sau
+    expect(
+      predecessorsDueAfter(due, [p("w", "TO_DO", "2026-10-15T18:00:00Z")])
+    ).toHaveLength(1);
+  });
+
+  it("bỏ qua việc đã xong / đã huỷ", () => {
+    expect(
+      predecessorsDueAfter(due, [
+        p("a", "DONE", "2026-10-20T10:00:00Z"),
+        p("b", "CANCELLED", "2026-10-20T10:00:00Z"),
+      ])
+    ).toHaveLength(0);
   });
 });

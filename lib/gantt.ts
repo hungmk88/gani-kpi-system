@@ -1,4 +1,4 @@
-import { vnDayRange, vnStartOfDay } from "./vn-time";
+import { vnDateKey, vnDayRange, vnStartOfDay } from "./vn-time";
 /**
  * BỘ DỰNG DỮ LIỆU GANTT + TÍNH ĐƯỜNG GĂNG.
  *
@@ -276,4 +276,22 @@ export function wouldCreateCycle(
     for (const p of predMap.get(cur) ?? []) stack.push(p);
   }
   return false;
+}
+
+/**
+ * Việc phải chờ (đang mở) mà HẠN CỦA NÓ còn muộn hơn hạn của việc đang xem.
+ *
+ * Kế hoạch tự mâu thuẫn: việc trước chưa tới hạn thì việc sau đã phải xong.
+ * Chưa ai trễ nên điểm rủi ro chưa kêu — phải nói ra ngay lúc nhìn vào việc,
+ * để người giao việc dời hạn hoặc thúc việc trước. So theo NGÀY lịch Việt Nam:
+ * cùng ngày khác giờ không tính là mâu thuẫn.
+ */
+export function predecessorsDueAfter<
+  T extends { status: string; dueDate: Date | string },
+>(taskDueDate: Date | string, predecessors: T[]): T[] {
+  const mine = vnDateKey(taskDueDate);
+  return predecessors.filter(
+    (p) =>
+      !["DONE", "CANCELLED"].includes(p.status) && vnDateKey(p.dueDate) > mine
+  );
 }

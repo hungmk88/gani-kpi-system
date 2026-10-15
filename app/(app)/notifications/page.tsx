@@ -2,11 +2,15 @@ import Link from "next/link";
 import { Bell } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { Badge, EmptyState, PageHeader, formatDateTime } from "@/components/ui";
+import { Badge, EmptyState, PageHeader, ShowingCount } from "@/components/ui";
+import { fmtDateTime, fmtNum } from "@/lib/format";
 import MarkAllRead from "./mark-all-read";
 import TelegramLink from "./telegram-link";
 
 export const dynamic = "force-dynamic";
+
+/** Trang nạp chừng này thông báo gần nhất */
+const LIMIT = 100;
 
 export default async function NotificationsPage() {
   const user = (await requireSession())!;
@@ -16,18 +20,27 @@ export default async function NotificationsPage() {
     select: { telegramChatId: true },
   });
 
-  const items = await prisma.notification.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    take: 100,
-  });
-  const unread = items.filter((n) => !n.isRead).length;
+  // Đếm bằng count(): trước đây "chưa đọc" chỉ tính trong 100 thông báo đã
+  // nạp, ai có hơn 100 thì con số bị thấp đi mà không biết.
+  const [items, total, unread] = await Promise.all([
+    prisma.notification.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      take: LIMIT,
+    }),
+    prisma.notification.count({ where: { userId: user.id } }),
+    prisma.notification.count({ where: { userId: user.id, isRead: false } }),
+  ]);
 
   return (
     <>
       <PageHeader
         title="Thông báo"
-        subtitle={`${unread} chưa đọc trên tổng ${items.length} thông báo gần đây`}
+        subtitle={
+          total === 0
+            ? "Chưa có thông báo nào"
+            : `${fmtNum(unread)} chưa đọc trên tổng ${fmtNum(total)} thông báo`
+        }
         actions={unread > 0 ? <MarkAllRead /> : undefined}
       />
 
@@ -75,7 +88,7 @@ export default async function NotificationsPage() {
                   {n.body}
                 </div>
                 <div className="mt-1.5 text-xs text-ink-500">
-                  {formatDateTime(n.createdAt)}
+                  {fmtDateTime(n.createdAt)}
                   {/* Lỗi kỹ thuật thô chỉ để trong title (rê chuột xem) */}
                   {n.sendError && (
                     <span className="ml-2 text-red-700" title={n.sendError}>
@@ -93,6 +106,11 @@ export default async function NotificationsPage() {
               <div key={n.id}>{inner}</div>
             );
           })}
+          <ShowingCount
+            shown={items.length}
+            total={total}
+            hint="các thông báo gần nhất"
+          />
         </div>
       )}
     </>
