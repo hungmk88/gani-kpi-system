@@ -11,7 +11,8 @@ type Sku = {
   targetOutputKg: number;
   stdMaterialLossRate: number;
   stdKgPerLaborHour: number;
-  unitPriceVnd: number;
+  /** null = người xem không có quyền xem tiền */
+  unitPriceVnd: number | null;
   isActive: boolean;
   shiftCount: number;
   rawMaterialId: string | null;
@@ -23,10 +24,12 @@ type RawMaterialOption = { id: string; code: string; name: string };
 export default function SkuManager({
   skus,
   canEdit,
+  showMoney,
   rawMaterials,
 }: {
   skus: Sku[];
   canEdit: boolean;
+  showMoney: boolean;
   rawMaterials: RawMaterialOption[];
 }) {
   const router = useRouter();
@@ -170,6 +173,7 @@ export default function SkuManager({
               Định mức NVL = {norm(f.targetOutputKg, f.stdMaterialLossRate)} kg
             </p>
           </div>
+          {showMoney && (
           <div>
             <label className="label">Đơn giá quy đổi (₫/kg)</label>
             <input
@@ -186,6 +190,7 @@ export default function SkuManager({
               Dùng để quy tổn thất ra tiền. Chỉ BGĐ xem được số đó.
             </p>
           </div>
+          )}
           <div className="sm:col-span-3">
             <button
               className="btn-primary"
@@ -213,7 +218,7 @@ export default function SkuManager({
                 <th className="text-right">Hao hụt ĐM</th>
                 <th className="text-right">Định mức NVL</th>
                 <th>NVL chính (kho)</th>
-                <th className="text-right">Đơn giá</th>
+                {showMoney && <th className="text-right">Đơn giá</th>}
                 <th className="text-right">Số ca</th>
                 <th>Trạng thái</th>
                 {canEdit && <th></th>}
@@ -279,9 +284,11 @@ export default function SkuManager({
                       </span>
                     )}
                   </td>
-                  <td className="text-right text-ink-600">
-                    {new Intl.NumberFormat("vi-VN").format(s.unitPriceVnd)} ₫
-                  </td>
+                  {showMoney && (
+                    <td className="text-right text-ink-600">
+                      {new Intl.NumberFormat("vi-VN").format(s.unitPriceVnd ?? 0)} ₫
+                    </td>
+                  )}
                   <td className="text-right text-ink-600">{s.shiftCount}</td>
                   <td>
                     {s.isActive ? (

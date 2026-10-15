@@ -40,7 +40,15 @@ export default function UserImport() {
         method: "POST",
         body: fd,
       });
-      const data = (await res.json()) as ImportResult & { message?: string };
+      const data = (await res.json().catch(() => ({}))) as ImportResult & {
+        message?: string;
+      };
+      // Lỗi từ server (file quá lớn, sai định dạng, hết phiên...) không có
+      // danh sách dòng — hiện thông báo thay vì vẽ bảng kết quả rỗng rồi vỡ.
+      if (!res.ok) {
+        setError(data.message ?? "Nạp file thất bại.");
+        return;
+      }
       setResult(data);
       if (data.accepted) router.refresh();
     } catch {

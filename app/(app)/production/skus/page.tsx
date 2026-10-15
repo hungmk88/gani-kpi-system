@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { Package } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { withProductionRole } from "@/lib/services/production-service";
+import { canSeeMoney, withProductionRole } from "@/lib/services/production-service";
 import { PageHeader } from "@/components/ui";
 import SkuManager from "./sku-manager";
 
@@ -17,6 +17,7 @@ export default async function SkusPage() {
     user.role === "CEO" || user.role === "ADMIN" || !!user.productionRole;
   if (!isInsider) redirect("/dashboard");
 
+  const showMoney = canSeeMoney(user);
   const canEdit =
     user.role === "CEO" ||
     user.role === "ADMIN" ||
@@ -56,6 +57,7 @@ export default async function SkusPage() {
 
       <SkuManager
         canEdit={canEdit}
+        showMoney={showMoney}
         rawMaterials={rawMaterials.map((m) => ({
           id: m.id,
           code: m.code,
@@ -68,7 +70,8 @@ export default async function SkusPage() {
           targetOutputKg: s.targetOutputKg,
           stdMaterialLossRate: s.stdMaterialLossRate,
           stdKgPerLaborHour: s.stdKgPerLaborHour,
-          unitPriceVnd: s.unitPriceVnd,
+          // Đơn giá là số tiền — chỉ BGĐ / Giám đốc SX mới nhận được
+          unitPriceVnd: showMoney ? s.unitPriceVnd : null,
           isActive: s.isActive,
           shiftCount: s._count.shiftLogs,
           rawMaterialId: s.rawMaterialId,

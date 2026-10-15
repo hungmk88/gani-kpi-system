@@ -390,11 +390,17 @@ export async function resolveReconciliation(
     );
   }
 
-  const before = { actualSystem: kpiRow.actualSystem };
+  const before = {
+    actualSystem: kpiRow.actualSystem,
+    actualFinal: kpiRow.actualFinal,
+  };
 
+  // Số đã chốt khi đối soát là SỐ CHỐT của dòng KPI. Chỉ ghi vào actualSystem
+  // thì vô nghĩa: điểm chấm theo actualFinal ?? actualSelf ?? actualSystem,
+  // nên số nhân viên tự khai (đang lệch) vẫn thắng.
   await prisma.kpiResult.update({
     where: { id: kpiRow.id },
-    data: { actualSystem: input.value },
+    data: { actualSystem: input.value, actualFinal: input.value },
   });
   const updated = await recalcResult(kpiRow.id);
 
@@ -418,6 +424,7 @@ export async function resolveReconciliation(
     before,
     after: {
       actualSystem: input.value,
+      actualFinal: input.value,
       chonNguon: input.sourceCode,
       cacNguon: JSON.parse(rec.sourcesJson),
     },

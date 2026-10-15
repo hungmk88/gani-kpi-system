@@ -6,6 +6,7 @@ import { clientMeta } from "@/lib/audit";
 import {
   approveByQc,
   canSeeMoney,
+  redactShiftForViewer,
   lockAndTriggerKpi,
   reopenShift,
   withProductionRole,
@@ -188,7 +189,7 @@ export async function POST(
     switch (body.action) {
       case "QC_APPROVE": {
         const r = await approveByQc(user, id, body, meta);
-        return ok({ shift: r });
+        return ok({ shift: redactShiftForViewer(r, user) });
       }
       case "CEO_LOCK": {
         const r = await lockAndTriggerKpi(user, id, body, meta);

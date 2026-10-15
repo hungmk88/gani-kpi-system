@@ -29,7 +29,8 @@ const schema = z.object({
     .number()
     .int("Đơn giá phải là số đồng nguyên.")
     .min(0)
-    .max(2_000_000_000),
+    .max(2_000_000_000)
+    .default(0),
   rawMaterialId: z.string().nullable().optional(),
 });
 
@@ -79,6 +80,8 @@ export async function POST(req: Request) {
   return handle(async () => {
     const user = await assertManager(await requireUser());
     const body = schema.parse(await req.json());
+    // Quản trị được quản lý danh mục SKU nhưng KHÔNG được xem/đặt đơn giá
+    if (!canSeeMoney(user)) body.unitPriceVnd = 0;
 
     const exists = await prisma.productSku.findUnique({
       where: { skuCode: body.skuCode },
@@ -119,6 +122,7 @@ export async function PATCH(req: Request) {
       throw new BusinessError(ERR.VALIDATION_FAILED, "Thiếu id SKU.", 400);
     }
     const body = patchSchema.parse(await req.json());
+    if (!canSeeMoney(user)) delete body.unitPriceVnd;
 
     const before = await prisma.productSku.findUnique({ where: { id } });
     if (!before) {

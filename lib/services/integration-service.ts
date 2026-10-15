@@ -262,18 +262,16 @@ export async function ingestFromSource(opts: {
       continue;
     }
 
-    const row =
-      existing ??
-      (await prisma.kpiResult.create({
-        data: {
-          periodId: period.id,
-          employeeId: employee.id,
-          kpiDefinitionId: def.id,
-          weightPercent: def.defaultWeight,
-          targetValue: 0,
-          status: "DRAFT",
-        },
-      }));
+    // Không tự tạo dòng KPI — chỉ tiêu chưa giao cho người này thì không ai
+    // được tự ý giao thay trưởng phòng (cùng luật với nạp Excel và cầu nối
+    // sản xuất). Số vẫn nằm trong nhật ký feed, giao xong là đối soát được.
+    if (!existing) {
+      errors.push(
+        `Chưa giao chỉ tiêu ${def.code} cho ${employee.email} trong kỳ ${period.name} — bỏ qua.`
+      );
+      continue;
+    }
+    const row = existing;
 
     // Đối soát quyết định có ghi số vào KPI hay không — không ghi thẳng ở đây
     const rec = await reconcileCell(row.id);

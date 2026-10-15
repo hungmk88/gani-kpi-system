@@ -4,6 +4,53 @@ Bản triển khai **Phase 1 (MVP Core)**, **Phase 2 (AI Engine & Advanced Views
 
 ---
 
+## 0. Bản sửa sau review 10/2026 — việc PHẢI làm khi deploy
+
+Bản này vá các lỗ bảo mật và lỗi nghiệp vụ tìm thấy khi review toàn bộ dự án.
+Làm đúng thứ tự:
+
+1. **Đổi `JWT_SECRET` trên Vercel** (`openssl rand -hex 48`). Secret cũ từng nằm
+   trong `scripts/create-test-token.mjs` trong lịch sử git — coi như đã lộ. Hệ
+   thống giờ từ chối chạy nếu secret ngắn hơn 32 ký tự hoặc còn chuỗi mẫu.
+   Đổi xong mọi người phải đăng nhập lại.
+2. **Đổi `CRON_SECRET`, `IPOS_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_SECRET`** nếu
+   còn là chuỗi mẫu trong `.env.example` — chuỗi mẫu giờ bị từ chối.
+3. **cron-job.org:** bắt buộc `POST` và secret trong header `x-cron-secret`.
+   `GET` và `?secret=` trên URL không còn được nhận.
+4. **Chạy migration** (máy có `DIRECT_URL` của production):
+   `npx prisma migrate deploy` — thêm bảng `job_locks` và các index.
+   Migration `20261016090000_money_int_and_checks` đổi các cột tiền sang số
+   nguyên VND (làm tròn đến đồng) và thêm CHECK constraint cho vai trò / trạng
+   thái / ca. Sau đó chạy `npm run db:validate-checks` — nó liệt kê dòng CŨ nào
+   mang giá trị lạ (vd ca "MORNING"); sửa các dòng đó rồi chạy
+   `npm run db:validate-checks -- --apply` để xác nhận constraint.
+5. **Sửa dữ liệu ngày giờ cũ** — sao lưu trước, chạy thử, xem kỹ rồi mới sửa thật:
+   `npm run fix:dates` rồi `npm run fix:dates -- --apply`.
+   Sửa hạn chốt 2-4-5 của các kỳ chưa chốt (trước lệch 7–14 tiếng) và ngày ca
+   sản xuất bị lùi một ngày do server chạy giờ UTC.
+6. **Đổi mật khẩu `ceo@` và `admin@`** nếu vẫn là `Gani@2026`. Kiểm tra và khoá
+   tài khoản `test-ceo@example.com` nếu có.
+7. **Sao lưu tự động:** thêm secret `BACKUP_DATABASE_URL` (DIRECT_URL) và
+   `BACKUP_PASSPHRASE` vào GitHub → Settings → Secrets → Actions. Workflow
+   `.github/workflows/backup.yml` chạy mỗi đêm, bản sao được mã hoá.
+
+Thay đổi hành vi người dùng sẽ thấy:
+
+- Ban Giám đốc chỉ chốt được dòng KPI đã qua bước trưởng phòng (duyệt tay hoặc tự
+  khoá ngày 4). Dòng không có số liệu được 0 điểm, không còn tự lấy số 0.
+- Trưởng phòng không tự duyệt / tự đặt mục tiêu / tự chốt đối soát cho chính mình.
+  Nhập số khác với các nguồn khi đối soát là quyền riêng của Ban Giám đốc.
+- Nghỉ phép: đơn 1 ngày tính 1 ngày (trước tính 0). Trần 12 ngày/năm và 6
+  ngày/nửa năm được kiểm tra thật khi gửi và khi duyệt.
+- Đăng nhập sai 5 lần trong 15 phút thì tạm khoá 15 phút.
+- Bot Telegram chỉ làm việc trong chat riêng.
+- Sản xuất chỉ còn **một** bộ chấm điểm: điểm 2 tầng tự chấm khi khoá ca, chảy
+  vào KPI tháng. Trang "Năm Quyết Định", nút "Tính điểm 6 KPI" và tab "6 chỉ tiêu"
+  đã gỡ; chỉ tiêu sản lượng/hao hụt đặt theo từng mã ở `/production/skus`.
+  Dashboard KPI sản xuất (`/admin/kpi-dashboard`) giờ hiện đúng điểm 2 tầng đó.
+
+---
+
 ## 1. Chạy hệ thống trong 3 lệnh
 
 > **Muốn dùng ngay, không cần chạy gì cả:** hệ thống đã sống tại
@@ -59,51 +106,6 @@ npm start
 ```
 
 ---
-
-## 0. Bản sửa sau review 10/2026 — việc PHẢI làm khi deploy
-
-Bản này vá các lỗ bảo mật và lỗi nghiệp vụ tìm thấy khi review toàn bộ dự án.
-Làm đúng thứ tự:
-
-1. **Đổi `JWT_SECRET` trên Vercel** (`openssl rand -hex 48`). Secret cũ từng nằm
-   trong `scripts/create-test-token.mjs` trong lịch sử git — coi như đã lộ. Hệ
-   thống giờ từ chối chạy nếu secret ngắn hơn 32 ký tự hoặc còn chuỗi mẫu.
-   Đổi xong mọi người phải đăng nhập lại.
-2. **Đổi `CRON_SECRET`, `IPOS_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_SECRET`** nếu
-   còn là chuỗi mẫu trong `.env.example` — chuỗi mẫu giờ bị từ chối.
-3. **cron-job.org:** bắt buộc `POST` và secret trong header `x-cron-secret`.
-   `GET` và `?secret=` trên URL không còn được nhận.
-4. **Chạy migration** (máy có `DIRECT_URL` của production):
-   `npx prisma migrate deploy` — thêm bảng `job_locks` và các index.
-   Migration `20261016090000_money_int_and_checks` đổi các cột tiền sang số
-   nguyên VND (làm tròn đến đồng) và thêm CHECK constraint cho vai trò / trạng
-   thái / ca. Sau đó chạy `npm run db:validate-checks` — nó liệt kê dòng CŨ nào
-   mang giá trị lạ (vd ca "MORNING"); sửa các dòng đó rồi chạy
-   `npm run db:validate-checks -- --apply` để xác nhận constraint.
-5. **Sửa dữ liệu ngày giờ cũ** — sao lưu trước, chạy thử, xem kỹ rồi mới sửa thật:
-   `npm run fix:dates` rồi `npm run fix:dates -- --apply`.
-   Sửa hạn chốt 2-4-5 của các kỳ chưa chốt (trước lệch 7–14 tiếng) và ngày ca
-   sản xuất bị lùi một ngày do server chạy giờ UTC.
-6. **Đổi mật khẩu `ceo@` và `admin@`** nếu vẫn là `Gani@2026`. Kiểm tra và khoá
-   tài khoản `test-ceo@example.com` nếu có.
-7. **Sao lưu tự động:** thêm secret `BACKUP_DATABASE_URL` (DIRECT_URL) và
-   `BACKUP_PASSPHRASE` vào GitHub → Settings → Secrets → Actions. Workflow
-   `.github/workflows/backup.yml` chạy mỗi đêm, bản sao được mã hoá.
-
-Thay đổi hành vi người dùng sẽ thấy:
-
-- Ban Giám đốc chỉ chốt được dòng KPI đã qua bước trưởng phòng (duyệt tay hoặc tự
-  khoá ngày 4). Dòng không có số liệu được 0 điểm, không còn tự lấy số 0.
-- Trưởng phòng không tự duyệt / tự đặt mục tiêu / tự chốt đối soát cho chính mình.
-  Nhập số khác với các nguồn khi đối soát là quyền riêng của Ban Giám đốc.
-- Nghỉ phép: đơn 1 ngày tính 1 ngày (trước tính 0). Trần 12 ngày/năm và 6
-  ngày/nửa năm được kiểm tra thật khi gửi và khi duyệt.
-- Đăng nhập sai 5 lần trong 15 phút thì tạm khoá 15 phút.
-- Bot Telegram chỉ làm việc trong chat riêng.
-- Sản xuất chỉ còn **một** bộ chấm điểm: điểm 2 tầng tự chấm khi khoá ca, chảy
-  vào KPI tháng. Trang "Năm Quyết Định", nút "Tính điểm 6 KPI" và tab "6 chỉ tiêu"
-  đã gỡ; chỉ tiêu sản lượng/hao hụt đặt theo từng mã ở `/production/skus`.
-  Dashboard KPI sản xuất (`/admin/kpi-dashboard`) giờ hiện đúng điểm 2 tầng đó.
 
 ---
 
@@ -810,7 +812,13 @@ một dòng vào menu, không đụng gì ở tầng dịch vụ.
 - **Database**: PostgreSQL trên Supabase (region `ap-southeast-1`, Singapore)
 - **Cron nền**: cron-job.org gọi `POST /api/cron/run` mỗi 2 tiếng
 
-Các bước đã thực hiện, ghi lại để làm lại được cho môi trường khác (VD: xưởng thứ hai, công ty con) hoặc khi cần build lại từ đầu:
+> ⚠️ **Đây là nhật ký lần chuyển SQLite → Postgres (09/2026), KHÔNG làm lại.**
+> Đặc biệt bước 4 (`rm -rf prisma/migrations` + `migrate dev --name init`) sẽ
+> phá lịch sử migration mà CI và production đang dựa vào. Dựng môi trường mới
+> thì chỉ cần: tạo project Postgres → điền `.env` theo `.env.example` →
+> `npm ci && npx prisma migrate deploy && npm run db:seed`.
+
+Các bước đã thực hiện lúc chuyển (giữ lại để tra cứu):
 
 1. Tạo project PostgreSQL trên Supabase (bản miễn phí đủ cho 20–150 người). **Chọn region gần Việt Nam** (Singapore) — xem cái bẫy vùng miền bên dưới.
 2. Sửa `prisma/schema.prisma`: `provider = "sqlite"` → `provider = "postgresql"`, thêm `directUrl = env("DIRECT_URL")`.
@@ -892,10 +900,9 @@ tách hẳn khỏi project phục vụ `gani-kpi-system.vercel.app`:
 ```
 kpi-system/
 ├── prisma/
-│   ├── schema.prisma          35 bảng: nhân sự, công việc, KPI, sản xuất, tích hợp, đối soát, dự báo, nhật ký
+│   ├── schema.prisma          nhân sự, công việc, KPI, sản xuất, tích hợp, đối soát, dự báo, nhật ký (vài bảng LEGACY giữ dữ liệu cũ)
 │   ├── seed-history.mjs       dựng 6 kỳ KPI cũ + việc đã đóng làm nền cho dự báo
 │   ├── seed.mjs               dữ liệu khởi tạo GANI FOODY
-│   └── dev.db                 database SQLite (không đưa lên git)
 ├── lib/
 │   ├── constants.ts           ★ mọi quyết định của Ban Giám đốc nằm ở đây
 │   ├── kpi.ts                 công thức tính điểm, trần 150%, đối soát lệch số
@@ -903,6 +910,10 @@ kpi-system/
 │   ├── risk.ts                chấm điểm rủi ro 0–100 (kể cả quá tải, mắt xích gãy)
 │   ├── gantt.ts               dựng Gantt + tính đường găng CPM + chặn vòng lặp
 │   ├── auth.ts                đăng nhập, JWT trong cookie HttpOnly
+│   ├── vn-time.ts             ★ MỌI phép tính / hiển thị ngày giờ theo giờ Việt Nam
+│   ├── secrets.ts             đọc secret (từ chối chuỗi mẫu), so sánh thời gian hằng
+│   ├── job-lock.ts            khoá chống chạy chồng việc nền
+│   ├── db-constraints.ts      danh sách giá trị cho CHECK constraint (khớp migration)
 │   ├── password.ts            ★ luật đặt mật khẩu — một chỗ duy nhất cho mọi đường
 │   ├── excel-users.ts         file mẫu + bộ đọc danh sách nhân sự
 │   ├── audit.ts               ghi nhật ký không xoá được
@@ -961,8 +972,11 @@ kpi-system/
 │   ├── anomaly-actions.tsx    ô giải trình bất thường — dùng chung Phân tích và Bảng điều hành
 │   └── shell.tsx              khung thanh bên + menu ☰ trên điện thoại
 ├── scripts/
+│   ├── fix-dates.mjs          sửa hạn chốt / ngày ca cũ (chạy một lần, mặc định chạy thử)
+│   ├── validate-db-checks.mjs kiểm dữ liệu cũ với CHECK constraint, --apply để xác nhận
+│   ├── guard-local-db.mjs     chặn db:reset vào database không phải local
 │   ├── scheduler.mjs          bộ máy chạy nền
-│   ├── backup.mjs             ★ sao lưu database bằng VACUUM INTO + dọn bản cũ
+│   ├── backup.mjs             ★ sao lưu Postgres bằng pg_dump + dọn bản cũ (bản tự động: .github/workflows/backup.yml)
 │   ├── smoke-test.mjs         18 phép thử nghiệp vụ Phase 1
 │   ├── smoke-test-phase2.mjs  35 phép thử nghiệp vụ Phase 2
 │   ├── smoke-test-phase3.mjs  38 phép thử nghiệp vụ Phase 3

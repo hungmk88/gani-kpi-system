@@ -77,6 +77,9 @@ export async function POST(req: Request) {
         passwordHash: await hashPassword(body.newPassword),
         passwordChangedAt: new Date(),
         mustChangePassword: false,
+        // Cố ý KHÔNG ngắt Telegram ở đây: chính chủ tự đổi (đã nhập đúng mật
+        // khẩu cũ). Ngắt Telegram chỉ khi quản trị đặt lại hộ — xem
+        // PATCH /api/admin/users/:id.
       },
     });
 
