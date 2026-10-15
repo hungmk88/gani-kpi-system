@@ -6,8 +6,13 @@ import { checkPasswordStrength } from "@/lib/password";
 import { BusinessError } from "@/lib/rbac";
 import { ERR } from "@/lib/constants";
 import { clientMeta, writeAudit } from "@/lib/audit";
+import { countAudit, lockKey, recordAttempt, windowStart } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
+
+// Chống dò mật khẩu hiện tại từ một phiên bị chiếm: 5 lần sai / 15 phút / người.
+const MAX_FAILS = 5;
+const WINDOW_MS = 15 * 60_000;
 
 const schema = z.object({
   currentPassword: z.string().min(1, "Chưa nhập mật khẩu hiện tại."),
@@ -30,30 +35,64 @@ export async function POST(req: Request) {
     const actor = await requireUser({ allowMustChange: true });
     const body = schema.parse(await req.json());
 
-    const user = await prisma.user.findUnique({
-      where: { id: actor.id },
-      omit: { passwordHash: false },
-    });
-    if (!user) {
+    const meta = clientMeta(req);
+
+    // Đếm + so mật khẩu hiện tại + ghi lần sai chạy trong một transaction giữ
+    // advisory lock theo user: phiên bị chiếm (cookie bị trộm) không thể dò
+    // mật khẩu hiện tại bằng cách bắn song song nhiều request.
+    const outcome = await prisma.$transaction(
+      async (tx) => {
+        await lockKey(tx, `pwchange:${actor.id}`);
+        const fails = await countAudit(tx, {
+          action: "PASSWORD_CHANGE_FAILED",
+          entityId: actor.id,
+          since: windowStart(WINDOW_MS),
+        });
+        if (fails >= MAX_FAILS) return { kind: "throttled" as const };
+
+        const user = await tx.user.findUnique({
+          where: { id: actor.id },
+          omit: { passwordHash: false },
+        });
+        if (!user) return { kind: "missing" as const };
+
+        if (!(await verifyPassword(body.currentPassword, user.passwordHash))) {
+          // Ghi lại cả lần thử hỏng — đây là dấu hiệu có người đụng vào máy
+          // người khác. Ghi thẳng qua tx (không nuốt lỗi) vì nó là dòng đếm.
+          await recordAttempt(tx, {
+            action: "PASSWORD_CHANGE_FAILED",
+            entityName: "users",
+            entityId: user.id,
+            userId: actor.id,
+            userEmail: actor.email,
+            after: { reason: "Sai mật khẩu hiện tại" },
+            ...meta,
+          });
+          return { kind: "failed" as const };
+        }
+        return { kind: "ok" as const, user };
+      },
+      { maxWait: 10_000, timeout: 15_000 }
+    );
+
+    if (outcome.kind === "throttled") {
+      throw new BusinessError(
+        "TOO_MANY_ATTEMPTS",
+        "Nhập sai mật khẩu hiện tại quá nhiều lần. Vui lòng thử lại sau 15 phút.",
+        429
+      );
+    }
+    if (outcome.kind === "missing") {
       throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy tài khoản.", 404);
     }
-
-    if (!(await verifyPassword(body.currentPassword, user.passwordHash))) {
-      // Ghi lại cả lần thử hỏng — đây là dấu hiệu có người đụng vào máy người khác
-      await writeAudit({
-        actor,
-        action: "PASSWORD_CHANGE_FAILED",
-        entityName: "users",
-        entityId: user.id,
-        after: { reason: "Sai mật khẩu hiện tại" },
-        ...clientMeta(req),
-      });
+    if (outcome.kind === "failed") {
       throw new BusinessError(
         ERR.VALIDATION_FAILED,
         "Mật khẩu hiện tại không đúng.",
         400
       );
     }
+    const user = outcome.user;
 
     if (body.newPassword === body.currentPassword) {
       throw new BusinessError(
@@ -94,7 +133,7 @@ export async function POST(req: Request) {
       entityName: "users",
       entityId: user.id,
       after: { self: true },
-      ...clientMeta(req),
+      ...meta,
     });
 
     return ok({ changed: true });

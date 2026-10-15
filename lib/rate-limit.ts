@@ -32,11 +32,11 @@ export type AuditCountFilter = {
 
 /**
  * Đếm số dòng audit_logs khớp bộ lọc trong cửa sổ thời gian. Trường nào bỏ
- * trống thì không lọc theo trường đó. `ip: null` (không xác định được IP)
- * -> trả 0, vì không thể gom các lượt "không IP" của nhiều người khác nhau.
+ * trống (undefined) thì không lọc theo trường đó. `ip: null` (không xác định
+ * được IP) đếm chung một "xô" các dòng không có IP — chặt hơn là bỏ qua, vì bỏ
+ * qua thì kẻ dò chỉ cần giấu IP là thoát giới hạn.
  */
 export async function countAudit(db: Db, f: AuditCountFilter): Promise<number> {
-  if (f.ip === null) return 0;
   return db.auditLog.count({
     where: {
       action: Array.isArray(f.action) ? { in: f.action } : f.action,
@@ -51,4 +51,36 @@ export async function countAudit(db: Db, f: AuditCountFilter): Promise<number> {
 /** Mốc bắt đầu của một cửa sổ trượt dài `ms` tính tới bây giờ. */
 export function windowStart(ms: number, now = Date.now()) {
   return new Date(now - ms);
+}
+
+/**
+ * Ghi một dòng đếm vào audit_logs NGAY trong transaction đang giữ khoá.
+ * Cố ý không đi qua writeAudit (hàm đó nuốt lỗi): dòng đếm mà ghi hỏng thì
+ * giới hạn mất tác dụng, nên lỗi phải nổi lên và huỷ cả transaction.
+ */
+export async function recordAttempt(
+  tx: Prisma.TransactionClient,
+  row: {
+    action: string;
+    entityName: string;
+    entityId: string;
+    userId?: string | null;
+    userEmail?: string | null;
+    after?: unknown;
+    ip?: string | null;
+    userAgent?: string | null;
+  }
+) {
+  return tx.auditLog.create({
+    data: {
+      userId: row.userId ?? null,
+      userEmail: row.userEmail ?? null,
+      action: row.action,
+      entityName: row.entityName,
+      entityId: row.entityId,
+      afterPayload: row.after === undefined ? null : JSON.stringify(row.after),
+      ipAddress: row.ip ?? null,
+      userAgent: row.userAgent ?? null,
+    },
+  });
 }

@@ -100,6 +100,18 @@ export async function verifySessionToken(
 }
 
 /**
+ * Token có ký trước mốc `cutoff` không. iat làm tròn XUỐNG theo giây nên lùi
+ * mốc 1 giây: token ký ở thời điểm t >= cutoff có iat*1000 > t - 1000 >=
+ * cutoff - 1000, tức phiên cấp SAU mốc (đăng nhập lại sau khi đăng xuất, phiên
+ * mới cấp ngay sau khi đổi mật khẩu) không bao giờ bị loại oan. Đổi lại, token
+ * ký trong vòng 1 giây TRƯỚC mốc vẫn sống — chấp nhận được.
+ */
+export function issuedBefore(token: SessionToken, cutoff: Date | null | undefined) {
+  if (!cutoff) return false;
+  return token.issuedAt * 1000 < cutoff.getTime() - 1000;
+}
+
+/**
  * Đối chiếu phiên với database. Token chỉ chứng minh "đã từng đăng nhập" —
  * quyền, phòng ban, trạng thái khoá phải lấy từ DB ở MỌI lượt gọi, nếu không
  * người bị khoá/hạ quyền/đổi mật khẩu vẫn dùng token cũ thêm 12 tiếng.
@@ -113,14 +125,10 @@ export async function loadActiveUser(
     include: { department: true },
   });
   if (!fresh || !fresh.isActive) return null;
-  // Token ký TRƯỚC lần đổi/đặt lại mật khẩu gần nhất -> hết hiệu lực.
-  // Lùi 1 giây vì iat làm tròn xuống theo giây.
-  if (
-    fresh.passwordChangedAt &&
-    token.issuedAt * 1000 < fresh.passwordChangedAt.getTime() - 1000
-  ) {
-    return null;
-  }
+  // Token ký TRƯỚC lần đổi/đặt lại mật khẩu gần nhất, hoặc trước lần đăng
+  // xuất gần nhất (sessionsRevokedAt) -> hết hiệu lực.
+  if (issuedBefore(token, fresh.passwordChangedAt)) return null;
+  if (issuedBefore(token, fresh.sessionsRevokedAt)) return null;
   return {
     user: {
       id: fresh.id,

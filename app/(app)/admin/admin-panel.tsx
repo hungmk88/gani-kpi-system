@@ -390,21 +390,29 @@ function UsersTab({
                   )}
                 </td>
                 <td>
-                  {editing === u.id && u.role !== "CEO" ? (
-                    <input
-                      className="input py-1 text-xs"
-                      defaultValue={u.telegramChatId ?? ""}
-                      placeholder="vd: 123456789"
-                      onBlur={(e) =>
-                        patch(u.id, {
-                          telegramChatId: e.target.value || null,
-                        })
-                      }
-                    />
-                  ) : (
-                    <span className="font-mono text-xs text-ink-500">
-                      {u.telegramChatId ?? "chưa nối"}
-                    </span>
+                  {/* Quản trị KHÔNG được điền sẵn Chat ID: ai trỏ được Telegram
+                      của người khác về chat của mình là nhận thông báo / bấm
+                      nút thay họ. Chính chủ tự nối bằng mã liên kết ở trang
+                      Thông báo; quản trị chỉ được gỡ liên kết. */}
+                  <span className="font-mono text-xs text-ink-500">
+                    {u.telegramChatId ?? "chưa nối"}
+                  </span>
+                  {editing === u.id && u.role !== "CEO" && u.telegramChatId && (
+                    <button
+                      className="ml-2 text-xs text-red-600 hover:underline"
+                      disabled={busy}
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `Gỡ liên kết Telegram của ${u.fullName}? Người này tự nối lại bằng mã liên kết trong trang Thông báo.`
+                          )
+                        ) {
+                          patch(u.id, { telegramChatId: null });
+                        }
+                      }}
+                    >
+                      Gỡ liên kết Telegram
+                    </button>
                   )}
                 </td>
                 <td className="text-xs text-ink-500">

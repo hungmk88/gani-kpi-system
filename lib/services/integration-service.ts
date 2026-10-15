@@ -42,6 +42,10 @@ export type IngestResult = {
   message?: string;
 };
 
+/** Trần số dòng webhook_logs cho lượt xác thực hỏng, mỗi nguồn mỗi cửa sổ. */
+const FAILED_AUTH_LOG_LIMIT = 20;
+const FAILED_AUTH_LOG_WINDOW_MS = 10 * 60_000;
+
 /** Ánh xạ loại nguồn sang giá trị lưu trong cột `source` của kpi_actual_feeds. */
 function feedSourceKind(kind: string) {
   switch (kind) {
@@ -73,6 +77,24 @@ export async function ingestFromSource(opts: {
   const endpoint = `/api/integrations/${code}/webhook`;
 
   const log = async (r: IngestResult, sourceId?: string | null) => {
+    // Lượt bị chặn ở khâu xác thực (401 sai chữ ký / 403 nguồn tạm ngưng):
+    // ai biết mã nguồn cũng bắn được, nên (1) KHÔNG lưu payload — thân tin của
+    // kẻ lạ không đáng giữ và có thể là rác cỡ lớn; (2) chỉ ghi tối đa
+    // FAILED_AUTH_LOG_LIMIT dòng mỗi nguồn trong FAILED_AUTH_LOG_WINDOW_MS —
+    // đủ để quản trị thấy "đang có người gõ cửa", không để bị spam đầy bảng.
+    // (Đếm rồi ghi không khoá: bắn song song có thể vượt ngưỡng vài dòng —
+    // chấp nhận, mục tiêu chỉ là chặn tăng không giới hạn.)
+    const failedAuth = r.httpStatus === 401 || r.httpStatus === 403;
+    if (failedAuth) {
+      const recent = await prisma.webhookLog.count({
+        where: {
+          sourceCode: code,
+          httpStatus: { in: [401, 403] },
+          createdAt: { gte: new Date(Date.now() - FAILED_AUTH_LOG_WINDOW_MS) },
+        },
+      });
+      if (recent >= FAILED_AUTH_LOG_LIMIT) return r;
+    }
     await prisma.webhookLog.create({
       data: {
         sourceCode: code,
@@ -83,8 +105,12 @@ export async function ingestFromSource(opts: {
         itemsReceived: r.received,
         itemsApplied: r.applied,
         itemsRejected: r.rejected,
-        error: r.errors.length ? r.errors.slice(0, 10).join(" | ") : null,
-        payloadSample: opts.rawBody.slice(0, 2000),
+        error: r.errors.length
+          ? r.errors.slice(0, 10).join(" | ")
+          : failedAuth
+            ? (r.message?.slice(0, 300) ?? null)
+            : null,
+        payloadSample: failedAuth ? null : opts.rawBody.slice(0, 2000),
         ipAddress: opts.ip ?? null,
       },
     });

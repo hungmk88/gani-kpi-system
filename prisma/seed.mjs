@@ -4,18 +4,23 @@
  * Chạy:  npm run db:seed
  * Chạy lại từ đầu (xoá sạch):  npm run db:reset
  *
- * Mật khẩu tài khoản mẫu: lấy từ biến SEED_PASSWORD, không có thì sinh ngẫu
- * nhiên và in ra MỘT LẦN. Mọi tài khoản mới tạo đều bị buộc đổi mật khẩu ở lần
- * đăng nhập đầu tiên.
+ * Mật khẩu tài khoản mẫu: đặt SEED_PASSWORD thì mọi tài khoản MỚI dùng chung
+ * chuỗi đó (tiện cho máy dev + smoke test). Không đặt thì MỖI tài khoản mới
+ * được sinh một mật khẩu tạm ngẫu nhiên RIÊNG, in ra MỘT LẦN dưới dạng bảng
+ * email → mật khẩu ở cuối (chỉ các tài khoản vừa tạo trong lượt chạy này;
+ * tài khoản đã có thì giữ nguyên mật khẩu). Mọi tài khoản mới tạo đều bị buộc
+ * đổi mật khẩu ở lần đăng nhập đầu tiên.
  *
- * Chặn chạy nhầm vào production: NODE_ENV=production thì phải đặt thêm
- * ALLOW_PROD_SEED=1 mới chạy.
+ * Chặn chạy nhầm vào production — phải đặt ALLOW_PROD_SEED=1 mới chạy khi:
+ *   - NODE_ENV=production, hoặc
+ *   - DATABASE_URL không trỏ vào máy local (localhost/127.0.0.1/::1).
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { seedHistory } from "./seed-history.mjs";
 import { vnAt, vnDate, vnParts } from "./vn-date.mjs";
+import { assertLocalTarget } from "../scripts/lib/local-guard.mjs";
 
 try {
   process.loadEnvFile(".env");
@@ -29,11 +34,21 @@ if (process.env.NODE_ENV === "production" && process.env.ALLOW_PROD_SEED !== "1"
   );
   process.exit(1);
 }
+// Database ở xa (Supabase, server khác...) cũng coi như production: chỉ ALLOW_PROD_SEED=1
+// mới cho qua — ALLOW_REMOTE_TARGET của smoke test KHÔNG mở khoá được bước này.
+if (process.env.ALLOW_PROD_SEED !== "1") {
+  assertLocalTarget({
+    databaseUrl: process.env.DATABASE_URL,
+    overrideEnv: "ALLOW_PROD_SEED",
+  });
+}
 
 const prisma = new PrismaClient();
 
-const DEFAULT_PASSWORD =
-  process.env.SEED_PASSWORD || `Gani-${crypto.randomBytes(9).toString("base64url")}`;
+/** Mật khẩu tạm cho một tài khoản mới: SEED_PASSWORD nếu có, không thì ngẫu nhiên riêng từng người. */
+function tempPassword() {
+  return process.env.SEED_PASSWORD || `Gani-${crypto.randomBytes(9).toString("base64url")}`;
+}
 
 // ---------------------------------------------------------------- PHÒNG BAN
 const DEPARTMENTS = [
@@ -268,29 +283,36 @@ async function main() {
   }
   console.log(`  ✓ ${DEPARTMENTS.length} phòng ban`);
 
-  // 2. Người dùng
-  const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
+  // 2. Người dùng — tài khoản đã có thì chỉ cập nhật thông tin, KHÔNG đụng mật khẩu
   const userMap = {};
+  const newAccounts = []; // [{ email, password }] — chỉ tài khoản tạo trong lượt này
   for (const u of USERS) {
-    const row = await prisma.user.upsert({
+    const profile = {
+      fullName: u.fullName,
+      jobTitle: u.jobTitle,
+      role: u.role,
+      departmentId: deptMap[u.dept],
+    };
+    const existing = await prisma.user.findUnique({
       where: { email: u.email },
-      update: {
-        fullName: u.fullName,
-        jobTitle: u.jobTitle,
-        role: u.role,
-        departmentId: deptMap[u.dept],
-      },
-      create: {
-        email: u.email,
-        passwordHash,
-        fullName: u.fullName,
-        jobTitle: u.jobTitle,
-        role: u.role,
-        departmentId: deptMap[u.dept],
-        // Mật khẩu mẫu ai cũng biết -> bắt tự đặt mật khẩu riêng ngay lần đầu
-        mustChangePassword: true,
-      },
+      select: { id: true },
     });
+    let row;
+    if (existing) {
+      row = await prisma.user.update({ where: { email: u.email }, data: profile });
+    } else {
+      const password = tempPassword();
+      row = await prisma.user.create({
+        data: {
+          email: u.email,
+          passwordHash: await bcrypt.hash(password, 10),
+          ...profile,
+          // Mật khẩu tạm in ra màn hình -> bắt tự đặt mật khẩu riêng ngay lần đầu
+          mustChangePassword: true,
+        },
+      });
+      newAccounts.push({ email: u.email, password });
+    }
     userMap[u.email] = row;
   }
   for (const [email, prole] of Object.entries(PRODUCTION_ROLES)) {
@@ -300,7 +322,9 @@ async function main() {
       data: { productionRole: prole },
     });
   }
-  console.log(`  ✓ ${USERS.length} tài khoản (tài khoản mới: mật khẩu tạm ${DEFAULT_PASSWORD}, bắt buộc đổi khi đăng nhập)`);
+  console.log(
+    `  ✓ ${USERS.length} tài khoản (${newAccounts.length} tạo mới, bắt buộc đổi mật khẩu khi đăng nhập)`
+  );
   console.log(
     `  ✓ ${Object.keys(PRODUCTION_ROLES).length} người được gán vai trò trong xưởng`
   );
@@ -579,7 +603,22 @@ async function main() {
   console.log("   Quản trị     : admin@ganifoody.vn");
   console.log("   KCS (xưởng)  : nv.qc1@ganifoody.vn");
   console.log("   Quản đốc     : tp.prod@ganifoody.vn");
-  console.log(`   Mật khẩu tạm (chỉ tài khoản mới tạo lần này): ${DEFAULT_PASSWORD}\n`);
+
+  if (newAccounts.length === 0) {
+    console.log("   (Không có tài khoản mới — mật khẩu các tài khoản cũ giữ nguyên.)\n");
+  } else if (process.env.SEED_PASSWORD) {
+    console.log(
+      `   Mật khẩu tạm của ${newAccounts.length} tài khoản mới: SEED_PASSWORD trong .env\n`
+    );
+  } else {
+    // In MỘT LẦN — không lưu ở đâu khác. Chép lại rồi giao riêng từng người.
+    const w = Math.max(...newAccounts.map((a) => a.email.length));
+    console.log("\n   Mật khẩu tạm (CHỈ hiện một lần, mỗi tài khoản một mật khẩu riêng):");
+    console.log(`   ${"Email".padEnd(w)}  Mật khẩu tạm`);
+    console.log(`   ${"-".repeat(w)}  ${"-".repeat(18)}`);
+    for (const a of newAccounts) console.log(`   ${a.email.padEnd(w)}  ${a.password}`);
+    console.log("");
+  }
 }
 
 function round2(n) {

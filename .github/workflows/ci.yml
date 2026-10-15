@@ -5,6 +5,16 @@ on:
     branches: [master]
   pull_request:
 
+# Chỉ đọc mã nguồn — CI không cần ghi gì vào repo
+permissions:
+  contents: read
+
+# PR đẩy commit mới thì huỷ lượt chạy cũ của chính PR đó; push lên master thì
+# mỗi commit chạy đủ (group theo run_id nên không huỷ nhau).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -36,10 +46,21 @@ jobs:
       - name: Unit test (giờ server UTC lẫn giờ VN phải cho cùng kết quả)
         run: npm run test:tz
       - name: Migration chạy sạch từ đầu và khớp schema
+        # --exit-code: 0 = không lệch, 2 = có lệch, 1 = lỗi khi chạy diff.
+        # Không dò chuỗi "empty migration" trong output nữa (đổi theo phiên bản Prisma).
         run: |
           npx prisma migrate deploy
-          DIFF=$(npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script)
-          echo "$DIFF"
-          echo "$DIFF" | grep -q "empty migration" || (echo "::error::schema.prisma lệch so với migrations — tạo migration mới" && exit 1)
+          set +e
+          npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script --exit-code
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error::schema.prisma lệch so với migrations — tạo migration mới (script lệch ở trên)"
+            exit 1
+          elif [ "$code" -ne 0 ]; then
+            echo "::error::prisma migrate diff lỗi (exit $code)"
+            exit "$code"
+          fi
+          echo "Migrations khớp schema.prisma"
       - name: Build
         run: npx next build

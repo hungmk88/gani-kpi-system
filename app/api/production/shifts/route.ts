@@ -15,6 +15,16 @@ import { parseVnDate } from "@/lib/vn-time";
 
 export const runtime = "nodejs";
 
+// Trần an toàn cho số nhập tay (xem app/api/production/shifts/[id]/route.ts)
+const MAX_KG = 100_000;
+const kg = (label: string) =>
+  z
+    .number({ invalid_type_error: `${label} phải là số.` })
+    .finite(`${label} không hợp lệ.`)
+    .min(0, `${label} không được âm.`)
+    .max(MAX_KG, `${label} vượt trần ${MAX_KG.toLocaleString("vi-VN")} kg.`);
+const hours = (max: number) => z.number().finite().min(0).max(max);
+
 const schema = z.object({
   // Ngày ca là NGÀY: nhận "YYYY-MM-DD", vẫn nhận ISO đầy đủ cho client cũ.
   shiftDate: z
@@ -23,18 +33,18 @@ const schema = z.object({
     .or(z.string().datetime("Ngày ca không hợp lệ.")),
   shiftType: z.enum(SHIFT_TYPES),
   skuId: z.string().min(1),
-  rawOutputKg: z.number().min(0),
-  totalLaborHours: z.number().min(0),
-  downtimeHours: z.number().min(0).default(0),
-  rawMaterialInputKg: z.number().min(0),
+  rawOutputKg: kg("Sản lượng thô"),
+  totalLaborHours: hours(100_000),
+  downtimeHours: hours(100_000).default(0),
+  rawMaterialInputKg: kg("Nguyên liệu cấp vào"),
   draftNote: z.string().max(2000).optional(),
   participants: z
     .array(
       z.object({
         userId: z.string().min(1),
         stage: z.enum(PRODUCTION_STAGES),
-        hoursWorked: z.number().min(0),
-        scheduledHours: z.number().min(0).default(0),
+        hoursWorked: hours(24),
+        scheduledHours: hours(24).default(0),
       })
     )
     .min(1, "Phải khai ít nhất một người làm ca này."),

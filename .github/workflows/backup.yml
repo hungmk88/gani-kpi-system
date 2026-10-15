@@ -1,15 +1,28 @@
 name: Backup database
 
 # Sao lưu Postgres production mỗi đêm (01:17 giờ VN = 18:17 UTC), giữ 30 ngày.
+# Bản chạy rơi vào ngày 01 (giờ VN) được tải lên thêm một artifact giữ 400 ngày
+# (bản tháng). Lưu ý: GitHub giới hạn retention theo cài đặt repo/tổ chức
+# (repo private tối đa 400 ngày, public tối đa 90) — vượt giới hạn thì GitHub
+# tự cắt về mức tối đa cho phép.
 # Cần 2 secret trong Settings → Secrets and variables → Actions của repo:
 #   BACKUP_DATABASE_URL = DIRECT_URL (cổng 5432, KHÔNG phải pooler 6543)
 #   BACKUP_PASSPHRASE   = chuỗi dài, ngẫu nhiên — bản sao được MÃ HOÁ bằng nó.
 # Mã hoá là bắt buộc: artifact của repo công khai thì ai có tài khoản GitHub
 # cũng tải được. Giải mã: gpg --decrypt kpi-....dump.gpg > kpi.dump
+# Bí mật KHÔNG đi qua dòng lệnh (argv): URL vào container qua biến môi trường,
+# passphrase vào gpg qua stdin — không lộ trong danh sách tiến trình / log.
 on:
   schedule:
     - cron: "17 18 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
 
 jobs:
   backup:
@@ -22,22 +35,32 @@ jobs:
         run: |
           if [ -z "$URL" ]; then echo "::error::Chưa đặt secret BACKUP_DATABASE_URL"; exit 1; fi
           if [ ${#PASS} -lt 20 ]; then echo "::error::Chưa đặt secret BACKUP_PASSPHRASE (tối thiểu 20 ký tự)"; exit 1; fi
+      - name: Ngày chạy (giờ VN)
+        id: when
+        run: |
+          echo "stamp=$(date -u +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
+          echo "vnday=$(TZ=Asia/Ho_Chi_Minh date +%d)" >> "$GITHUB_OUTPUT"
+          echo "vnmonth=$(TZ=Asia/Ho_Chi_Minh date +%Y-%m)" >> "$GITHUB_OUTPUT"
       - name: pg_dump
         env:
-          URL: ${{ secrets.BACKUP_DATABASE_URL }}
-        # Dùng image postgres:17 để pg_dump không cũ hơn server (Supabase 15/17)
+          PGURL: ${{ secrets.BACKUP_DATABASE_URL }}
+          FNAME: kpi-${{ steps.when.outputs.stamp }}.dump
+        # Dùng image postgres:17 để pg_dump không cũ hơn server (Supabase 15/17).
+        # -e PGURL (không kèm giá trị) = docker lấy giá trị từ môi trường của step.
         run: |
           mkdir -p backups
-          docker run --rm -v "$PWD/backups:/out" postgres:17 \
-            pg_dump --format=custom --no-owner --no-privileges \
-            --file "/out/kpi-$(date -u +%Y%m%d-%H%M).dump" "$URL"
+          docker run --rm -e PGURL -e FNAME -v "$PWD/backups:/out" postgres:17 \
+            sh -c 'pg_dump --format=custom --no-owner --no-privileges --file "/out/$FNAME" "$PGURL"'
           ls -lh backups
       - name: Mã hoá
         env:
           PASS: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
-          for f in backups/*.dump; do
-            gpg --batch --yes --pinentry-mode loopback --passphrase "$PASS" \
+          shopt -s nullglob
+          files=(backups/*.dump)
+          if [ ${#files[@]} -eq 0 ]; then echo "::error::pg_dump không tạo ra file nào"; exit 1; fi
+          for f in "${files[@]}"; do
+            printf '%s' "$PASS" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
               --symmetric --cipher-algo AES256 -o "$f.gpg" "$f"
             rm "$f"
           done
@@ -46,4 +69,24 @@ jobs:
         with:
           name: kpi-backup-${{ github.run_id }}
           path: backups/*.dump.gpg
+          if-no-files-found: error
           retention-days: 30
+      - name: Bản tháng (ngày 01 giờ VN) — giữ lâu
+        if: steps.when.outputs.vnday == '01'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kpi-backup-monthly-${{ steps.when.outputs.vnmonth }}-${{ github.run_id }}
+          path: backups/*.dump.gpg
+          if-no-files-found: error
+          retention-days: 400
+      - name: Báo lỗi sao lưu
+        if: failure()
+        run: |
+          echo "::error title=Sao lưu THẤT BẠI::Bản sao lưu đêm nay KHÔNG được tạo. Kiểm tra log các bước trên (secret, kết nối DB, phiên bản pg_dump) và chạy lại bằng workflow_dispatch."
+          {
+            echo "## Sao lưu thất bại"
+            echo ""
+            echo "Bản sao lưu ngày $(TZ=Asia/Ho_Chi_Minh date +%d/%m/%Y) KHÔNG được tạo."
+            echo "Xem log các bước trên rồi chạy lại thủ công (Actions → Backup database → Run workflow)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1

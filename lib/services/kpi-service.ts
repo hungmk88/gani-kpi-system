@@ -509,14 +509,102 @@ export async function editAfterLock(
  * nhịp chạy nền tiếp theo sẽ đưa mọi thứ về đúng.
  */
 export async function recalcOpenResults() {
+  // Một truy vấn đọc cho cả lượt, tính trong bộ nhớ, chỉ GHI dòng nào số dẫn
+  // xuất thật sự đổi — trước đây mỗi dòng 2 truy vấn + 1 lệnh ghi dù không đổi
+  // gì, cron Vercel 60 giây không gánh nổi khi số dòng lớn.
   const rows = await prisma.kpiResult.findMany({
     where: { status: { not: "FINALIZED" } },
-    select: { id: true },
+    include: { kpiDefinition: { include: { department: true } } },
   });
+
   for (const r of rows) {
-    await recalcResult(r.id);
+    const next = computeDerivedFields(r);
+    const same =
+      r.achievementPercent === next.achievementPercent &&
+      r.weightedScore === next.weightedScore &&
+      r.isCapped === next.isCapped &&
+      r.hasMismatch === next.hasMismatch &&
+      r.mismatchPercent === next.mismatchPercent;
+    if (same) continue;
+
+    // Ghi có điều kiện: nếu số nguồn vừa bị sửa ở luồng khác thì luồng đó đã
+    // tự gọi recalcResult — không ghi đè bằng số tính từ dữ liệu cũ.
+    await prisma.kpiResult.updateMany({
+      where: {
+        id: r.id,
+        status: { not: "FINALIZED" },
+        kpiDefinitionId: r.kpiDefinitionId,
+        targetValue: r.targetValue,
+        weightPercent: r.weightPercent,
+        actualSystem: r.actualSystem,
+        actualSelf: r.actualSelf,
+        actualFinal: r.actualFinal,
+      },
+      data: next,
+    });
   }
+  // Giữ kiểu trả về cũ (số dòng đã xét) để báo cáo cron không đổi ý nghĩa
   return rows.length;
+}
+
+/**
+ * BẢN SAO THUẦN của phần tính toán trong recalcResult (không truy vấn, không
+ * ghi) — dùng cho quét hàng loạt. Sửa công thức ở recalcResult thì PHẢI sửa
+ * cả ở đây.
+ */
+function computeDerivedFields(r: {
+  targetValue: number | null;
+  weightPercent: number | null;
+  actualSystem: number | null;
+  actualSelf: number | null;
+  actualFinal: number | null;
+  kpiDefinition: {
+    code: string;
+    isHigherBetter: boolean;
+    department: { code: string } | null;
+  } | null;
+}) {
+  const effective = r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null;
+  const cap =
+    r.kpiDefinition?.department?.code === SALES_DEPARTMENT_CODE
+      ? SALES_KPI_CAP
+      : undefined;
+
+  let calc = r.kpiDefinition
+    ? calculateKpiScore({
+        target: r.targetValue ?? 0,
+        actual: effective,
+        weight: r.weightPercent ?? 0,
+        isHigherBetter: r.kpiDefinition.isHigherBetter,
+        cap,
+      })
+    : {
+        achievementPercent: 0,
+        weightedScore: 0,
+        isCapped: false,
+        rawAchievementPercent: 0,
+      };
+
+  if (
+    r.kpiDefinition?.code === SALES_RETURN_RATE_GATEKEEPER.KPI_CODE &&
+    effective !== null &&
+    effective !== undefined &&
+    effective > SALES_RETURN_RATE_GATEKEEPER.THRESHOLD_PERCENT
+  ) {
+    calc = {
+      ...calc,
+      weightedScore: -SALES_RETURN_RATE_GATEKEEPER.PENALTY_POINTS,
+    };
+  }
+
+  const mismatch = detectMismatch(r.actualSystem, r.actualSelf);
+  return {
+    achievementPercent: calc.achievementPercent,
+    weightedScore: calc.weightedScore,
+    isCapped: calc.isCapped,
+    hasMismatch: mismatch.hasMismatch,
+    mismatchPercent: mismatch.mismatchPercent,
+  };
 }
 
 /**

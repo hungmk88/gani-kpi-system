@@ -44,6 +44,21 @@ export async function PATCH(
       throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy tài khoản.", 404);
     }
 
+    // Quản trị chỉ được GỠ liên kết Telegram (null), không được đặt giá trị:
+    // đặt được Chat ID là trỏ được thông báo và nút "Duyệt" của người khác về
+    // Telegram của mình. Nối Telegram chỉ qua mã liên kết chính chủ tự lấy ở
+    // trang Thông báo. Chuỗi rỗng coi như gỡ.
+    if (typeof body.telegramChatId === "string") {
+      if (body.telegramChatId.trim() !== "") {
+        throw new BusinessError(
+          ERR.FORBIDDEN,
+          "Không được đặt Telegram Chat ID hộ người khác — chỉ được gỡ liên kết. Người dùng tự liên kết trong trang Thông báo.",
+          403
+        );
+      }
+      body.telegramChatId = null;
+    }
+
     const promotingToCeo = body.role === "CEO" && target.role !== "CEO";
     const touchesCeoAccount = target.role === "CEO" || promotingToCeo;
 

@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/api";
+import { fail, handle, requireUser } from "@/lib/api";
 import { kpiScopeWhere } from "@/lib/rbac";
 import { buildKpiReport, type ExportRow } from "@/lib/excel";
 import { classifyScore, summarizeResults } from "@/lib/kpi";
@@ -7,23 +7,25 @@ import { KPI_STATUS_LABEL } from "@/lib/constants";
 
 export const runtime = "nodejs";
 
-/** Xuất bảng KPI ra Excel — chỉ xuất phần dữ liệu người dùng có quyền xem. */
+/**
+ * Xuất bảng KPI ra Excel — chỉ xuất phần dữ liệu người dùng có quyền xem.
+ * Bọc handle(): chưa đăng nhập -> 401, đang bị buộc đổi mật khẩu -> 403 (đúng
+ * format lỗi chung) thay vì nổ 500. Thành công vẫn trả file nhị phân.
+ */
 export async function GET(req: Request) {
+  return handle(() => exportKpi(req));
+}
+
+async function exportKpi(req: Request): Promise<Response> {
   const user = await requireUser();
   const periodId = new URL(req.url).searchParams.get("periodId");
   if (!periodId) {
-    return Response.json(
-      { statusCode: 400, errorCode: "VALIDATION_FAILED", message: "Thiếu periodId." },
-      { status: 400 }
-    );
+    return fail("VALIDATION_FAILED", "Thiếu periodId.", 400);
   }
 
   const period = await prisma.kpiPeriod.findUnique({ where: { id: periodId } });
   if (!period) {
-    return Response.json(
-      { statusCode: 404, errorCode: "NOT_FOUND", message: "Không tìm thấy kỳ KPI." },
-      { status: 404 }
-    );
+    return fail("NOT_FOUND", "Không tìm thấy kỳ KPI.", 404);
   }
 
   const results = await prisma.kpiResult.findMany({
