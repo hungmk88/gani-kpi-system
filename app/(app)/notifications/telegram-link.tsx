@@ -30,12 +30,14 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
     setError(null);
     try {
       const res = await fetch("/api/telegram/link", { method: "POST" });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.message || "Không lấy được mã.");
         return;
       }
       setInfo(data);
+    } catch {
+      setError("Không kết nối được máy chủ, thử lại sau.");
     } finally {
       setBusy(false);
     }
@@ -46,10 +48,21 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
       return;
     }
     setBusy(true);
-    await fetch("/api/telegram/link", { method: "DELETE" });
-    setInfo(null);
-    router.refresh();
-    setBusy(false);
+    setError(null);
+    try {
+      const res = await fetch("/api/telegram/link", { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.message || "Không ngắt nối được, thử lại sau.");
+        return;
+      }
+      setInfo(null);
+      router.refresh();
+    } catch {
+      setError("Không kết nối được máy chủ, thử lại sau.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (linked && !info) {
@@ -65,8 +78,13 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
           </div>
         </div>
         <button className="btn-ghost btn-sm" disabled={busy} onClick={unlink}>
-          Ngắt nối
+          {busy ? "Đang ngắt..." : "Ngắt nối"}
         </button>
+        {error && (
+          <div className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </div>
+        )}
       </div>
     );
   }

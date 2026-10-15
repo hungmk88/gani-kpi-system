@@ -4,7 +4,9 @@
 //
 // Provider: PostgreSQL (Supabase production).
 // Cac truong enum de dang String (giu tuong thich voi lich su SQLite) - gia
-// tri hop le duoc rang buoc o tang ung dung trong lib/constants.ts + zod.
+// tri hop le rang buoc o lib/constants.ts + zod, VA o database bang CHECK
+// constraint cho cac cot chinh (xem lib/db-constraints.ts + migration
+// 20261016090000_money_int_and_checks).
 // Cac truong JSON de dang String chua JSON.stringify.
 // =====================================================================
 
@@ -58,6 +60,9 @@ model User {
   // nay. Nguoi do vao he thong la bi chan lai o trang doi mat khau, khong xem
   // duoc gi khac cho toi khi tu dat mat khau rieng.
   mustChangePassword Boolean @default(false)
+  // Đăng xuất / "đăng xuất mọi nơi": token ký TRƯỚC mốc này mất hiệu lực
+  // (lib/auth.ts loadActiveUser), kể cả token bị đánh cắp từ trước.
+  sessionsRevokedAt DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -279,6 +284,7 @@ model LeaveRequest {
   @@index([status])
   @@index([employeeId])
   @@index([departmentId])
+  @@index([employeeId, startDate])
   @@map("leave_requests")
 }
 
@@ -533,6 +539,7 @@ model Notification {
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId, isRead])
+  @@index([userId, createdAt])
   @@map("notifications")
 }
 
@@ -1047,7 +1054,7 @@ model KpiShiftTarget {
   periodTarget        KpiPeriodTarget @relation(fields: [periodTargetId], references: [id], onDelete: Cascade)
 
   shiftDate           DateTime
-  shiftType           String    // MORNING | AFTERNOON | NIGHT
+  shiftType           String    // (LEGACY) MORNING | AFTERNOON | NIGHT
 
   // 6 KPI Targets cho ca này (nếu khác với mục tiêu chung)
   output_target       Float?    // Thường để null = dùng period target

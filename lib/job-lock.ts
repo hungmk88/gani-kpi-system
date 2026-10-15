@@ -19,9 +19,11 @@ export async function acquireJobLock(name: string, ttlSeconds: number) {
   try {
     await prisma.jobLock.create({ data: { name, lockedUntil: until } });
     return true;
-  } catch {
-    // Dòng đã tồn tại và còn hạn -> có lượt khác đang chạy
-    return false;
+  } catch (e) {
+    // Dòng đã tồn tại và còn hạn -> có lượt khác đang chạy. Lỗi khác (mất kết
+    // nối, thiếu bảng...) phải nổi lên, không được giả làm "đang bận".
+    if ((e as { code?: string }).code === "P2002") return false;
+    throw e;
   }
 }
 
