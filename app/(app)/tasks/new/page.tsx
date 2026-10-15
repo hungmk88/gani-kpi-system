@@ -8,7 +8,12 @@ import NewTaskForm from "./new-task-form";
 
 export const dynamic = "force-dynamic";
 
-export default async function NewTaskPage() {
+export default async function NewTaskPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ mode?: string }>;
+}) {
+  const { mode } = await searchParams;
   const user = (await requireSession())!;
   if (!can(user, "task.assign.department")) redirect("/tasks");
 
@@ -56,6 +61,8 @@ export default async function NewTaskPage() {
       />
 
       <NewTaskForm
+        // ?mode=request (từ trang Yêu cầu liên phòng ban) → mở sẵn tab nhờ phòng khác
+        initialMode={mode === "request" ? "request" : "task"}
         role={user.role}
         myDepartmentId={user.departmentId}
         departments={departments.map((d) => ({ id: d.id, name: d.name }))}

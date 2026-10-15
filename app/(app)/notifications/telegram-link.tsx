@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CircleCheck, Smartphone } from "lucide-react";
+import ConfirmDialog from "@/components/confirm-dialog";
 
 type LinkInfo = {
   code: string;
@@ -23,6 +24,7 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
   const router = useRouter();
   const [info, setInfo] = useState<LinkInfo | null>(null);
   const [busy, setBusy] = useState(false);
+  const [askUnlink, setAskUnlink] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function getCode() {
@@ -44,9 +46,7 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
   }
 
   async function unlink() {
-    if (!confirm("Ngắt nối Telegram? Bạn sẽ không nhận thông báo qua Telegram nữa.")) {
-      return;
-    }
+    setAskUnlink(false);
     setBusy(true);
     setError(null);
     try {
@@ -77,9 +77,26 @@ export default function TelegramLink({ linked }: { linked: boolean }) {
             /trogiup để xem các lệnh dùng được.
           </div>
         </div>
-        <button className="btn-ghost btn-sm" disabled={busy} onClick={unlink}>
+        <button
+          className="btn-ghost btn-sm"
+          disabled={busy}
+          onClick={() => setAskUnlink(true)}
+        >
           {busy ? "Đang ngắt..." : "Ngắt nối"}
         </button>
+        <ConfirmDialog
+          open={askUnlink}
+          tone="danger"
+          title="Ngắt nối Telegram?"
+          confirmLabel="Ngắt nối"
+          onClose={() => setAskUnlink(false)}
+          onConfirm={unlink}
+        >
+          <p>
+            Bạn sẽ không nhận thông báo và không bấm duyệt qua Telegram nữa. Muốn
+            nối lại thì lấy mã liên kết mới ở trang này.
+          </p>
+        </ConfirmDialog>
         {error && (
           <div className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}

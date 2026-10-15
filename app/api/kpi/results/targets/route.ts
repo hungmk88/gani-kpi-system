@@ -15,8 +15,9 @@ const schema = z.object({
         targetValue: z.number().finite().nonnegative(),
       })
     )
-    .min(1)
-    .max(200),
+    .min(1, "Không có dòng nào để lưu.")
+    // Giao diện tự chia thành nhiều đợt ≤ 200 dòng (xem target-editor.tsx)
+    .max(200, "Tối đa 200 dòng mỗi lần lưu."),
 });
 
 /**
@@ -53,7 +54,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const ids = body.updates.map((u) => u.resultId);
+    // Bỏ trùng resultId, nếu không số dòng tìm được sẽ lệch và báo nhầm "không tồn tại"
+    const ids = [...new Set(body.updates.map((u) => u.resultId))];
     const rows = await prisma.kpiResult.findMany({
       where: { id: { in: ids } },
       include: { employee: true },
@@ -69,7 +71,7 @@ export async function POST(req: Request) {
       if (r.status === "FINALIZED") {
         throw new BusinessError(
           ERR.KPI_FINALIZED,
-          "Có dòng KPI đã chốt — không sửa mục tiêu được.",
+          `Dòng KPI của ${r.employee.fullName} đã chốt — không sửa mục tiêu được.`,
           409
         );
       }
@@ -93,7 +95,7 @@ export async function POST(req: Request) {
       ) {
         throw new BusinessError(
           ERR.FORBIDDEN,
-          "Trưởng phòng chỉ đặt mục tiêu cho nhân sự phòng mình.",
+          `Trưởng phòng chỉ đặt mục tiêu cho nhân sự phòng mình (${r.employee.fullName} thuộc phòng khác).`,
           403
         );
       }

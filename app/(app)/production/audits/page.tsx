@@ -2,8 +2,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { CircleCheck, Lock } from "lucide-react";
 import { requireSession } from "@/lib/auth";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { withProductionRole } from "@/lib/services/production-service";
+import {
+  canExplainAudit,
+  withProductionRole,
+} from "@/lib/services/production-service";
 import {
   AUDIT_STATUS_LABEL,
   BEHAVIOR_LABEL,
@@ -32,37 +36,66 @@ export default async function AuditsPage() {
     );
   if (!allowed) redirect("/production");
 
-  const audits = await prisma.antiGamingAudit.findMany({
-    include: {
-      shiftLog: {
-        include: {
-          sku: true,
-          createdBy: true,
-          kpiResults: true,
-        },
+  /* Mỗi nhóm một truy vấn riêng, có count() riêng.
+     Trước đây gộp một truy vấn sắp theo `status asc` + take 60: status là chuỗi
+     nên sắp theo bảng chữ cái (CEO_APPROVED, EXPLAINED, PENDING_EXPLANATION,
+     REJECTED) → khi nhiều cảnh báo, cảnh báo ĐÃ XỬ LÝ chiếm hết 60 chỗ và cảnh
+     báo ĐANG CHỜ biến mất khỏi màn hình; thẻ thống kê cũng đếm trên mảng đã cắt.
+     Giờ: việc đang treo lên trước, đã xong chỉ lấy một phần và ghi rõ X/N. */
+  const include = {
+    shiftLog: {
+      include: {
+        sku: true,
+        createdBy: true,
+        kpiResults: true,
+        participants: { select: { userId: true } },
       },
-      explainedBy: true,
-      reviewedBy: true,
     },
-    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-    take: 60,
-  });
+    explainedBy: true,
+    reviewedBy: true,
+  } satisfies Prisma.AntiGamingAuditInclude;
 
-  const pending = audits.filter((a) => a.status === "PENDING_EXPLANATION");
-  const explained = audits.filter((a) => a.status === "EXPLAINED");
-  const done = audits.filter((a) =>
-    ["CEO_APPROVED", "REJECTED"].includes(a.status)
-  );
+  const OPEN_TAKE = 100;
+  const DONE_TAKE = 30;
+  const DONE_STATUSES = ["CEO_APPROVED", "REJECTED"];
 
-  const lockedPeople = await prisma.dailyKpiResult.count({
-    where: { isBonusLocked: true },
-  });
+  const [
+    pending,
+    pendingTotal,
+    explained,
+    explainedTotal,
+    done,
+    doneTotal,
+    lockedPeople,
+  ] = await Promise.all([
+    // Chờ giải trình: nghiêm trọng trước (CRITICAL < WARNING theo chữ cái),
+    // rồi cái chờ lâu nhất trước — người bị khoá thưởng lâu nhất được xử lý trước.
+    prisma.antiGamingAudit.findMany({
+      where: { status: "PENDING_EXPLANATION" },
+      include,
+      orderBy: [{ severity: "asc" }, { createdAt: "asc" }],
+      take: OPEN_TAKE,
+    }),
+    prisma.antiGamingAudit.count({ where: { status: "PENDING_EXPLANATION" } }),
+    prisma.antiGamingAudit.findMany({
+      where: { status: "EXPLAINED" },
+      include,
+      orderBy: [{ severity: "asc" }, { explainedAt: "asc" }],
+      take: OPEN_TAKE,
+    }),
+    prisma.antiGamingAudit.count({ where: { status: "EXPLAINED" } }),
+    prisma.antiGamingAudit.findMany({
+      where: { status: { in: DONE_STATUSES } },
+      include,
+      orderBy: [{ reviewedAt: "desc" }, { createdAt: "desc" }],
+      take: DONE_TAKE,
+    }),
+    prisma.antiGamingAudit.count({ where: { status: { in: DONE_STATUSES } } }),
+    prisma.dailyKpiResult.count({ where: { isBonusLocked: true } }),
+  ]);
 
-  const canExplain =
-    user.role === "CEO" ||
-    ["SUPERVISOR", "PRODUCTION_DIRECTOR", "TEAM_LEADER"].includes(
-      user.productionRole ?? ""
-    );
+  const totalAll = pendingTotal + explainedTotal + doneTotal;
+  const isCeo = user.role === "CEO";
 
   return (
     <>
@@ -79,14 +112,14 @@ export default async function AuditsPage() {
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Chờ giải trình"
-          value={pending.length}
-          tone={pending.length > 0 ? "amber" : "green"}
+          value={pendingTotal}
+          tone={pendingTotal > 0 ? "amber" : "green"}
           hint="quản đốc cần vào nói rõ"
         />
         <StatCard
           label="Chờ BGĐ quyết"
-          value={explained.length}
-          tone={explained.length > 0 ? "violet" : "green"}
+          value={explainedTotal}
+          tone={explainedTotal > 0 ? "violet" : "green"}
           hint="đã có giải trình"
         />
         <StatCard
@@ -95,10 +128,10 @@ export default async function AuditsPage() {
           tone={lockedPeople > 0 ? "red" : "green"}
           hint={lockedPeople > 0 ? "chưa nhận được thưởng ca" : "không ai bị khoá"}
         />
-        <StatCard label="Đã xử lý xong" value={done.length} hint="gần đây" />
+        <StatCard label="Đã xử lý xong" value={doneTotal} hint="từ trước tới nay" />
       </div>
 
-      {audits.length === 0 ? (
+      {totalAll === 0 ? (
         <EmptyState
           icon={<CircleCheck size={32} strokeWidth={1.75} />}
           title="Không có cảnh báo nào"
@@ -107,14 +140,37 @@ export default async function AuditsPage() {
       ) : (
         <div className="space-y-4">
           {[
-            { title: `Chờ giải trình (${pending.length})`, list: pending },
-            { title: `Chờ Ban Giám đốc quyết (${explained.length})`, list: explained },
-            { title: `Đã xử lý (${done.length})`, list: done },
+            {
+              key: "pending",
+              title: `Chờ giải trình (${pendingTotal})`,
+              list: pending,
+              total: pendingTotal,
+            },
+            {
+              key: "explained",
+              title: `Chờ Ban Giám đốc quyết (${explainedTotal})`,
+              list: explained,
+              total: explainedTotal,
+            },
+            {
+              key: "done",
+              title: `Đã xử lý (${doneTotal})`,
+              list: done,
+              total: doneTotal,
+            },
           ]
             .filter((g) => g.list.length > 0)
             .map((g) => (
-              <section key={g.title}>
+              <section key={g.key}>
                 <h2 className="section-title mb-3">{g.title}</h2>
+                {g.list.length < g.total && (
+                  <p className="mb-2 text-xs text-ink-500">
+                    Đang hiển thị {g.list.length}/{g.total}
+                    {g.key === "done"
+                      ? " — các cảnh báo xử lý gần nhất."
+                      : " — nghiêm trọng và chờ lâu nhất lên trước."}
+                  </p>
+                )}
                 <div className="space-y-3">
                   {g.list.map((a) => {
                     const lockedCount = a.shiftLog.kpiResults.filter(
@@ -210,8 +266,16 @@ export default async function AuditsPage() {
                             auditId={a.id}
                             shiftId={a.shiftLogId}
                             status={a.status}
-                            canExplain={canExplain}
-                            isCeo={user.role === "CEO"}
+                            canExplain={canExplainAudit(user, {
+                              createdById: a.shiftLog.createdById,
+                              participantUserIds: a.shiftLog.participants.map(
+                                (p) => p.userId
+                              ),
+                            })}
+                            isCeo={isCeo}
+                            explainedByMe={
+                              !!a.explainedById && a.explainedById === user.id
+                            }
                           />
                         </div>
                       </div>

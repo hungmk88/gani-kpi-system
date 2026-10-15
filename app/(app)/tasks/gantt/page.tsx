@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { GanttChartSquare } from "lucide-react";
+import type { Prisma } from "@prisma/client";
+import { GanttChartSquare, Info } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { taskScopeWhere } from "@/lib/rbac";
@@ -9,6 +10,10 @@ import GanttChart from "./gantt-chart";
 
 export const dynamic = "force-dynamic";
 
+// Trần số việc vẽ một lần — quá nhiều thanh thì trình duyệt ì và không ai đọc nổi
+const GANTT_LIMIT = 200;
+const DONE_VISIBLE_DAYS = 14;
+
 export default async function GanttPage({
   searchParams,
 }: {
@@ -17,29 +22,88 @@ export default async function GanttPage({
   const user = (await requireSession())!;
   const sp = await searchParams;
 
-  const where: Record<string, unknown> = {
-    ...taskScopeWhere(user),
-    status: { not: "CANCELLED" },
-  };
-  if (sp.project) where.projectId = sp.project;
+  // Phạm vi chung: đúng quyền xem, bỏ việc đã huỷ, áp bộ lọc dự án / phòng ban.
+  // Dùng AND để không đè lên OR của taskScopeWhere (nhân viên).
+  const base: Prisma.TaskWhereInput[] = [
+    taskScopeWhere(user),
+    { status: { not: "CANCELLED" } },
+  ];
+  if (sp.project) base.push({ projectId: sp.project });
   if (sp.dept && (user.role === "CEO" || user.role === "ADMIN")) {
-    where.departmentId = sp.dept;
+    base.push({ departmentId: sp.dept });
   }
 
-  const [tasks, projects, departments] = await Promise.all([
-    prisma.task.findMany({
-      where,
-      include: { assignee: true, department: true },
-      orderBy: [{ startDate: "asc" }, { dueDate: "asc" }],
-      take: 200,
-    }),
-    prisma.project.findMany({ orderBy: { name: "asc" } }),
-    prisma.department.findMany({ orderBy: { name: "asc" } }),
-  ]);
+  // Việc đang mở là trọng tâm; việc xong chỉ giữ 14 ngày gần nhất để còn thấy
+  // mắt xích trước của đường găng, không để việc cũ chiếm hết hạn mức.
+  const doneSince = new Date(Date.now() - DONE_VISIBLE_DAYS * 86_400_000);
+  const openWhere: Prisma.TaskWhereInput = {
+    AND: [...base, { status: { not: "DONE" } }],
+  };
+  const doneWhere: Prisma.TaskWhereInput = {
+    AND: [
+      ...base,
+      { status: "DONE" },
+      {
+        OR: [
+          { completedAt: { gte: doneSince } },
+          { completedAt: null, updatedAt: { gte: doneSince } },
+        ],
+      },
+    ],
+  };
 
-  const edges = await prisma.taskDependency.findMany({
-    select: { taskId: true, dependsOnId: true },
-  });
+  // Dự án trong ô lọc: CEO/ADMIN thấy hết; còn lại chỉ dự án có việc trong
+  // tầm của mình (trưởng phòng: dự án có việc của phòng mình).
+  const isCompanyWide = user.role === "CEO" || user.role === "ADMIN";
+
+  const [openTasks, openCount, doneCount, projects, departments] =
+    await Promise.all([
+      // Hạn sớm nhất trước → việc trễ và việc sắp đến hạn luôn được giữ khi chạm trần
+      prisma.task.findMany({
+        where: openWhere,
+        include: { assignee: true, department: true },
+        orderBy: [{ dueDate: "asc" }, { startDate: "asc" }],
+        take: GANTT_LIMIT,
+      }),
+      prisma.task.count({ where: openWhere }),
+      prisma.task.count({ where: doneWhere }),
+      prisma.project.findMany({
+        where: isCompanyWide
+          ? undefined
+          : { tasks: { some: taskScopeWhere(user) } },
+        orderBy: { name: "asc" },
+      }),
+      prisma.department.findMany({ orderBy: { name: "asc" } }),
+    ]);
+
+  // Việc xong chỉ lấp phần hạn mức còn trống, mới xong trước
+  const doneRoom = GANTT_LIMIT - openTasks.length;
+  const doneTasks =
+    doneRoom > 0
+      ? await prisma.task.findMany({
+          where: doneWhere,
+          include: { assignee: true, department: true },
+          orderBy: [{ completedAt: "desc" }, { updatedAt: "desc" }],
+          take: doneRoom,
+        })
+      : [];
+
+  const tasks = [...openTasks, ...doneTasks];
+  const totalCount = openCount + doneCount;
+
+  // Chỉ nạp quan hệ chạm tới việc đang xem, không kéo cả công ty về
+  const visibleIds = tasks.map((t) => t.id);
+  const edges = visibleIds.length
+    ? await prisma.taskDependency.findMany({
+        where: {
+          OR: [
+            { taskId: { in: visibleIds } },
+            { dependsOnId: { in: visibleIds } },
+          ],
+        },
+        select: { taskId: true, dependsOnId: true },
+      })
+    : [];
 
   const gantt = buildGantt(
     tasks.map((t) => ({
@@ -83,14 +147,26 @@ export default async function GanttPage({
           hint="Biểu đồ Gantt cần ít nhất một công việc trong tầm quản lý của bạn."
         />
       ) : (
-        <GanttChart
-          data={gantt}
-          projects={projects.map((p) => ({ id: p.id, name: p.name }))}
-          departments={departments.map((d) => ({ id: d.id, name: d.name }))}
-          showDeptFilter={user.role === "CEO" || user.role === "ADMIN"}
-          activeProject={sp.project ?? ""}
-          activeDept={sp.dept ?? ""}
-        />
+        <>
+          {totalCount > tasks.length && (
+            <div className="card mb-4 flex items-start gap-2 border-ink-200 bg-ink-50 p-3 text-sm text-ink-700">
+              <Info size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
+              <span>
+                Đang hiển thị {tasks.length}/{totalCount} việc — ưu tiên việc
+                trễ hạn và việc sắp đến hạn, việc đã xong lấy sau cùng. Lọc
+                theo dự án hoặc phòng ban để xem đủ.
+              </span>
+            </div>
+          )}
+          <GanttChart
+            data={gantt}
+            projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+            departments={departments.map((d) => ({ id: d.id, name: d.name }))}
+            showDeptFilter={isCompanyWide}
+            activeProject={sp.project ?? ""}
+            activeDept={sp.dept ?? ""}
+          />
+        </>
       )}
     </>
   );

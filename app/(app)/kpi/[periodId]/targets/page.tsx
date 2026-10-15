@@ -76,11 +76,23 @@ export default async function KpiTargetsPage({
       kpiName: r.kpiDefinition?.name ?? "—",
       unit: r.kpiDefinition?.unit ?? "—",
       weightPercent: r.weightPercent ?? 0,
-      targetValue: r.targetValue ?? 0,
+      // Giữ nguyên null (chưa đặt) — không tự biến thành 0
+      targetValue: r.targetValue,
+      // Dòng đã chốt thì API từ chối sửa → khoá luôn trên giao diện
+      locked: r.status === "FINALIZED",
     });
   }
   // Nhân sự không có dòng KPI nào trong kỳ này (chưa được gán) thì ẩn khỏi màn hình.
   const groups = [...groupsMap.values()].filter((g) => g.rows.length > 0);
+
+  // Khoá cả trang theo đúng luật của API /api/kpi/results/targets:
+  // kỳ đã chốt thì không ai sửa; qua mốc khoá thì trưởng phòng không sửa nữa.
+  const readOnlyReason =
+    period.status === "FINALIZED"
+      ? "Kỳ này đã chốt vĩnh viễn, chỉ xem — không sửa được nữa."
+      : user.role === "MANAGER" && period.status !== "OPEN"
+        ? "Kỳ đã qua mốc khoá — trưởng phòng không sửa mục tiêu được nữa. Liên hệ Ban Giám đốc."
+        : null;
 
   return (
     <>
@@ -119,7 +131,9 @@ export default async function KpiTargetsPage({
 
       <TargetEditor
         periodId={periodId}
-        canEdit={period.status !== "FINALIZED"}
+        readOnlyReason={readOnlyReason}
+        currentUserId={user.id}
+        currentUserRole={user.role}
         groups={groups}
       />
     </>

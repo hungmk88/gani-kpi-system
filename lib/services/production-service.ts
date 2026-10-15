@@ -82,8 +82,145 @@ function canEnterDraft(u: SessionUser & { productionRole?: string | null }) {
   );
 }
 
+/**
+ * Tiền tố đánh dấu ghi chú KCS do Ban Giám đốc VƯỢT QUYỀN xác nhận thay KCS.
+ * Không thêm cột vào schema — lý do nằm ngay trong qcNote (ai mở ca cũng
+ * thấy) và trong nhật ký hệ thống.
+ */
+export const CEO_QC_OVERRIDE_PREFIX = "[BGĐ vượt quyền KCS]";
+export const CEO_QC_OVERRIDE_MIN_REASON = 10;
+
+/**
+ * Tách lý do vượt quyền từ qcNote dạng "[BGĐ vượt quyền KCS] <lý do>\n<ghi chú>".
+ * Lý do là phần trên dòng đầu sau tiền tố. Không có tiền tố → null.
+ */
+export function extractCeoQcOverrideReason(qcNote?: string | null): string | null {
+  const t = (qcNote ?? "").trim();
+  if (!t.startsWith(CEO_QC_OVERRIDE_PREFIX)) return null;
+  return t.slice(CEO_QC_OVERRIDE_PREFIX.length).split("\n")[0].trim();
+}
+
+/**
+ * Ai được làm bước 2 (KCS) cho một ca, theo cách nào.
+ *
+ *   - KCS (QC_OFFICER): xác nhận bình thường, trừ ca do chính mình khai.
+ *   - Ban Giám đốc KHÔNG phải KCS: chỉ được VƯỢT QUYỀN, bắt buộc ghi lý do
+ *     (≥ 10 ký tự), và lý do vào nhật ký. Trước đây CEO được coi như KCS nên
+ *     một người có thể tự khai → tự duyệt KCS → tự khoá — mất hẳn tách bạch
+ *     trách nhiệm.
+ *   - Người khai ca KHÔNG được tự xác nhận phẩm chất ca của mình — kể cả BGĐ.
+ *
+ * Trả về chế độ duyệt; sai quyền thì ném BusinessError. Hàm thuần, không đụng
+ * DB — để kiểm thử được.
+ */
+export function resolveQcApproval(
+  actor: { id: string; role: string; productionRole?: string | null },
+  shiftCreatedById: string,
+  input: { qcNote?: string | null; ceoOverrideReason?: string | null }
+): { mode: "QC" } | { mode: "CEO_OVERRIDE"; reason: string } {
+  const isQcOfficer = actor.productionRole === "QC_OFFICER";
+  const isCeo = actor.role === "CEO";
+  if (!isQcOfficer && !isCeo) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Chỉ nhân viên KCS mới xác nhận được số liệu phẩm chất.",
+      403
+    );
+  }
+
+  // TÁCH BẠCH TRÁCH NHIỆM — điểm mấu chốt của cả luồng 3 bước.
+  // Người khai sản lượng mà tự xác nhận phẩm chất thì bước KCS thành hình thức.
+  if (shiftCreatedById === actor.id) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Bạn là người khai ca này nên không được tự xác nhận phẩm chất. Phải là KCS khác vào duyệt.",
+      403
+    );
+  }
+
+  if (isQcOfficer) return { mode: "QC" };
+
+  const reason = (
+    input.ceoOverrideReason ?? extractCeoQcOverrideReason(input.qcNote) ?? ""
+  ).trim();
+  // (qcNote có tiền tố vẫn đọc được để tương thích; giao diện gửi trường riêng)
+  if (reason.length < CEO_QC_OVERRIDE_MIN_REASON) {
+    throw new BusinessError(
+      ERR.REASON_REQUIRED,
+      `Ban Giám đốc không phải KCS — muốn xác nhận thay KCS phải vượt quyền và ghi lý do (tối thiểu ${CEO_QC_OVERRIDE_MIN_REASON} ký tự). Lý do vào nhật ký hệ thống.`,
+      400
+    );
+  }
+  return { mode: "CEO_OVERRIDE", reason };
+}
+
+/**
+ * Ghép qcNote khi BGĐ vượt quyền: dòng đầu luôn là "[BGĐ vượt quyền KCS] <lý do>",
+ * phần ghi chú phẩm chất (nếu có) xuống dòng sau.
+ */
+export function buildCeoOverrideQcNote(reason: string, qcNote?: string | null) {
+  const t = (qcNote ?? "").trim();
+  // qcNote đã có tiền tố (giao diện gửi sẵn) → bỏ dòng đầu, chỉ giữ phần ghi chú
+  const rest = t.startsWith(CEO_QC_OVERRIDE_PREFIX)
+    ? t.split("\n").slice(1).join("\n").trim()
+    : t;
+  return `${CEO_QC_OVERRIDE_PREFIX} ${reason.trim()}${rest ? `\n${rest}` : ""}`;
+}
+
+/** Lọc sơ trước khi đọc ca: chỉ KCS hoặc BGĐ (vượt quyền) mới tới được bước 2. */
 function canQcApprove(u: SessionUser & { productionRole?: string | null }) {
   return u.productionRole === "QC_OFFICER" || u.role === "CEO";
+}
+
+/**
+ * Ai được viết giải trình cho cảnh báo của MỘT ca.
+ *
+ *   - Quản đốc (SUPERVISOR) và Giám đốc SX: phụ trách cả xưởng, được báo mọi
+ *     cảnh báo → giải trình được mọi ca.
+ *   - Tổ trưởng: CHỈ ca mình có làm hoặc mình khai. Trước đây tổ trưởng nào
+ *     cũng giải trình được mọi ca — tổ khác "nói đỡ" để mở khoá thưởng.
+ *   - Ban Giám đốc: KHÔNG giải trình — Ban Giám đốc là người PHÁN XỬ giải
+ *     trình. Nếu BGĐ tự viết thì không ai còn quyền duyệt (assertCanReviewAudit
+ *     cấm tự duyệt), cảnh báo kẹt vĩnh viễn và thưởng bị khoá mãi.
+ */
+export function canExplainAudit(
+  actor: { id: string; role: string; productionRole?: string | null },
+  shift: { createdById: string; participantUserIds: string[] }
+) {
+  if (actor.role === "CEO") return false;
+  const pr = actor.productionRole ?? "";
+  if (pr === "SUPERVISOR" || pr === "PRODUCTION_DIRECTOR") return true;
+  if (pr === "TEAM_LEADER") {
+    return (
+      shift.createdById === actor.id ||
+      shift.participantUserIds.includes(actor.id)
+    );
+  }
+  return false;
+}
+
+/**
+ * Ban Giám đốc quyết giải trình — nhưng không phải giải trình do CHÍNH MÌNH
+ * viết. Vừa giải trình vừa phán xử là tự mở khoá thưởng cho mình.
+ */
+export function assertCanReviewAudit(
+  actor: { id: string; role: string },
+  audit: { explainedById: string | null }
+) {
+  if (actor.role !== "CEO") {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Chỉ Ban Giám đốc mới duyệt được giải trình.",
+      403
+    );
+  }
+  if (audit.explainedById && audit.explainedById === actor.id) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Bạn là người viết giải trình này nên không tự quyết được. Cần một thành viên Ban Giám đốc khác xem xét.",
+      403
+    );
+  }
 }
 
 function canLock(u: SessionUser) {
@@ -333,6 +470,11 @@ export async function approveByQc(
     scrapKg: number;
     haccpViolationCount: number;
     qcNote?: string | null;
+    /**
+     * Lý do BGĐ vượt quyền KCS. Không truyền thì đọc từ dòng đầu qcNote dạng
+     * "[BGĐ vượt quyền KCS] <lý do>" (giao diện gửi theo cách này).
+     */
+    ceoOverrideReason?: string | null;
     /** Lỗi quy về từng công đoạn — thứ duy nhất phân biệt được người trong cùng ca */
     participantDefects?: {
       userId: string;
@@ -366,15 +508,18 @@ export async function approveByQc(
     );
   }
 
-  // TÁCH BẠCH TRÁCH NHIỆM — điểm mấu chốt của cả luồng 3 bước.
-  // Người khai sản lượng mà tự xác nhận phẩm chất thì bước KCS thành hình thức.
-  if (log.createdById === actor.id && actor.role !== "CEO") {
-    throw new BusinessError(
-      ERR.FORBIDDEN,
-      "Bạn là người khai ca này nên không được tự xác nhận phẩm chất. Phải là KCS khác vào duyệt.",
-      403
-    );
-  }
+  // Tách bạch trách nhiệm + BGĐ chỉ được vượt quyền có lý do (xem resolveQcApproval)
+  const approval = resolveQcApproval(actor, log.createdById, input);
+  const isOverride = approval.mode === "CEO_OVERRIDE";
+  // KCS thường không được tự gắn tiền tố "vượt quyền" vào ghi chú — tiền tố
+  // đó chỉ máy chủ ghi, nếu không trang chi tiết và nhật ký khoá sẽ báo sai
+  // là Ban Giám đốc đã vượt quyền.
+  const plainNote = input.qcNote?.startsWith(CEO_QC_OVERRIDE_PREFIX)
+    ? input.qcNote.slice(CEO_QC_OVERRIDE_PREFIX.length).trim() || null
+    : (input.qcNote ?? null);
+  const qcNote = isOverride
+    ? buildCeoOverrideQcNote(approval.reason, input.qcNote)
+    : plainNote;
 
   const accounted = input.qcPassedKg + input.reworkKg + input.scrapKg;
   if (accounted > log.rawOutputKg * 1.5) {
@@ -395,7 +540,7 @@ export async function approveByQc(
         reworkKg: input.reworkKg,
         scrapKg: input.scrapKg,
         haccpViolationCount: input.haccpViolationCount,
-        qcNote: input.qcNote ?? null,
+        qcNote,
         qcOfficerId: actor.id,
         qcApprovedAt: new Date(),
         status: "QC_APPROVED",
@@ -424,7 +569,11 @@ export async function approveByQc(
 
   await writeAudit({
     actor,
-    action: "PRODUCTION_SHIFT_QC_APPROVE",
+    // Vượt quyền ghi mã hành động riêng — tra nhật ký là thấy ngay, không lẫn
+    // vào hàng nghìn dòng KCS duyệt bình thường.
+    action: isOverride
+      ? "PRODUCTION_SHIFT_QC_CEO_OVERRIDE"
+      : "PRODUCTION_SHIFT_QC_APPROVE",
     entityName: "production_shift_logs",
     entityId: logId,
     before: { status: "DRAFT" },
@@ -434,15 +583,18 @@ export async function approveByQc(
       lamLai: input.reworkKg,
       phe: input.scrapKg,
       viPhamHaccp: input.haccpViolationCount,
+      vuotQuyenKcs: isOverride,
     },
-    reason: input.qcNote ?? null,
+    reason: isOverride
+      ? `${CEO_QC_OVERRIDE_PREFIX} ${approval.reason}`
+      : (input.qcNote ?? null),
     ...meta,
   });
 
   if (input.haccpViolationCount > 0) {
     await sendCeoAlert({
       title: `Vi phạm an toàn thực phẩm tại xưởng: ${input.haccpViolationCount} vụ`,
-      details: `Ca ${log.shiftType} ngày ${formatVnDate(log.shiftDate)}, mã ${log.sku.skuCode}. KCS ${actor.fullName} ghi nhận. ${input.qcNote ?? ""}`,
+      details: `Ca ${log.shiftType} ngày ${formatVnDate(log.shiftDate)}, mã ${log.sku.skuCode}. ${isOverride ? "BGĐ (vượt quyền KCS)" : "KCS"} ${actor.fullName} ghi nhận. ${qcNote ?? ""}`,
       actionPath: `/production/${logId}`,
     });
   }
@@ -456,7 +608,9 @@ export async function approveByQc(
     await notify({
       userId: c.id,
       title: `Ca sản xuất chờ khoá số: ${updated.sku.skuName}`,
-      body: `KCS ${actor.fullName} đã xác nhận. Đạt ${input.qcPassedKg} kg, phế ${input.scrapKg} kg, làm lại ${input.reworkKg} kg.`,
+      body: isOverride
+        ? `${actor.fullName} (Ban Giám đốc) đã VƯỢT QUYỀN KCS xác nhận. Lý do: ${approval.reason}. Đạt ${input.qcPassedKg} kg, phế ${input.scrapKg} kg, làm lại ${input.reworkKg} kg.`
+        : `KCS ${actor.fullName} đã xác nhận. Đạt ${input.qcPassedKg} kg, phế ${input.scrapKg} kg, làm lại ${input.reworkKg} kg.`,
       level: "INFO",
       linkUrl: `/production/${logId}`,
     });
@@ -606,6 +760,12 @@ export async function lockAndTriggerKpi(
     return { locked, inventory };
   });
 
+  // Cùng một người BGĐ vừa vượt quyền KCS vừa khoá số: không chặn (xưởng nhỏ
+  // có lúc chỉ một người trực), nhưng BẮT BUỘC để lại dấu vết trên dòng nhật ký
+  // khoá — kèm lý do vượt quyền — để soát lại không phải lục hai chỗ.
+  const qcOverrideReason = extractCeoQcOverrideReason(log.qcNote);
+  const sameActorQcAndLock = log.qcOfficerId === actor.id;
+
   await writeAudit({
     actor,
     action: "PRODUCTION_SHIFT_LOCK",
@@ -622,9 +782,17 @@ export async function lockAndTriggerKpi(
       tonThatVnd: loss.qualityLossVnd,
       suaChiTieu: targetChanged,
       suaNvl: materialChanged,
+      kcsVuotQuyenBoiBgd: qcOverrideReason !== null,
+      cungNguoiDuyetKcsVaKhoa: sameActorQcAndLock,
     },
     reason:
-      [input.targetOverrideReason, input.materialOverrideReason]
+      [
+        sameActorQcAndLock && qcOverrideReason !== null
+          ? `${CEO_QC_OVERRIDE_PREFIX} cùng người khoá số — ${qcOverrideReason}`
+          : null,
+        input.targetOverrideReason,
+        input.materialOverrideReason,
+      ]
         .filter(Boolean)
         .join(" | ") || null,
     ...meta,
@@ -993,12 +1161,12 @@ export async function submitExplanation(
   explanationText: string,
   meta: Meta = {}
 ) {
-  const allowed =
+  const roleAllowed =
     actor.role === "CEO" ||
     ["SUPERVISOR", "PRODUCTION_DIRECTOR", "TEAM_LEADER"].includes(
       actor.productionRole ?? ""
     );
-  if (!allowed) {
+  if (!roleAllowed) {
     throw new BusinessError(
       ERR.FORBIDDEN,
       "Chỉ tổ trưởng, quản đốc và Giám đốc Sản xuất mới được giải trình.",
@@ -1015,9 +1183,30 @@ export async function submitExplanation(
 
   const audit = await prisma.antiGamingAudit.findUnique({
     where: { id: auditId },
+    include: {
+      shiftLog: {
+        select: {
+          createdById: true,
+          participants: { select: { userId: true } },
+        },
+      },
+    },
   });
   if (!audit) {
     throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy cảnh báo.", 404);
+  }
+  // Tổ trưởng chỉ giải trình ca mình có làm / mình khai — xem canExplainAudit
+  if (
+    !canExplainAudit(actor, {
+      createdById: audit.shiftLog.createdById,
+      participantUserIds: audit.shiftLog.participants.map((p) => p.userId),
+    })
+  ) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Bạn không làm và không khai ca này nên không giải trình thay được. Để tổ trưởng của ca, quản đốc hoặc Giám đốc Sản xuất giải trình.",
+      403
+    );
   }
   if (audit.status !== "PENDING_EXPLANATION") {
     throw new BusinessError(
@@ -1096,11 +1285,16 @@ export async function reviewAudit(
       409
     );
   }
+  // Không tự quyết giải trình của chính mình
+  assertCanReviewAudit(actor, audit);
 
   const res = await prisma.antiGamingAudit.updateMany({
     where: {
       id: auditId,
       status: { in: ["PENDING_EXPLANATION", "EXPLAINED"] },
+      // Chặn cả lúc ghi: giữa lúc đọc và lúc ghi, chính người này vừa gửi
+      // giải trình ở tab khác thì lệnh duyệt không được lọt qua.
+      OR: [{ explainedById: null }, { explainedById: { not: actor.id } }],
     },
     data: {
       status: input.approved ? "CEO_APPROVED" : "REJECTED",

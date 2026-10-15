@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui";
+import ConfirmDialog from "@/components/confirm-dialog";
 
 type Sku = {
   id: string;
@@ -37,6 +38,23 @@ export default function SkuManager({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  // Bản nháp của dòng đang sửa — chỉ gửi khi bấm Lưu (trước đây gửi ngay khi
+  // rời ô / đổi lựa chọn, bấm Huỷ ở prompt thì ô vẫn hiện số mới như đã lưu).
+  const [draft, setDraft] = useState({ targetOutputKg: "", rawMaterialId: "" });
+  const [confirm, setConfirm] = useState<
+    | { kind: "save"; sku: Sku }
+    | { kind: "toggle"; sku: Sku }
+    | null
+  >(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+
+  function startEdit(sku: Sku) {
+    setDraft({
+      targetOutputKg: String(sku.targetOutputKg),
+      rawMaterialId: sku.rawMaterialId ?? "",
+    });
+    setEditing(sku.id);
+  }
 
   const [f, setF] = useState({
     skuCode: "",
@@ -76,7 +94,11 @@ export default function SkuManager({
     }
   }
 
-  async function patch(id: string, payload: Record<string, unknown>) {
+  /** Trả về thông báo lỗi, null = thành công. */
+  async function patch(
+    id: string,
+    payload: Record<string, unknown>
+  ): Promise<string | null> {
     setBusy(true);
     setError(null);
     try {
@@ -85,17 +107,50 @@ export default function SkuManager({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.message);
-        return;
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return data.message || "Không lưu được.";
       setEditing(null);
       router.refresh();
+      return null;
+    } catch {
+      return "Mất kết nối tới máy chủ. Kiểm tra mạng rồi thử lại.";
     } finally {
       setBusy(false);
     }
   }
+
+  async function runConfirm(reason: string) {
+    if (!confirm) return;
+    const sku = confirm.sku;
+    let payload: Record<string, unknown>;
+    if (confirm.kind === "toggle") {
+      payload = { isActive: !sku.isActive };
+    } else {
+      payload = {};
+      const t = Number(draft.targetOutputKg);
+      if (t !== sku.targetOutputKg) {
+        payload.targetOutputKg = t;
+        payload.reason = reason;
+      }
+      if ((draft.rawMaterialId || null) !== sku.rawMaterialId) {
+        payload.rawMaterialId = draft.rawMaterialId || null;
+      }
+    }
+    const err = await patch(sku.id, payload);
+    if (err) {
+      setDialogError(err);
+      return;
+    }
+    setConfirm(null);
+  }
+
+  const editingSku = skus.find((x) => x.id === editing) ?? null;
+  const draftTarget = Number(draft.targetOutputKg);
+  const draftValid =
+    draft.targetOutputKg.trim() !== "" && Number.isFinite(draftTarget) && draftTarget > 0;
+  const targetChanged = !!editingSku && draftValid && draftTarget !== editingSku.targetOutputKg;
+  const materialChanged =
+    !!editingSku && (draft.rawMaterialId || null) !== editingSku.rawMaterialId;
 
   const norm = (target: number, loss: number) =>
     Math.round(target * (1 + loss / 100) * 100) / 100;
@@ -113,6 +168,69 @@ export default function SkuManager({
           </button>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirm !== null}
+        busy={busy}
+        error={dialogError}
+        onClose={() => setConfirm(null)}
+        onConfirm={runConfirm}
+        tone={confirm?.kind === "toggle" && confirm.sku.isActive ? "danger" : "primary"}
+        title={
+          !confirm
+            ? ""
+            : confirm.kind === "toggle"
+              ? `${confirm.sku.isActive ? "Ngưng" : "Dùng lại"} mã ${confirm.sku.skuCode}?`
+              : `Lưu chuẩn mới cho ${confirm.sku.skuCode}?`
+        }
+        confirmLabel={
+          confirm?.kind === "toggle"
+            ? confirm.sku.isActive
+              ? "Ngưng mã này"
+              : "Dùng lại"
+            : "Lưu chuẩn"
+        }
+        reason={
+          confirm?.kind === "save" && targetChanged
+            ? {
+                label: "Lý do đổi sản lượng chuẩn",
+                placeholder: "Ví dụ: thay máy hút chân không mới, công suất 60 kg/giờ",
+                minLength: 10,
+              }
+            : undefined
+        }
+      >
+        {confirm?.kind === "toggle" &&
+          (confirm.sku.isActive ? (
+            <p>
+              Mã ngưng dùng sẽ không chọn được khi khai ca mới. Các ca đã khai
+              giữ nguyên số liệu.
+            </p>
+          ) : (
+            <p>Mã này sẽ chọn lại được khi khai ca.</p>
+          ))}
+        {confirm?.kind === "save" && (
+          <ul className="space-y-1">
+            {targetChanged && (
+              <li>
+                Sản lượng chuẩn: <b>{confirm.sku.targetOutputKg} kg</b> →{" "}
+                <b>{draftTarget} kg</b> mỗi ca. Đây là thước đo chấm điểm cho cả
+                xưởng — các ca khai từ nay dùng chuẩn mới.
+              </li>
+            )}
+            {materialChanged && (
+              <li>
+                Nguyên liệu trừ kho:{" "}
+                <b>{confirm.sku.rawMaterialName ?? "chưa gán"}</b> →{" "}
+                <b>
+                  {rawMaterials.find((m) => m.id === draft.rawMaterialId)?.name ??
+                    "không trừ kho"}
+                </b>
+              </li>
+            )}
+          </ul>
+        )}
+      </ConfirmDialog>
 
       {error && (
         <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -234,19 +352,16 @@ export default function SkuManager({
                       <input
                         type="number"
                         step="any"
-                        className="input w-24 py-1 text-right text-xs"
-                        defaultValue={s.targetOutputKg}
-                        onBlur={(e) => {
-                          const v = Number(e.target.value);
-                          if (v !== s.targetOutputKg) {
-                            const reason = prompt(
-                              `Đổi sản lượng chuẩn của ${s.skuCode} từ ${s.targetOutputKg} sang ${v} kg.\n\nĐây là thước đo chấm điểm cho cả xưởng — ghi lý do:`
-                            );
-                            if (reason) {
-                              patch(s.id, { targetOutputKg: v, reason });
-                            }
-                          }
-                        }}
+                        min="0"
+                        inputMode="decimal"
+                        aria-label={`Sản lượng chuẩn của ${s.skuCode} (kg/ca)`}
+                        className={`input w-28 py-1 text-right text-xs ${
+                          draftValid ? "" : "border-red-300"
+                        }`}
+                        value={draft.targetOutputKg}
+                        onChange={(e) =>
+                          setDraft({ ...draft, targetOutputKg: e.target.value })
+                        }
                       />
                     ) : (
                       `${s.targetOutputKg} kg`
@@ -262,9 +377,10 @@ export default function SkuManager({
                     {editing === s.id ? (
                       <select
                         className="input py-1 text-xs"
-                        defaultValue={s.rawMaterialId ?? ""}
+                        aria-label={`Nguyên liệu chính của ${s.skuCode}`}
+                        value={draft.rawMaterialId}
                         onChange={(e) =>
-                          patch(s.id, { rawMaterialId: e.target.value || null })
+                          setDraft({ ...draft, rawMaterialId: e.target.value })
                         }
                       >
                         <option value="">— Chưa gán, không trừ kho —</option>
@@ -299,23 +415,47 @@ export default function SkuManager({
                   </td>
                   {canEdit && (
                     <td data-label="" className="whitespace-nowrap">
-                      <button
-                        className="text-xs text-brand-600 hover:underline"
-                        onClick={() =>
-                          setEditing(editing === s.id ? null : s.id)
-                        }
-                      >
-                        {editing === s.id ? "Xong" : "Sửa chuẩn"}
-                      </button>
-                      <button
-                        className={`ml-3 text-xs hover:underline ${
-                          s.isActive ? "text-red-600" : "text-emerald-600"
-                        }`}
-                        disabled={busy}
-                        onClick={() => patch(s.id, { isActive: !s.isActive })}
-                      >
-                        {s.isActive ? "Ngưng" : "Dùng lại"}
-                      </button>
+                      {editing === s.id ? (
+                        <>
+                          <button
+                            className="btn-primary btn-sm"
+                            disabled={busy || !draftValid || (!targetChanged && !materialChanged)}
+                            onClick={() => {
+                              setDialogError(null);
+                              setConfirm({ kind: "save", sku: s });
+                            }}
+                          >
+                            Lưu
+                          </button>
+                          <button
+                            className="btn-ghost btn-sm ml-2"
+                            onClick={() => setEditing(null)}
+                          >
+                            Huỷ
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            className="text-xs text-brand-600 hover:underline"
+                            onClick={() => startEdit(s)}
+                          >
+                            Sửa chuẩn
+                          </button>
+                          <button
+                            className={`ml-3 text-xs hover:underline ${
+                              s.isActive ? "text-red-600" : "text-emerald-700"
+                            }`}
+                            disabled={busy}
+                            onClick={() => {
+                              setDialogError(null);
+                              setConfirm({ kind: "toggle", sku: s });
+                            }}
+                          >
+                            {s.isActive ? "Ngưng" : "Dùng lại"}
+                          </button>
+                        </>
+                      )}
                     </td>
                   )}
                 </tr>

@@ -47,6 +47,11 @@ export type GanttItem = {
   /** Số ngày có thể trễ mà không kéo cả dự án */
   slackDays: number;
   isOverdue: boolean;
+  /**
+   * Có nối với việc khác trong tập đang xem không. Việc đứng một mình thì
+   * "dư địa" vô nghĩa — giao diện không được hiện "dư N ngày" cho nó.
+   */
+  hasDependencies: boolean;
 };
 
 export type GanttResult = {
@@ -174,8 +179,13 @@ export function buildGantt(
       isOverdue:
         t.dueDate.getTime() < now.getTime() &&
         !["DONE", "CANCELLED"].includes(t.status),
+      hasDependencies: onGraph,
     };
   });
+
+  // Sắp hàng sau khi đã tính xong đường găng: quản trị theo ngoại lệ — việc
+  // trễ lên đầu, rồi đến đường găng, rồi theo hạn; việc đã xong xuống cuối.
+  sortGanttItems(items);
 
   const times = tasks.flatMap((t) => [
     start(t).getTime(),
@@ -205,6 +215,35 @@ export function buildGantt(
     cycleDetected,
     cycleTaskIds,
   };
+}
+
+/**
+ * Hạng ưu tiên hiển thị của một hàng (số nhỏ đứng trên):
+ *   0 — đang mở mà đã quá hạn (kể cả nằm trên đường găng)
+ *   1 — nằm trên đường găng, chưa trễ
+ *   2 — việc đang mở còn lại
+ *   3 — đã xong / đã huỷ
+ */
+export function ganttRowRank(i: Pick<GanttItem, "status" | "isOverdue" | "isCritical">) {
+  if (i.status === "DONE" || i.status === "CANCELLED") return 3;
+  if (i.isOverdue) return 0;
+  if (i.isCritical) return 1;
+  return 2;
+}
+
+/**
+ * Sắp xếp tại chỗ theo hạng ưu tiên, cùng hạng thì hạn sớm hơn đứng trên
+ * (việc trễ lâu nhất lên đầu nhóm trễ). Hoà nữa thì theo ngày bắt đầu rồi mã
+ * việc để thứ tự ổn định giữa các lần tải.
+ */
+export function sortGanttItems<T extends GanttItem>(items: T[]): T[] {
+  return items.sort(
+    (a, b) =>
+      ganttRowRank(a) - ganttRowRank(b) ||
+      new Date(a.end).getTime() - new Date(b.end).getTime() ||
+      new Date(a.start).getTime() - new Date(b.start).getTime() ||
+      a.code.localeCompare(b.code)
+  );
 }
 
 /**

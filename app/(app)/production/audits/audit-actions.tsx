@@ -12,6 +12,9 @@ import { Check, Ban } from "lucide-react";
  *
  * Thưởng chỉ mở khi ca đó hết sạch cảnh báo treo và không cái nào bị từ chối.
  * Duyệt một cái mà còn hai cái đang chờ thì vẫn khoá — hệ thống nói rõ điều đó.
+ *
+ * Tách bạch: ai viết giải trình thì không tự quyết giải trình đó (máy chủ cũng
+ * chặn). Tổ trưởng chỉ giải trình ca mình có làm / mình khai.
  */
 export default function AuditActions({
   auditId,
@@ -19,12 +22,15 @@ export default function AuditActions({
   status,
   canExplain,
   isCeo,
+  explainedByMe = false,
 }: {
   auditId: string;
   shiftId: string;
   status: string;
   canExplain: boolean;
   isCeo: boolean;
+  /** Người đang xem chính là người viết giải trình → không được tự quyết */
+  explainedByMe?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -106,11 +112,19 @@ export default function AuditActions({
 
       {status === "PENDING_EXPLANATION" && !canExplain && (
         <p className="text-xs text-ink-500">
-          Đang chờ quản đốc hoặc tổ trưởng vào giải trình.
+          Đang chờ tổ trưởng của ca, quản đốc hoặc Giám đốc Sản xuất vào giải
+          trình.
         </p>
       )}
 
-      {status === "EXPLAINED" && isCeo && (
+      {status === "EXPLAINED" && isCeo && explainedByMe && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Bạn là người viết giải trình này nên không tự quyết được. Cần một thành
+          viên Ban Giám đốc khác xem xét.
+        </p>
+      )}
+
+      {status === "EXPLAINED" && isCeo && !explainedByMe && (
         <div className="space-y-2">
           <label className="label">
             Ý kiến của bạn (tối thiểu 10 ký tự) — người bị khoá thưởng sẽ đọc

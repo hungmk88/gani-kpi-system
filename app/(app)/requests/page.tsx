@@ -53,7 +53,8 @@ export default async function RequestsPage() {
         title="Yêu cầu liên phòng ban"
         subtitle="Vì hệ thống cấm giao việc vượt cấp, mọi việc nhờ phòng khác đều đi qua đây để trưởng phòng bên đó tiếp nhận."
         actions={
-          <Link href="/tasks/new" className="btn-primary">
+          // Mở thẳng tab "Nhờ phòng ban khác" — không để rơi vào tab giao việc trong phòng
+          <Link href="/tasks/new?mode=request" className="btn-primary">
             + Gửi yêu cầu mới
           </Link>
         }

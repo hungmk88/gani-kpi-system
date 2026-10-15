@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGantt, wouldCreateCycle, type GanttTaskInput } from "@/lib/gantt";
+import { buildGantt, ganttRowRank, wouldCreateCycle, type GanttTaskInput } from "@/lib/gantt";
 
 const DAY = 86_400_000;
 const T0 = new Date("2026-10-01T02:00:00.000Z");
@@ -86,6 +86,56 @@ describe("Gantt — vòng lặp phụ thuộc", () => {
     const r = buildGantt(tasks, [dep("B", "A"), dep("C", "B"), dep("A", "C"), dep("D", "C")], T0);
     expect(r.cycleDetected).toBe(true);
     expect(r.cycleTaskIds.sort()).toEqual(["A", "B", "C", "D"]);
+  });
+});
+
+describe("Gantt — thứ tự hàng (quản trị theo ngoại lệ)", () => {
+  const NOW = new Date(T0.getTime() + 10 * DAY);
+  const done = (t: GanttTaskInput): GanttTaskInput => ({ ...t, status: "DONE", progress: 100 });
+
+  //   P(0..3, xong) → Q(3..20) → R(20..25)   — chuỗi găng
+  //   L1(0..5) trễ, L2(0..8) trễ, đứng một mình
+  //   S(12..14) mở, đứng một mình;  F(0..9) đã xong, đứng một mình
+  const tasks = [
+    task("S", 12, 2),
+    done(task("F", 0, 9)),
+    task("R", 20, 5),
+    task("L2", 0, 8),
+    task("Q", 3, 17),
+    task("L1", 0, 5),
+    done(task("P", 0, 3)),
+  ];
+  const edges = [dep("Q", "P"), dep("R", "Q")];
+  const r = buildGantt(tasks, edges, NOW);
+  const order = r.items.map((i) => i.id);
+
+  it("việc trễ lên đầu (trễ lâu nhất trước), rồi đường găng, rồi việc mở theo hạn, việc xong xuống cuối", () => {
+    expect(order).toEqual(["L1", "L2", "Q", "R", "S", "P", "F"]);
+  });
+
+  it("việc trễ trên đường găng vẫn đứng nhóm trễ", () => {
+    const late = buildGantt(tasks, edges, new Date(T0.getTime() + 21 * DAY));
+    const ids = late.items.map((i) => i.id);
+    // Q (hạn ngày 20) đã trễ và nằm trên đường găng → cùng nhóm trễ với L1, L2, S
+    expect(ids.slice(0, 4)).toEqual(["L1", "L2", "S", "Q"]);
+    expect(late.items.find((i) => i.id === "Q")!.isCritical).toBe(true);
+    // R chưa trễ nhưng trên đường găng → ngay sau nhóm trễ
+    expect(ids.indexOf("R")).toBe(4);
+  });
+
+  it("đánh dấu việc có / không có quan hệ phụ thuộc", () => {
+    const m = byId(r);
+    expect(m.Q.hasDependencies).toBe(true);
+    expect(m.P.hasDependencies).toBe(true);
+    expect(m.S.hasDependencies).toBe(false);
+    expect(m.F.hasDependencies).toBe(false);
+  });
+
+  it("ganttRowRank xếp hạng đúng", () => {
+    expect(ganttRowRank({ status: "IN_PROGRESS", isOverdue: true, isCritical: true })).toBe(0);
+    expect(ganttRowRank({ status: "IN_PROGRESS", isOverdue: false, isCritical: true })).toBe(1);
+    expect(ganttRowRank({ status: "TODO", isOverdue: false, isCritical: false })).toBe(2);
+    expect(ganttRowRank({ status: "DONE", isOverdue: false, isCritical: true })).toBe(3);
   });
 });
 
