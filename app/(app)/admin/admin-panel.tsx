@@ -18,6 +18,7 @@ import IntegrationsTab, {
   type SourceRow as IntegrationRow,
 } from "./integrations-tab";
 import UserImport from "./user-import";
+import ConfirmDialog from "@/components/confirm-dialog";
 
 type UserRow = {
   id: string;
@@ -142,6 +143,12 @@ function UsersTab({
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  // Thao tác nhạy cảm đang chờ xác nhận (khoá, đặt lại MK, đổi vai trò…)
+  const [pending, setPending] = useState<PendingAction | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+  const [newPw, setNewPw] = useState("");
+  const [showPw, setShowPw] = useState(false);
 
   const [form, setForm] = useState({
     email: "",
@@ -171,6 +178,7 @@ function UsersTab({
         return;
       }
       setAdding(false);
+      setNotice(`Đã tạo tài khoản ${form.email}.`);
       setForm({
         email: "",
         fullName: "",
@@ -185,30 +193,258 @@ function UsersTab({
     }
   }
 
-  async function patch(id: string, payload: Record<string, unknown>) {
+  /** Gọi API sửa tài khoản. Trả về thông báo lỗi (null = thành công). */
+  async function patch(
+    id: string,
+    payload: Record<string, unknown>
+  ): Promise<string | null> {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const res = await fetch(`/api/admin/users/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.message || "Không cập nhật được.");
-        return;
+        return data.message || "Không cập nhật được.";
       }
-      setEditing(null);
       router.refresh();
+      return null;
+    } catch {
+      return "Mất kết nối tới máy chủ. Kiểm tra mạng rồi thử lại.";
     } finally {
       setBusy(false);
     }
   }
 
+  function ask(action: PendingAction) {
+    setDialogError(null);
+    setNewPw("");
+    setShowPw(false);
+    setPending(action);
+  }
+
+  /** Thực hiện thao tác đã được xác nhận trong hộp thoại. */
+  async function runPending() {
+    if (!pending) return;
+    const u = pending.user;
+    let payload: Record<string, unknown>;
+    let done: string;
+    switch (pending.kind) {
+      case "lock":
+        payload = { isActive: false };
+        done = `Đã khoá tài khoản ${u.fullName}.`;
+        break;
+      case "unlock":
+        payload = { isActive: true };
+        done = `Đã mở lại tài khoản ${u.fullName}.`;
+        break;
+      case "reset":
+        payload = { newPassword: newPw };
+        done = `Đã đặt lại mật khẩu cho ${u.fullName}. Người này phải tự đổi ở lần đăng nhập sau.`;
+        break;
+      case "unlinkTelegram":
+        payload = { telegramChatId: null };
+        done = `Đã gỡ liên kết Telegram của ${u.fullName}.`;
+        break;
+      case "role":
+        payload = { role: pending.value };
+        done = `Đã đổi vai trò của ${u.fullName} sang ${ROLE_LABEL[pending.value ?? ""] ?? pending.value}.`;
+        break;
+      case "department":
+        payload = { departmentId: pending.value || null };
+        done = `Đã chuyển phòng ban cho ${u.fullName}.`;
+        break;
+      case "employment":
+        payload = { employmentType: pending.value };
+        done = `Đã đổi loại nhân sự của ${u.fullName}.`;
+        break;
+    }
+    const err = await patch(u.id, payload);
+    if (err) {
+      setDialogError(err);
+      return;
+    }
+    setPending(null);
+    setEditing(null);
+    setNotice(done);
+  }
+
+  const pwChecks = passwordChecks(newPw);
+  const pwOk = pwChecks.every((c) => c.ok);
+
   return (
     <>
       <UserImport />
+
+      {notice && (
+        <div
+          role="status"
+          className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+        >
+          <span>{notice}</span>
+          <button
+            className="text-xs text-emerald-700 hover:underline"
+            onClick={() => setNotice(null)}
+          >
+            Đóng
+          </button>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={pending !== null}
+        busy={busy}
+        error={dialogError}
+        onClose={() => setPending(null)}
+        onConfirm={runPending}
+        tone={
+          pending?.kind === "lock" || pending?.kind === "unlinkTelegram"
+            ? "danger"
+            : "primary"
+        }
+        confirmDisabled={pending?.kind === "reset" && !pwOk}
+        title={
+          !pending
+            ? ""
+            : pending.kind === "lock"
+              ? `Khoá tài khoản ${pending.user.fullName}?`
+              : pending.kind === "unlock"
+                ? `Mở lại tài khoản ${pending.user.fullName}?`
+                : pending.kind === "reset"
+                  ? `Đặt lại mật khẩu cho ${pending.user.fullName}`
+                  : pending.kind === "unlinkTelegram"
+                    ? `Gỡ liên kết Telegram của ${pending.user.fullName}?`
+                    : pending.kind === "role"
+                      ? "Đổi vai trò"
+                      : pending.kind === "department"
+                        ? "Chuyển phòng ban"
+                        : "Đổi loại nhân sự"
+        }
+        confirmLabel={
+          pending?.kind === "lock"
+            ? "Khoá tài khoản"
+            : pending?.kind === "unlock"
+              ? "Mở lại"
+              : pending?.kind === "reset"
+                ? "Đặt lại mật khẩu"
+                : pending?.kind === "unlinkTelegram"
+                  ? "Gỡ liên kết"
+                  : "Lưu thay đổi"
+        }
+      >
+        {pending?.kind === "lock" && (
+          <>
+            <p>
+              <b>{pending.user.email}</b> bị đăng xuất ngay trên mọi thiết bị và
+              không đăng nhập được nữa cho tới khi mở lại.
+            </p>
+            <p className="text-ink-500">
+              Việc đang giao và điểm KPI của người này giữ nguyên. Nhớ giao lại
+              các việc đang mở cho người khác.
+            </p>
+          </>
+        )}
+        {pending?.kind === "unlock" && (
+          <p>
+            <b>{pending.user.email}</b> đăng nhập lại được bằng mật khẩu hiện
+            có.
+          </p>
+        )}
+        {pending?.kind === "unlinkTelegram" && (
+          <p>
+            Người này sẽ không nhận thông báo và không bấm duyệt qua Telegram
+            nữa cho tới khi tự nối lại bằng mã liên kết trong trang Thông báo.
+          </p>
+        )}
+        {(pending?.kind === "role" ||
+          pending?.kind === "department" ||
+          pending?.kind === "employment") && (
+          <p>
+            {pending.user.fullName}:{" "}
+            <b>{describeValue(pending.kind, currentValue(pending), departments)}</b>{" "}
+            → <b>{describeValue(pending.kind, pending.value ?? "", departments)}</b>
+            {pending.kind === "role" && pending.value === "ADMIN" && (
+              <span className="mt-2 block rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                Quản trị hệ thống được tạo, khoá tài khoản và đổi cấu hình tích
+                hợp. Ban Giám đốc sẽ được báo về thay đổi này.
+              </span>
+            )}
+            {pending.kind === "role" && pending.value === "MANAGER" && (
+              <span className="mt-2 block text-ink-500">
+                Trưởng phòng được duyệt KPI và giao việc cho cả phòng.
+              </span>
+            )}
+          </p>
+        )}
+        {pending?.kind === "reset" && (
+          <>
+            <p className="text-ink-500">
+              Người này phải tự đổi mật khẩu ở lần đăng nhập sau. Mọi phiên đăng
+              nhập cũ và liên kết Telegram bị ngắt.
+            </p>
+            <div>
+              <label
+                htmlFor="admin-new-password"
+                className="mb-1 block text-sm font-medium text-ink-700"
+              >
+                Mật khẩu mới
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="admin-new-password"
+                  className="input font-mono"
+                  type={showPw ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={newPw}
+                  onChange={(e) => setNewPw(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm shrink-0"
+                  onClick={() => setShowPw(!showPw)}
+                >
+                  {showPw ? "Ẩn" : "Hiện"}
+                </button>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm"
+                  onClick={() => {
+                    setNewPw(generatePassword());
+                    setShowPw(true);
+                  }}
+                >
+                  Tạo mật khẩu ngẫu nhiên
+                </button>
+                {newPw && (
+                  <button
+                    type="button"
+                    className="btn-ghost btn-sm"
+                    onClick={() => navigator.clipboard?.writeText(newPw)}
+                  >
+                    Chép
+                  </button>
+                )}
+              </div>
+              <ul className="mt-2 space-y-0.5 text-xs">
+                {pwChecks.map((c) => (
+                  <li
+                    key={c.label}
+                    className={c.ok ? "text-emerald-700" : "text-ink-500"}
+                  >
+                    {c.ok ? "✓" : "○"} {c.label}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </>
+        )}
+      </ConfirmDialog>
 
       <div className="mb-3 flex items-center justify-between">
         <div className="text-sm text-ink-500">{users.length} tài khoản</div>
@@ -289,7 +525,7 @@ function UsersTab({
               type="text"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
-              placeholder="Tối thiểu 8 ký tự"
+              placeholder="Tối thiểu 10 ký tự, có chữ và số"
             />
           </div>
           <div className="sm:col-span-2">
@@ -330,8 +566,10 @@ function UsersTab({
                   {editing === u.id && u.role !== "CEO" ? (
                     <select
                       className="input py-1 text-xs"
-                      defaultValue={u.role}
-                      onChange={(e) => patch(u.id, { role: e.target.value })}
+                      value={u.role}
+                      onChange={(e) =>
+                        ask({ kind: "role", user: u, value: e.target.value })
+                      }
                     >
                       {ROLES.filter((r) => r !== "CEO").map((r) => (
                         <option key={r} value={r}>
@@ -349,9 +587,9 @@ function UsersTab({
                   {editing === u.id ? (
                     <select
                       className="input py-1 text-xs"
-                      defaultValue={u.employmentType}
+                      value={u.employmentType}
                       onChange={(e) =>
-                        patch(u.id, { employmentType: e.target.value })
+                        ask({ kind: "employment", user: u, value: e.target.value })
                       }
                     >
                       {EMPLOYMENT_TYPES.map((t) => (
@@ -374,9 +612,9 @@ function UsersTab({
                   {editing === u.id ? (
                     <select
                       className="input py-1 text-xs"
-                      defaultValue={u.departmentId ?? ""}
+                      value={u.departmentId ?? ""}
                       onChange={(e) =>
-                        patch(u.id, { departmentId: e.target.value || null })
+                        ask({ kind: "department", user: u, value: e.target.value })
                       }
                     >
                       <option value="">—</option>
@@ -404,15 +642,7 @@ function UsersTab({
                     <button
                       className="ml-2 text-xs text-red-600 hover:underline"
                       disabled={busy}
-                      onClick={() => {
-                        if (
-                          confirm(
-                            `Gỡ liên kết Telegram của ${u.fullName}? Người này tự nối lại bằng mã liên kết trong trang Thông báo.`
-                          )
-                        ) {
-                          patch(u.id, { telegramChatId: null });
-                        }
-                      }}
+                      onClick={() => ask({ kind: "unlinkTelegram", user: u })}
                     >
                       Gỡ liên kết Telegram
                     </button>
@@ -451,12 +681,7 @@ function UsersTab({
                     <>
                       <button
                         className="ml-3 text-xs text-ink-500 hover:underline"
-                        onClick={() => {
-                          const p = prompt(
-                            `Đặt lại mật khẩu cho ${u.fullName} (tối thiểu 10 ký tự, có cả chữ và số). Telegram của người này sẽ bị ngắt, họ tự nối lại sau khi đổi mật khẩu:`
-                          );
-                          if (p) patch(u.id, { newPassword: p });
-                        }}
+                        onClick={() => ask({ kind: "reset", user: u })}
                       >
                         Đặt lại MK
                       </button>
@@ -464,7 +689,9 @@ function UsersTab({
                         className={`ml-3 text-xs hover:underline ${
                           u.isActive ? "text-red-600" : "text-emerald-600"
                         }`}
-                        onClick={() => patch(u.id, { isActive: !u.isActive })}
+                        onClick={() =>
+                          ask({ kind: u.isActive ? "lock" : "unlock", user: u })
+                        }
                       >
                         {u.isActive ? "Khoá" : "Mở"}
                       </button>
@@ -948,4 +1175,63 @@ function SystemTab({
       </div>
     </div>
   );
+}
+
+/* ------------------------------------------------------------------ hộp xác nhận */
+
+type PendingAction = {
+  kind:
+    | "lock"
+    | "unlock"
+    | "reset"
+    | "unlinkTelegram"
+    | "role"
+    | "department"
+    | "employment";
+  user: UserRow;
+  value?: string;
+};
+
+function currentValue(p: PendingAction) {
+  if (p.kind === "role") return p.user.role;
+  if (p.kind === "department") return p.user.departmentId ?? "";
+  return p.user.employmentType;
+}
+
+function describeValue(
+  kind: PendingAction["kind"],
+  v: string,
+  departments: { id: string; name: string }[]
+) {
+  if (kind === "role") return ROLE_LABEL[v] ?? v;
+  if (kind === "department") return departments.find((d) => d.id === v)?.name ?? "—";
+  return EMPLOYMENT_TYPE_LABEL[v as keyof typeof EMPLOYMENT_TYPE_LABEL] ?? v;
+}
+
+/**
+ * Cùng luật với lib/password.ts (máy chủ vẫn kiểm lại lần nữa): đủ 10 ký tự,
+ * có chữ, có số, không khoảng trắng. Hiện từng điều kiện để người đặt thấy
+ * ngay còn thiếu gì, thay vì gửi lên rồi mới bị từ chối.
+ */
+function passwordChecks(pw: string) {
+  return [
+    { label: "Từ 10 ký tự trở lên", ok: pw.length >= 10 },
+    { label: "Có ít nhất một chữ cái", ok: /[A-Za-zÀ-ỹ]/.test(pw) },
+    { label: "Có ít nhất một chữ số", ok: /[0-9]/.test(pw) },
+    { label: "Không có khoảng trắng", ok: pw.length > 0 && !/\s/.test(pw) },
+  ];
+}
+
+/** Mật khẩu tạm 14 ký tự, bỏ các ký tự dễ nhầm (0/O, 1/l/I). */
+function generatePassword() {
+  const letters = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ";
+  const digits = "23456789";
+  const all = letters + digits;
+  const buf = new Uint32Array(14);
+  crypto.getRandomValues(buf);
+  const chars = Array.from(buf, (n) => all[n % all.length]);
+  // Bảo đảm có ít nhất một chữ và một số
+  chars[3] = letters[buf[3] % letters.length];
+  chars[9] = digits[buf[9] % digits.length];
+  return chars.join("");
 }

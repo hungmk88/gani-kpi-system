@@ -8,6 +8,7 @@ import { addDays, vnDate, vnDateKey } from "@/lib/vn-time";
 type Opt = { id: string; name: string };
 
 export default function NewTaskForm({
+  initialMode = "task",
   role,
   myDepartmentId,
   departments,
@@ -15,6 +16,7 @@ export default function NewTaskForm({
   users,
   projects,
 }: {
+  initialMode?: "task" | "request";
   role: string;
   myDepartmentId: string | null;
   departments: Opt[];
@@ -29,7 +31,15 @@ export default function NewTaskForm({
   projects: { id: string; name: string; departmentId: string }[];
 }) {
   const router = useRouter();
-  const [mode, setMode] = useState<"task" | "request">("task");
+
+  // Khớp luật của /api/requests: chỉ trưởng phòng / Ban Giám đốc gửi yêu cầu
+  // liên phòng ban, và phải còn ít nhất một phòng khác để gửi tới.
+  const canRequest =
+    (role === "MANAGER" || role === "CEO") &&
+    allDepartments.some((d) => d.id !== myDepartmentId);
+  const [mode, setMode] = useState<"task" | "request">(
+    initialMode === "request" && canRequest ? "request" : "task"
+  );
 
   // Ban Giám đốc thuộc phòng BGĐ vốn không có nhân viên nghiệp vụ, nên phải
   // mặc định về phòng ban đầu tiên thực sự có người để giao việc.
@@ -209,6 +219,19 @@ export default function NewTaskForm({
                 {role !== "CEO" && (
                   <p className="mt-1.5 text-xs text-ink-500">
                     Bạn chỉ giao được trong phòng mình.
+                  </p>
+                )}
+                {/* Lối tắt sang tab yêu cầu — việc liên phòng phải đi đường này */}
+                {canRequest && (
+                  <p className="mt-1 text-xs text-ink-500">
+                    Cần người phòng khác?{" "}
+                    <button
+                      type="button"
+                      onClick={() => setMode("request")}
+                      className="font-medium text-brand-600 hover:underline"
+                    >
+                      → Nhờ phòng ban khác
+                    </button>
                   </p>
                 )}
               </div>

@@ -28,7 +28,7 @@ export default function LoginForm() {
       router.push("/dashboard");
       router.refresh();
     } catch {
-      setError("Không kết nối được máy chủ. Kiểm tra lại server đang chạy chưa.");
+      setError("Không kết nối được. Kiểm tra mạng rồi thử lại.");
     } finally {
       setLoading(false);
     }

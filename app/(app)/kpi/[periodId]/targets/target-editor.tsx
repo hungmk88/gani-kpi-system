@@ -1,15 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Save } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Lock, Save } from "lucide-react";
+import { formatVnNumber, parseVnNumber } from "@/lib/vn-number";
 
 export type TargetRow = {
   resultId: string;
   kpiName: string;
   unit: string;
   weightPercent: number;
-  targetValue: number;
+  /** null = chưa đặt mục tiêu */
+  targetValue: number | null;
+  /** Dòng KPI đã chốt — API không cho sửa mục tiêu nữa */
+  locked: boolean;
 };
 
 export type TargetGroup = {
@@ -19,26 +23,137 @@ export type TargetGroup = {
   rows: TargetRow[];
 };
 
+// Phải khớp .max(200) trong schema của /api/kpi/results/targets
+const BATCH_MAX = 200;
+
+type CellState = {
+  /** Lỗi chặn lưu (để trống / không phải số / số âm) */
+  error: string | null;
+  /** Khác giá trị đang lưu trên server (ô lỗi cũng tính là thay đổi) */
+  changed: boolean;
+  value: number | null;
+};
+
+function evaluate(raw: string, baseline: number | null): CellState {
+  if (raw.trim() === "") {
+    // Ô vốn trống (chưa đặt) mà người dùng chưa gõ gì thì không phải thay đổi
+    return baseline === null
+      ? { error: null, changed: false, value: null }
+      : { error: "Không được để trống.", changed: true, value: null };
+  }
+  const v = parseVnNumber(raw);
+  if (v === null) {
+    return {
+      error: "Không phải số hợp lệ (vd 135.000.000 hoặc 7,5).",
+      changed: true,
+      value: null,
+    };
+  }
+  if (v < 0) {
+    return { error: "Mục tiêu không được âm.", changed: true, value: v };
+  }
+  return { error: null, changed: v !== baseline, value: v };
+}
+
+/**
+ * Trưởng phòng không tự đặt mục tiêu cho chính mình — Ban Giám đốc đặt.
+ * Giữ đúng luật của API; CEO / ADMIN sửa được mọi dòng.
+ */
+function isOwnRowsLocked(
+  g: TargetGroup,
+  currentUserId: string,
+  currentUserRole: string
+) {
+  return currentUserRole === "MANAGER" && g.employeeId === currentUserId;
+}
+
 export default function TargetEditor({
   periodId,
-  canEdit,
+  readOnlyReason,
+  currentUserId,
+  currentUserRole,
   groups,
 }: {
   periodId: string;
-  canEdit: boolean;
+  /** Khác null → cả trang chỉ xem, hiện lý do này */
+  readOnlyReason: string | null;
+  currentUserId: string;
+  currentUserRole: string;
   groups: TargetGroup[];
 }) {
   const router = useRouter();
+  const canEdit = readOnlyReason === null;
+
+  // Giá trị đang lưu trên server — mốc để biết ô nào đã đổi
+  const [baseline, setBaseline] = useState<Record<string, number | null>>(
+    () => {
+      const init: Record<string, number | null> = {};
+      for (const g of groups) {
+        for (const r of g.rows) init[r.resultId] = r.targetValue;
+      }
+      return init;
+    }
+  );
   const [values, setValues] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     for (const g of groups) {
-      for (const r of g.rows) init[r.resultId] = String(r.targetValue);
+      for (const r of g.rows) {
+        init[r.resultId] =
+          r.targetValue === null ? "" : formatVnNumber(r.targetValue);
+      }
     }
     return init;
   });
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [savedCount, setSavedCount] = useState<number | null>(null);
+  const [failure, setFailure] = useState<{
+    messages: string[];
+    rows: string[];
+  } | null>(null);
+  const [failedIds, setFailedIds] = useState<Set<string>>(() => new Set());
+
+  // Chỉ những dòng người đang đăng nhập được phép sửa
+  const editableRows = useMemo(
+    () =>
+      canEdit
+        ? groups.flatMap((g) =>
+            isOwnRowsLocked(g, currentUserId, currentUserRole)
+              ? []
+              : g.rows
+                  .filter((r) => !r.locked)
+                  .map((r) => ({ ...r, employeeName: g.employeeName }))
+          )
+        : [],
+    [canEdit, groups, currentUserId, currentUserRole]
+  );
+
+  const cells = useMemo(() => {
+    const m: Record<string, CellState> = {};
+    for (const r of editableRows) {
+      m[r.resultId] = evaluate(
+        values[r.resultId] ?? "",
+        baseline[r.resultId] ?? null
+      );
+    }
+    return m;
+  }, [editableRows, values, baseline]);
+
+  const changedRows = editableRows.filter((r) => cells[r.resultId]?.changed);
+  const dirtyCount = changedRows.length;
+  const invalidCount = changedRows.filter((r) => cells[r.resultId]?.error).length;
+  const hasDirty = dirtyCount > 0;
+
+  // Cảnh báo khi đóng / tải lại trang mà còn thay đổi chưa lưu
+  useEffect(() => {
+    if (!hasDirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [hasDirty]);
 
   if (groups.length === 0) {
     return (
@@ -48,110 +163,261 @@ export default function TargetEditor({
     );
   }
 
+  function onEdit(resultId: string, raw: string) {
+    setValues((v) => ({ ...v, [resultId]: raw }));
+    // Sửa tiếp thì thông báo "Đã lưu" cũ không còn đúng nữa
+    setSavedCount(null);
+    setFailedIds((prev) => {
+      if (!prev.has(resultId)) return prev;
+      const next = new Set(prev);
+      next.delete(resultId);
+      return next;
+    });
+  }
+
   async function save() {
+    if (busy || dirtyCount === 0 || invalidCount > 0) return;
+
+    // Chỉ gửi những dòng thực sự đổi — không gửi lại cả phòng
+    const updates = changedRows.map((r) => ({
+      resultId: r.resultId,
+      targetValue: cells[r.resultId].value as number,
+    }));
+    const labelOf = new Map(
+      changedRows.map((r) => [r.resultId, `${r.employeeName} — ${r.kpiName}`])
+    );
+    const chunks: (typeof updates)[] = [];
+    for (let i = 0; i < updates.length; i += BATCH_MAX) {
+      chunks.push(updates.slice(i, i + BATCH_MAX));
+    }
+
     setBusy(true);
-    setError(null);
-    setSavedAt(null);
+    setFailure(null);
+    setFailedIds(new Set());
+    setSavedCount(null);
+
+    const saved: Record<string, number> = {};
+    const messages: string[] = [];
+    const failed = new Set<string>();
     try {
-      const updates = Object.entries(values).map(([resultId, v]) => ({
-        resultId,
-        targetValue: Number(v) || 0,
-      }));
-      const res = await fetch("/api/kpi/results/targets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ periodId, updates }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.message ?? "Lưu thất bại.");
-        return;
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const done = Object.keys(saved).length;
+        setProgress(
+          chunks.length > 1
+            ? `Đang lưu đợt ${i + 1}/${chunks.length} (${done}/${updates.length} dòng)...`
+            : "Đang lưu..."
+        );
+
+        let message: string | null = null;
+        try {
+          const res = await fetch("/api/kpi/results/targets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ periodId, updates: chunk }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => null);
+            message = data?.message ?? `Lưu thất bại (mã lỗi ${res.status}).`;
+            // Lỗi validate (422) có chi tiết trong issues — nối vào cho dễ hiểu
+            const issues: { message?: string }[] = Array.isArray(data?.issues)
+              ? data.issues
+              : [];
+            const detail = issues.map((x) => x.message).filter(Boolean);
+            if (detail.length > 0) message += ` (${detail.slice(0, 3).join("; ")})`;
+          }
+        } catch {
+          message = "Mất kết nối tới máy chủ.";
+        }
+
+        // Mỗi đợt là một giao dịch riêng ở server: đợt lỗi thì cả đợt chưa
+        // lưu, các đợt khác vẫn lưu tiếp được.
+        if (message) {
+          messages.push(
+            chunks.length > 1 ? `Đợt ${i + 1}/${chunks.length}: ${message}` : message
+          );
+          for (const u of chunk) failed.add(u.resultId);
+        } else {
+          for (const u of chunk) saved[u.resultId] = u.targetValue;
+        }
       }
-      setSavedAt(Date.now());
-      router.refresh();
     } finally {
+      const savedIds = Object.keys(saved);
+      if (savedIds.length > 0) {
+        setBaseline((prev) => ({ ...prev, ...saved }));
+        // Chuẩn hoá cách hiển thị (vd "1234.5" → "1.234,5") cho dòng đã lưu
+        setValues((prev) => {
+          const next = { ...prev };
+          for (const id of savedIds) next[id] = formatVnNumber(saved[id]);
+          return next;
+        });
+        setSavedCount(savedIds.length);
+      }
+      if (failed.size > 0) {
+        setFailedIds(failed);
+        setFailure({
+          messages,
+          rows: [...failed].map((id) => labelOf.get(id) ?? id),
+        });
+      }
+      setProgress(null);
       setBusy(false);
+      if (savedIds.length > 0) router.refresh();
     }
   }
 
   return (
     <div className="space-y-4">
-      {!canEdit && (
+      {readOnlyReason && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          Kỳ này đã chốt vĩnh viễn, chỉ xem — không sửa được nữa.
+          {readOnlyReason}
         </div>
       )}
 
-      {groups.map((g) => (
-        <div key={g.employeeId} className="card p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <span className="font-medium text-ink-800">{g.employeeName}</span>
-            <span className="rounded-full bg-ink-100 px-2 py-0.5 text-xs text-ink-500">
-              {g.role === "MANAGER" ? "Trưởng phòng" : "Nhân viên"}
-            </span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-ink-500">
-                  <th className="py-1 pr-4">Chỉ tiêu</th>
-                  <th className="py-1 pr-4">Trọng số</th>
-                  <th className="py-1">Mục tiêu</th>
-                </tr>
-              </thead>
-              <tbody>
-                {g.rows.map((r) => (
-                  <tr key={r.resultId} className="border-t border-ink-100">
-                    <td className="py-2 pr-4 text-ink-800">{r.kpiName}</td>
-                    <td className="py-2 pr-4 text-ink-600">{r.weightPercent}%</td>
-                    <td className="py-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          step="0.01"
-                          disabled={!canEdit}
-                          className="input w-32"
-                          value={values[r.resultId] ?? ""}
-                          onChange={(e) =>
-                            setValues((v) => ({ ...v, [r.resultId]: e.target.value }))
-                          }
-                        />
-                        <span className="text-xs text-ink-500">{r.unit}</span>
-                      </div>
-                    </td>
+      {groups.map((g) => {
+        const ownLocked =
+          canEdit && isOwnRowsLocked(g, currentUserId, currentUserRole);
+        return (
+          <div key={g.employeeId} className="card p-4">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="font-medium text-ink-800">{g.employeeName}</span>
+              <span className="rounded-full bg-ink-100 px-2 py-0.5 text-xs text-ink-500">
+                {g.role === "MANAGER" ? "Trưởng phòng" : "Nhân viên"}
+              </span>
+              {ownLocked && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-800">
+                  <Lock size={12} strokeWidth={2} /> Ban Giám đốc đặt chỉ tiêu
+                  này
+                </span>
+              )}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wide text-ink-500">
+                    <th className="py-1 pr-4">Chỉ tiêu</th>
+                    <th className="py-1 pr-4">Trọng số</th>
+                    <th className="py-1">Mục tiêu</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {g.rows.map((r) => {
+                    const rowEditable = canEdit && !ownLocked && !r.locked;
+                    const cell = rowEditable ? cells[r.resultId] : undefined;
+                    const notSaved = failedIds.has(r.resultId);
+                    const tone = cell?.error
+                      ? "border-red-400 bg-red-50"
+                      : notSaved
+                        ? "border-red-300 bg-red-50"
+                        : cell?.changed
+                          ? "border-amber-400 bg-amber-50"
+                          : "";
+                    return (
+                      <tr key={r.resultId} className="border-t border-ink-100">
+                        <td className="py-2 pr-4 text-ink-800">{r.kpiName}</td>
+                        <td className="py-2 pr-4 text-ink-600">
+                          {r.weightPercent}%
+                        </td>
+                        <td className="py-2">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
+                              disabled={!rowEditable || busy}
+                              aria-invalid={cell?.error ? true : undefined}
+                              placeholder={rowEditable ? "Chưa đặt" : "—"}
+                              className={`input w-40 ${tone}`}
+                              value={values[r.resultId] ?? ""}
+                              onChange={(e) => onEdit(r.resultId, e.target.value)}
+                            />
+                            <span className="text-xs text-ink-500">{r.unit}</span>
+                            {canEdit && r.locked && !ownLocked && (
+                              <span className="inline-flex items-center gap-1 text-xs text-ink-500">
+                                <Lock size={12} strokeWidth={2} /> Đã chốt
+                              </span>
+                            )}
+                          </div>
+                          {cell?.error && (
+                            <p className="mt-1 text-xs text-red-700">{cell.error}</p>
+                          )}
+                          {!cell?.error && notSaved && (
+                            <p className="mt-1 text-xs text-red-700">Chưa lưu được.</p>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
-      {error && (
+      {failure && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </div>
-      )}
-      {savedAt && !error && (
-        <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          <CheckCircle2 size={15} strokeWidth={2} /> Đã lưu mục tiêu.
+          {failure.messages.map((m, i) => (
+            <div key={i}>{m}</div>
+          ))}
+          <div className="mt-1.5 font-medium">
+            {failure.rows.length} dòng CHƯA được lưu:
+          </div>
+          <ul className="mt-0.5 list-disc pl-5 text-xs">
+            {failure.rows.slice(0, 20).map((label, i) => (
+              <li key={i}>{label}</li>
+            ))}
+            {failure.rows.length > 20 && (
+              <li>và {failure.rows.length - 20} dòng khác (đánh dấu đỏ ở trên)</li>
+            )}
+          </ul>
         </div>
       )}
 
       {canEdit && (
-        <button
-          onClick={save}
-          disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-        >
-          {busy ? (
-            "Đang lưu..."
-          ) : (
-            <>
-              <Save size={15} strokeWidth={2} /> Lưu mục tiêu
-            </>
-          )}
-        </button>
+        // Thanh lưu bám đáy màn hình — phòng đông người không phải cuộn xuống cuối
+        <div className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-3 border-t border-ink-200 bg-white px-4 py-3">
+          <div className="text-sm">
+            {busy ? (
+              <span className="text-ink-600">{progress ?? "Đang lưu..."}</span>
+            ) : dirtyCount > 0 ? (
+              <span className="text-ink-700">
+                <b>{dirtyCount}</b> thay đổi chưa lưu
+                {invalidCount > 0 && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-red-700">
+                    <AlertTriangle size={14} strokeWidth={2} />
+                    {invalidCount} ô chưa hợp lệ — sửa trước khi lưu
+                  </span>
+                )}
+              </span>
+            ) : savedCount !== null ? (
+              <span className="inline-flex items-center gap-1.5 text-emerald-700">
+                <CheckCircle2 size={15} strokeWidth={2} /> Đã lưu {savedCount}{" "}
+                mục tiêu.
+              </span>
+            ) : (
+              <span className="text-ink-500">Không có thay đổi.</span>
+            )}
+            {!busy && dirtyCount > 0 && savedCount !== null && (
+              <span className="ml-2 text-emerald-700">
+                (đã lưu {savedCount} dòng)
+              </span>
+            )}
+          </div>
+          <button
+            onClick={save}
+            disabled={busy || dirtyCount === 0 || invalidCount > 0}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {busy ? (
+              "Đang lưu..."
+            ) : (
+              <>
+                <Save size={15} strokeWidth={2} /> Lưu mục tiêu
+              </>
+            )}
+          </button>
+        </div>
       )}
     </div>
   );

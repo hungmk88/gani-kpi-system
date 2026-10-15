@@ -18,6 +18,7 @@ import {
 } from "@/components/ui";
 import { scoreStateOf } from "@/lib/kpi";
 import KpiAdvisoryPanel from "@/components/kpi-advisory";
+import ConfirmDialog from "@/components/confirm-dialog";
 
 export type KpiRow = {
   id: string;
@@ -114,29 +115,50 @@ export default function KpiWorkTable({
     }
   }
 
+  // Chốt KPI là KHOÁ VĨNH VIỄN — không dùng confirm() trống trơn mà mở hộp
+  // xác nhận tóm tắt trước: bao nhiêu dòng sẽ khoá, bao nhiêu bị bỏ qua vì sao.
+  const [approveTarget, setApproveTarget] = useState<
+    { employeeId?: string; name: string } | null
+  >(null);
+
   async function approveAll(employeeId?: string) {
-    const label = employeeId ? "nhân sự này" : "toàn bộ kỳ";
-    if (
-      !confirm(
-        `Duyệt và KHOÁ VĨNH VIỄN điểm KPI của ${label}?\n\nSau khi khoá, chỉ Ban Giám đốc mới sửa được và mọi lần sửa đều bị ghi vào nhật ký.`
-      )
-    )
-      return;
     const data = await call("/api/kpi/approve", {
       periodId,
       employeeId,
       finalizePeriod: !employeeId,
     });
+    setApproveTarget(null);
     if (data) {
+      // Gom lý do bỏ qua theo từng loại, nói đúng lý do — không gộp hết thành
+      // "chưa qua bước trưởng phòng".
+      const reasons = new Map<string, number>();
+      for (const sk of (data.skipped ?? []) as { reason: string }[]) {
+        reasons.set(sk.reason, (reasons.get(sk.reason) ?? 0) + 1);
+      }
+      const skippedText = [...reasons.entries()]
+        .map(([r, n]) => `${n} dòng: ${r}`)
+        .join("; ");
       setMessage(
         `Đã chốt ${data.finalized} dòng KPI.${
-          data.skipped?.length
-            ? ` ${data.skipped.length} dòng chưa qua bước trưởng phòng nên chưa chốt.`
-            : ""
+          skippedText ? ` Chưa chốt — ${skippedText}.` : ""
         }${data.periodFinalized ? " Toàn kỳ đã khoá." : ""}`
       );
     }
   }
+
+  // Tóm tắt cho hộp xác nhận: tính trên các dòng đang hiển thị
+  const scopeRows = approveTarget
+    ? groups
+        .filter((g) => !approveTarget.employeeId || g.employeeId === approveTarget.employeeId)
+        .flatMap((g) => g.rows)
+    : [];
+  const summary = {
+    ready: scopeRows.filter((r) => r.status === "MANAGER_REVIEWED" && !r.hasMismatch).length,
+    draft: scopeRows.filter((r) => r.status === "DRAFT").length,
+    waitingManager: scopeRows.filter((r) => r.status === "SELF_REVIEWED").length,
+    mismatch: scopeRows.filter((r) => r.hasMismatch && r.status !== "FINALIZED").length,
+    locked: scopeRows.filter((r) => r.status === "FINALIZED").length,
+  };
 
   return (
     <>
@@ -168,14 +190,62 @@ export default function KpiWorkTable({
           <button
             className="btn-primary btn-sm ml-auto inline-flex items-center gap-1.5"
             disabled={busy}
-            onClick={() => approveAll()}
+            onClick={() => setApproveTarget({ name: "toàn bộ kỳ" })}
           >
             <CheckCheck size={14} strokeWidth={2} /> Duyệt tất cả &amp; chốt kỳ
           </button>
         )}
       </div>
 
-      {error && (
+      <ConfirmDialog
+        open={approveTarget !== null}
+        busy={busy}
+        error={error}
+        tone="danger"
+        title={`Duyệt & khoá KPI của ${approveTarget?.name ?? ""}?`}
+        confirmLabel={`Khoá ${summary.ready} dòng`}
+        confirmDisabled={summary.ready === 0}
+        typeToConfirm={approveTarget && !approveTarget.employeeId ? "CHỐT KỲ" : undefined}
+        onClose={() => setApproveTarget(null)}
+        onConfirm={() => approveAll(approveTarget?.employeeId)}
+      >
+        <p>
+          Sau khi khoá, chỉ Ban Giám đốc sửa được và mọi lần sửa đều ghi vào nhật
+          ký không xoá được.
+        </p>
+        <ul className="space-y-1 rounded-lg border border-ink-200 bg-ink-50 p-3">
+          <li>
+            <b className="text-ink-900">{summary.ready}</b> dòng đã qua trưởng
+            phòng — <b>sẽ khoá</b>
+          </li>
+          {summary.mismatch > 0 && (
+            <li className="text-red-700">
+              {summary.mismatch} dòng còn lệch số — bị bỏ qua, phải chốt ở trang
+              Đối soát trước
+            </li>
+          )}
+          {summary.waitingManager > 0 && (
+            <li className="text-amber-800">
+              {summary.waitingManager} dòng chờ trưởng phòng duyệt — bị bỏ qua
+            </li>
+          )}
+          {summary.draft > 0 && (
+            <li className="text-amber-800">
+              {summary.draft} dòng nhân viên chưa khai — bị bỏ qua
+            </li>
+          )}
+          {summary.locked > 0 && (
+            <li className="text-ink-500">{summary.locked} dòng đã khoá từ trước</li>
+          )}
+        </ul>
+        {summary.ready === 0 && (
+          <p className="text-amber-800">
+            Chưa có dòng nào đủ điều kiện để khoá.
+          </p>
+        )}
+      </ConfirmDialog>
+
+      {error && !approveTarget && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
         </div>
@@ -354,7 +424,12 @@ export default function KpiWorkTable({
                         <button
                           className="btn-primary btn-sm inline-flex items-center gap-1.5"
                           disabled={busy}
-                          onClick={() => approveAll(g.employeeId)}
+                          onClick={() =>
+                            setApproveTarget({
+                              employeeId: g.employeeId,
+                              name: g.employeeName,
+                            })
+                          }
                         >
                           <CheckCheck size={14} strokeWidth={2} /> Duyệt &amp; khoá KPI của {g.employeeName}
                         </button>

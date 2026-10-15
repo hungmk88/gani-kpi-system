@@ -35,6 +35,8 @@ const actionSchema = z.discriminatedUnion("action", [
     scrapKg: kg("Khối lượng phế"),
     haccpViolationCount: count,
     qcNote: z.string().max(2000).optional(),
+    /** Ban Giám đốc xác nhận thay KCS (vượt quyền) — bắt buộc ghi lý do */
+    ceoOverrideReason: z.string().max(500).optional(),
     participantDefects: z
       .array(
         z.object({

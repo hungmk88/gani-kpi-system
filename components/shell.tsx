@@ -66,6 +66,7 @@ export default function Shell({
   const pathname = usePathname();
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [logoutFailed, setLogoutFailed] = useState(false);
 
   const inFactory =
     user.role === "CEO" || user.role === "ADMIN" || !!user.productionRole;
@@ -78,9 +79,9 @@ export default function Shell({
     pathname === href || pathname.startsWith(href + "/");
 
   async function logout() {
-    // Lỗi mạng/server không được làm kẹt người dùng trong trang: thử thu hồi
-    // phiên rồi vẫn đưa về /login. Nếu server chưa xoá được phiên thì /login
-    // sẽ tự chuyển lại vào hệ thống — báo trước để người dùng biết bấm lại.
+    // Server chưa thu hồi được phiên thì ĐỪNG chuyển sang /login: trang đó sẽ
+    // tự đưa ngược vào hệ thống và người dùng tưởng đã đăng xuất (nguy hiểm ở
+    // máy dùng chung). Ở lại và báo rõ để bấm lại.
     let failed = false;
     try {
       const res = await fetch("/api/auth/logout", { method: "POST" });
@@ -93,16 +94,35 @@ export default function Shell({
       failed = true;
       console.error("Đăng xuất lỗi:", err);
     } finally {
+      // Không dùng alert(): bị chặn trong trình duyệt của Zalo/Telegram.
       if (failed) {
-        alert("Chưa đăng xuất được trên máy chủ (mạng hoặc máy chủ lỗi). Nếu vẫn thấy hệ thống mở, hãy thử lại.");
+        setLogoutFailed(true);
+      } else {
+        router.push("/login");
+        router.refresh();
       }
-      router.push("/login");
-      router.refresh();
     }
   }
 
   return (
     <div className="flex min-h-screen">
+      {logoutFailed && (
+        <div
+          role="alert"
+          className="fixed inset-x-4 top-4 z-50 mx-auto flex max-w-md items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-lg"
+        >
+          <span className="flex-1">
+            Chưa đăng xuất được (mạng hoặc máy chủ lỗi). Bạn VẪN đang đăng nhập —
+            bấm Đăng xuất lại.
+          </span>
+          <button
+            className="text-xs font-medium hover:underline"
+            onClick={() => setLogoutFailed(false)}
+          >
+            Đóng
+          </button>
+        </div>
+      )}
       {/* ---------------- Sidebar (desktop) ---------------- */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-ink-200 bg-white lg:flex">
         <div className="flex items-center gap-2.5 border-b border-ink-100 px-5 py-4">

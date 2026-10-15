@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { KeyRound, Check, Circle } from "lucide-react";
 import { Badge, formatDateTime } from "@/components/ui";
+import ConfirmDialog from "@/components/confirm-dialog";
 
 export type SourceRow = {
   id: string;
@@ -54,6 +55,10 @@ export default function IntegrationsTab({
   const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Đổi khoá / ngưng nhận dữ liệu: hai thao tác cắt luồng số liệu ngay lập tức
+  const [pendingSrc, setPendingSrc] = useState<
+    { kind: "rotate" | "toggle"; id: string; name: string; isActive: boolean } | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const [freshSecret, setFreshSecret] = useState<{
     code: string;
@@ -125,6 +130,51 @@ export default function IntegrationsTab({
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        open={pendingSrc !== null}
+        busy={busy}
+        tone={pendingSrc?.kind === "rotate" || pendingSrc?.isActive ? "danger" : "primary"}
+        title={
+          pendingSrc?.kind === "rotate"
+            ? `Đổi khoá cho "${pendingSrc.name}"?`
+            : pendingSrc?.isActive
+              ? `Ngưng nhận dữ liệu từ "${pendingSrc.name}"?`
+              : `Bật lại "${pendingSrc?.name ?? ""}"?`
+        }
+        confirmLabel={
+          pendingSrc?.kind === "rotate"
+            ? "Đổi khoá"
+            : pendingSrc?.isActive
+              ? "Ngưng nhận"
+              : "Bật lại"
+        }
+        onClose={() => setPendingSrc(null)}
+        onConfirm={async () => {
+          if (!pendingSrc) return;
+          const src = pendingSrc;
+          setPendingSrc(null);
+          await patch(
+            src.id,
+            src.kind === "rotate" ? { rotateSecret: true } : { isActive: !src.isActive }
+          );
+        }}
+      >
+        {pendingSrc?.kind === "rotate" ? (
+          <p>
+            Khoá cũ mất hiệu lực <b>ngay</b>. Bên gửi chưa cập nhật khoá mới sẽ
+            bị chặn. Khoá mới chỉ hiện <b>một lần</b> — chép lại trước khi rời
+            trang.
+          </p>
+        ) : pendingSrc?.isActive ? (
+          <p>
+            Mọi số liệu gửi về từ nguồn này sẽ bị từ chối cho tới khi bật lại. KPI
+            lấy số từ nguồn này sẽ thiếu số.
+          </p>
+        ) : (
+          <p>Nguồn này nhận số liệu lại bình thường.</p>
+        )}
+      </ConfirmDialog>
+
       {/* ---------------- trạng thái kênh gửi tin ---------------- */}
       <div className="card p-5">
         <h3 className="mb-3 font-semibold text-ink-900">Kênh gửi thông báo</h3>
@@ -311,15 +361,9 @@ export default function IntegrationsTab({
                       <button
                         className="text-xs text-amber-600 hover:underline"
                         disabled={busy}
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `Đổi khoá cho "${s.name}"?\n\nKhoá cũ mất hiệu lực NGAY. Bên gửi chưa cập nhật khoá mới sẽ bị chặn.`
-                            )
-                          ) {
-                            patch(s.id, { rotateSecret: true });
-                          }
-                        }}
+                        onClick={() =>
+                          setPendingSrc({ kind: "rotate", id: s.id, name: s.name, isActive: s.isActive })
+                        }
                       >
                         Đổi khoá
                       </button>
@@ -328,7 +372,9 @@ export default function IntegrationsTab({
                           s.isActive ? "text-red-600" : "text-emerald-600"
                         }`}
                         disabled={busy}
-                        onClick={() => patch(s.id, { isActive: !s.isActive })}
+                        onClick={() =>
+                          setPendingSrc({ kind: "toggle", id: s.id, name: s.name, isActive: s.isActive })
+                        }
                       >
                         {s.isActive ? "Ngưng" : "Bật lại"}
                       </button>

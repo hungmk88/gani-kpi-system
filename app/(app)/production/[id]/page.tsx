@@ -4,7 +4,9 @@ import { Lock, Check } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
+  CEO_QC_OVERRIDE_PREFIX,
   canSeeMoney,
+  extractCeoQcOverrideReason,
   withProductionRole,
 } from "@/lib/services/production-service";
 import { computeShiftMetrics } from "@/lib/production/kpi-engine";
@@ -93,6 +95,9 @@ export default async function ShiftDetailPage({
     stdMaterialNormKg: log.stdMaterialNormKg,
   });
 
+  // Bước 2 do BGĐ vượt quyền KCS (lý do nằm ở dòng đầu qcNote)
+  const qcOverridden = extractCeoQcOverrideReason(log.qcNote) !== null;
+
   const visibleScores = log.kpiResults.filter(
     (r) => isWide || r.userId === user.id
   );
@@ -139,7 +144,12 @@ export default async function ShiftDetailPage({
           <Step
             n="2"
             title="KCS xác nhận"
-            who={log.qcOfficer?.fullName ?? null}
+            who={
+              log.qcOfficer
+                ? log.qcOfficer.fullName +
+                  (qcOverridden ? " · BGĐ vượt quyền KCS" : "")
+                : null
+            }
             when={log.qcApprovedAt ? formatDateTime(log.qcApprovedAt) : null}
             done={log.status !== "DRAFT"}
             active={log.status === "DRAFT"}
@@ -420,36 +430,48 @@ export default async function ShiftDetailPage({
           )}
         </div>
 
-        {/* ---------------- Cột thao tác ---------------- */}
-        <div className="space-y-6">
-          <ShiftActions
-            shift={{
-              id: log.id,
-              status: log.status,
-              rawOutputKg: log.rawOutputKg,
-              rawMaterialInputKg: log.rawMaterialInputKg,
-              qcPassedKg: log.qcPassedKg,
-              reworkKg: log.reworkKg,
-              scrapKg: log.scrapKg,
-              haccpViolationCount: log.haccpViolationCount,
-              createdById: log.createdById,
-              skuStandardTargetKg: log.sku.targetOutputKg,
-              skuLossRate: log.sku.stdMaterialLossRate,
-              skuCode: log.sku.skuCode,
-            }}
-            participants={log.participants.map((p) => ({
-              userId: p.userId,
-              name: p.user.fullName,
-              stage: p.stage,
-              personalDefectKg: p.personalDefectKg,
-              violationCount: p.violationCount,
-            }))}
-            viewer={{
-              id: user.id,
-              role: user.role,
-              productionRole: user.productionRole ?? null,
-            }}
-          />
+        {/* ---------------- Cột thao tác ----------------
+            Trên điện thoại cột này nằm SAU toàn bộ số liệu — KCS / BGĐ phải
+            cuộn hết trang mới thấy nút. `contents` cho thẻ thao tác thành phần
+            tử của lưới ngoài để `order-first` đưa nó lên đầu; từ lg trở lên
+            cột hiển thị bình thường bên phải. */}
+        <div className="contents lg:block lg:space-y-6">
+          <div className="order-first lg:order-none">
+            <ShiftActions
+              shift={{
+                id: log.id,
+                status: log.status,
+                rawOutputKg: log.rawOutputKg,
+                rawMaterialInputKg: log.rawMaterialInputKg,
+                qcPassedKg: log.qcPassedKg,
+                reworkKg: log.reworkKg,
+                scrapKg: log.scrapKg,
+                haccpViolationCount: log.haccpViolationCount,
+                createdById: log.createdById,
+                skuStandardTargetKg: log.sku.targetOutputKg,
+                skuLossRate: log.sku.stdMaterialLossRate,
+                skuCode: log.sku.skuCode,
+                qcOfficerId: log.qcOfficerId,
+                qcOverridden,
+                // Chỉ người được xem tiền mới nhận đơn giá (để ước tổn thất
+                // trong hộp xác nhận khoá); người khác nhận null.
+                unitPriceVnd: showMoney ? log.sku.unitPriceVnd : null,
+              }}
+              participants={log.participants.map((p) => ({
+                userId: p.userId,
+                name: p.user.fullName,
+                stage: p.stage,
+                personalDefectKg: p.personalDefectKg,
+                violationCount: p.violationCount,
+              }))}
+              viewer={{
+                id: user.id,
+                role: user.role,
+                productionRole: user.productionRole ?? null,
+              }}
+              ceoQcOverridePrefix={CEO_QC_OVERRIDE_PREFIX}
+            />
+          </div>
 
           <div className="card p-5">
             <h3 className="section-title mb-3">

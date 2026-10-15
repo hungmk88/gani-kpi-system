@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
+import ConfirmDialog from "@/components/confirm-dialog";
 
 /**
  * Nút thao tác trên một đơn nghỉ.
@@ -26,6 +27,7 @@ export default function LeaveRequestActions({
   const [cancelling, setCancelling] = useState(false);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [askCancel, setAskCancel] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function send(action: "APPROVE" | "REJECT" | "CANCEL") {
@@ -55,20 +57,27 @@ export default function LeaveRequestActions({
         <button
           className="btn-ghost btn-sm"
           disabled={busy}
-          onClick={() => {
-            if (
-              approved &&
-              !window.confirm(
-                "Huỷ đơn nghỉ ĐÃ DUYỆT? Ngày phép sẽ được trả lại và người duyệt sẽ nhận thông báo."
-              )
-            ) {
-              return;
-            }
-            send("CANCEL");
-          }}
+          onClick={() => (approved ? setAskCancel(true) : send("CANCEL"))}
         >
           {approved ? "Huỷ đơn đã duyệt" : "Huỷ đơn"}
         </button>
+        <ConfirmDialog
+          open={askCancel}
+          busy={busy}
+          tone="danger"
+          title="Huỷ đơn nghỉ đã duyệt?"
+          confirmLabel="Huỷ đơn"
+          cancelLabel="Giữ đơn"
+          onClose={() => setAskCancel(false)}
+          onConfirm={() => {
+            setAskCancel(false);
+            send("CANCEL");
+          }}
+        >
+          <p>
+            Ngày phép được trả lại và người đã duyệt sẽ nhận thông báo đơn bị huỷ.
+          </p>
+        </ConfirmDialog>
       </div>
     );
   }
