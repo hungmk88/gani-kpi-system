@@ -2,25 +2,40 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { formatVnDateTime } from "@/lib/vn-time";
 
+/** Hỗ trợ cả breakdown bản cũ (chuỗi toFixed) lẫn bản mới (số / null). */
 interface KpiBreakdown {
   code: string;
   name: string;
-  actual: number;
-  target: number;
+  actual: number | string | null;
+  target: number | string | null;
   unit: string;
-  achievement: string; // percentage
+  achievement: number | string | null; // null = chưa có dữ liệu
   weight: number;
-  score: string;
+  effectiveWeight?: number;
+  score: number | string;
+  included?: boolean;
 }
 
 interface ScoreBreakdown {
   kpis: KpiBreakdown[];
-  totalScore: string;
-  bonusMultiplier: string;
-  bonusAmount: string;
 }
+
+interface ScoreData {
+  id: string;
+  status: string;
+  totalScore: number;
+  bonusMultiplier: number;
+  /** null = người xem không được xem tiền */
+  bonusAmount: number | null;
+  baseSalary: number | null;
+  approvedAt: string | null;
+}
+
+const num = (v: number | string | null | undefined) =>
+  v === null || v === undefined || v === "" ? null : Number(v);
 
 interface ShiftKpiScoreDisplayProps {
   shiftLogId: string;
@@ -33,31 +48,43 @@ export function ShiftKpiScoreDisplay({
 }: ShiftKpiScoreDisplayProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [score, setScore] = useState<any>(null);
+  const [score, setScore] = useState<ScoreData | null>(null);
   const [breakdown, setBreakdown] = useState<ScoreBreakdown | null>(null);
 
-  useEffect(() => {
-    fetchScore();
-  }, [shiftLogId]);
-
-  const fetchScore = async () => {
+  const fetchScore = useCallback(async () => {
     try {
       setLoading(true);
+      setError("");
       const response = await fetch(`/api/kpi/calculate/${shiftLogId}`);
 
-      if (!response.ok) throw new Error("Failed to fetch score");
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (response.status === 404) {
+        setScore(null);
+        setBreakdown(null);
+        return;
+      }
+      if (!response.ok) {
+        // Chuẩn lỗi { errorCode, message } của handle()/fail(); bản cũ dùng .error
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message || body?.error || "Không tải được điểm KPI.");
+      }
 
       const data = await response.json();
       setScore(data.data);
-      if (data.data.breakdown) {
-        setBreakdown(data.data.breakdown);
-      }
+      setBreakdown(Array.isArray(data.data?.breakdown?.kpis) ? data.data.breakdown : null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lỗi khi tải dữ liệu");
     } finally {
       setLoading(false);
     }
-  };
+  }, [shiftLogId]);
+
+  useEffect(() => {
+    fetchScore();
+  }, [fetchScore]);
 
   if (loading) {
     return <div className="text-center py-8">Đang tải dữ liệu...</div>;
@@ -79,9 +106,9 @@ export function ShiftKpiScoreDisplay({
     );
   }
 
-  const totalScore = parseFloat(breakdown.totalScore);
-  const bonusMultiplier = parseFloat(breakdown.bonusMultiplier);
-  const bonusAmount = parseFloat(breakdown.bonusAmount);
+  const totalScore = score.totalScore;
+  const bonusMultiplier = score.bonusMultiplier;
+  const bonusAmount = score.bonusAmount;
 
   // Color based on score
   const getScoreColor = (score: number) => {
@@ -109,14 +136,14 @@ export function ShiftKpiScoreDisplay({
       </div>
 
       {/* Total Score & Bonus Summary */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className={`grid gap-4 ${bonusAmount !== null ? "grid-cols-3" : "grid-cols-2"}`}>
         {/* Total Score */}
         <div className="bg-gray-50 rounded-lg p-4 text-center border-2 border-gray-200">
           <p className="text-gray-600 text-sm font-medium mb-2">Tổng Điểm</p>
           <p className={`text-4xl font-bold ${getScoreColor(totalScore)}`}>
             {totalScore.toFixed(1)}
           </p>
-          <p className="text-xs text-gray-600 mt-1">/ 100 điểm</p>
+          <p className="text-xs text-gray-600 mt-1">100 = đạt kế hoạch · trần 150</p>
         </div>
 
         {/* Bonus Multiplier */}
@@ -125,17 +152,23 @@ export function ShiftKpiScoreDisplay({
           <p className="text-4xl font-bold text-gray-900">
             {bonusMultiplier.toFixed(2)}x
           </p>
-          <p className="text-xs text-gray-600 mt-1">Lương nền: 233.000đ</p>
+          {score.baseSalary !== null && (
+            <p className="text-xs text-gray-600 mt-1">
+              Lương nền: {Math.round(score.baseSalary).toLocaleString("vi-VN")}đ
+            </p>
+          )}
         </div>
 
-        {/* Bonus Amount */}
-        <div className="bg-green-50 rounded-lg p-4 text-center border-2 border-green-200">
-          <p className="text-gray-600 text-sm font-medium mb-2">Tiền Thưởng</p>
-          <p className="text-3xl font-bold text-green-600">
-            {bonusAmount.toLocaleString("vi-VN")}
-          </p>
-          <p className="text-xs text-gray-600 mt-1">VND</p>
-        </div>
+        {/* Bonus Amount — chỉ người được xem tiền */}
+        {bonusAmount !== null && (
+          <div className="bg-green-50 rounded-lg p-4 text-center border-2 border-green-200">
+            <p className="text-gray-600 text-sm font-medium mb-2">Tiền Thưởng</p>
+            <p className="text-3xl font-bold text-green-600">
+              {Math.round(bonusAmount).toLocaleString("vi-VN")}
+            </p>
+            <p className="text-xs text-gray-600 mt-1">VND</p>
+          </div>
+        )}
       </div>
 
       {/* 6 KPI Breakdown Table */}
@@ -164,75 +197,77 @@ export function ShiftKpiScoreDisplay({
             </tr>
           </thead>
           <tbody>
-            {breakdown.kpis.map((kpi, idx) => (
-              <tr
-                key={kpi.code}
-                className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}
-              >
-                <td className="px-4 py-3 font-medium text-gray-900">
-                  {kpi.name}
-                </td>
-                <td className="px-4 py-3 text-center text-gray-600">
-                  {kpi.target} {kpi.unit}
-                </td>
-                <td className="px-4 py-3 text-center font-semibold text-gray-900">
-                  {kpi.actual} {kpi.unit}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <span
-                    className={`inline-block px-2 py-1 rounded font-semibold ${
-                      parseFloat(kpi.achievement) >= 100
-                        ? "bg-green-100 text-green-800"
-                        : parseFloat(kpi.achievement) >= 90
-                        ? "bg-yellow-100 text-yellow-800"
-                        : "bg-red-100 text-red-800"
-                    }`}
-                  >
-                    {kpi.achievement}%
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-center text-gray-600">
-                  {kpi.weight}%
-                </td>
-                <td className="px-4 py-3 text-center font-semibold text-blue-600">
-                  {kpi.score}
-                </td>
-              </tr>
-            ))}
+            {breakdown.kpis.map((kpi, idx) => {
+              const ach = num(kpi.achievement);
+              const actual = num(kpi.actual);
+              const target = num(kpi.target);
+              const excluded = kpi.included === false || ach === null;
+              return (
+                <tr
+                  key={kpi.code}
+                  className={`${idx % 2 === 0 ? "bg-white" : "bg-gray-50"} ${excluded ? "text-gray-400" : ""}`}
+                >
+                  <td className="px-4 py-3 font-medium text-gray-900">
+                    {kpi.name}
+                  </td>
+                  <td className="px-4 py-3 text-center text-gray-600">
+                    {target === null ? "—" : `${target} ${kpi.unit}`}
+                  </td>
+                  <td className="px-4 py-3 text-center font-semibold text-gray-900">
+                    {actual === null ? (
+                      <span className="font-normal italic text-gray-400">Chưa có dữ liệu</span>
+                    ) : (
+                      `${actual} ${kpi.unit}`
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    {ach === null || excluded ? (
+                      <span className="italic">Không tính</span>
+                    ) : (
+                      <span
+                        className={`inline-block px-2 py-1 rounded font-semibold ${
+                          ach >= 100
+                            ? "bg-green-100 text-green-800"
+                            : ach >= 90
+                              ? "bg-yellow-100 text-yellow-800"
+                              : "bg-red-100 text-red-800"
+                        }`}
+                      >
+                        {ach.toFixed(2)}%
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-center text-gray-600">
+                    {kpi.weight}%
+                    {!excluded &&
+                      kpi.effectiveWeight !== undefined &&
+                      kpi.effectiveWeight !== kpi.weight && (
+                        <span className="block text-xs text-gray-400">
+                          → {kpi.effectiveWeight}%
+                        </span>
+                      )}
+                  </td>
+                  <td className="px-4 py-3 text-center font-semibold text-blue-600">
+                    {excluded ? "—" : Number(kpi.score).toFixed(2)}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
-      {/* Legend */}
-      <div className="grid grid-cols-3 gap-4 pt-4 border-t">
-        <div className="text-sm">
-          <p className="font-medium text-gray-700 mb-2">📊 Quy Tắc Điểm:</p>
-          <ul className="space-y-1 text-gray-600">
-            <li>✅ ≥120%: 1.5x (349.500đ)</li>
-            <li>✅ 100-119%: 1.0x (233.000đ)</li>
-            <li>⚠️ 90-99%: 0.75x (174.750đ)</li>
-            <li>❌ &lt;90%: 0x (0đ)</li>
-          </ul>
-        </div>
-
-        <div className="text-sm">
-          <p className="font-medium text-gray-700 mb-2">📈 Trọng Số KPI:</p>
-          <ul className="space-y-1 text-gray-600">
-            <li>Sản Lượng: 25%</li>
-            <li>Hao Hụt: 25%</li>
-            <li>Chất Lượng: 20%</li>
-            <li>Đúng Spec: 15%</li>
-          </ul>
-        </div>
-
-        <div className="text-sm">
-          <p className="font-medium text-gray-700 mb-2">🎯 Tiếp Theo:</p>
-          <ul className="space-y-1 text-gray-600">
-            <li>An Toàn: 10%</li>
-            <li>Deadline: 5%</li>
-            <li>Total: 100%</li>
-          </ul>
-        </div>
+      {/* Ghi chú — trọng số và bậc thưởng lấy từ cấu hình (Quản trị → 6 chỉ tiêu,
+          BonusConfig), không viết cứng ở đây để khỏi lệch số thật. */}
+      <div className="pt-4 border-t text-sm text-gray-600 space-y-1">
+        <p>
+          Bậc thưởng: ≥120 điểm, 100–&lt;120, 90–&lt;100, &lt;90 — hệ số theo cấu hình
+          BonusConfig. Tổng điểm trần 150.
+        </p>
+        <p>
+          Chỉ tiêu &quot;Chưa có dữ liệu&quot; không được tính; trọng số của nó chia lại
+          cho các chỉ tiêu còn lại.
+        </p>
       </div>
 
       {/* Action Buttons */}
@@ -255,7 +290,7 @@ export function ShiftKpiScoreDisplay({
 
       {score.status === "APPROVED" && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-green-800">
-          ✅ Kết quả đã được phê duyệt vào {new Date(score.approvedAt).toLocaleString("vi-VN")}
+          ✅ Kết quả đã được phê duyệt vào {formatVnDateTime(score.approvedAt)}
         </div>
       )}
     </div>

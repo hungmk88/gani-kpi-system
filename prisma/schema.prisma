@@ -181,6 +181,9 @@ model Task {
   @@index([departmentId])
   @@index([dueDate])
   @@index([status])
+  @@index([projectId])
+  @@index([creatorId])
+  @@index([kpiDefinitionId])
   @@map("tasks")
 }
 
@@ -240,6 +243,8 @@ model CrossDeptRequest {
   createdTask Task?      @relation(fields: [createdTaskId], references: [id])
 
   @@index([status])
+  @@index([requesterId])
+  @@index([targetDeptId])
   @@map("cross_dept_requests")
 }
 
@@ -273,6 +278,7 @@ model LeaveRequest {
 
   @@index([status])
   @@index([employeeId])
+  @@index([departmentId])
   @@map("leave_requests")
 }
 
@@ -377,6 +383,8 @@ model KpiResult {
   @@unique([periodId, employeeId, kpiDefinitionId])
   @@index([periodId, employeeId])
   @@index([status])
+  @@index([employeeId, kpiDefinitionId])
+  @@index([kpiDefinitionId])
   @@map("kpi_results")
 }
 
@@ -456,7 +464,9 @@ model ProductWasteStandard {
 
 model PeriodKpiSummary {
   id                String      @id @default(uuid())
-  periodId          String      @unique
+  // Không @unique riêng periodId: mỗi kỳ có nhiều dòng tổng hợp (mỗi nhân sự
+  // một dòng) — ràng buộc đúng là @@unique([periodId, employeeId]) bên dưới.
+  periodId          String
   period            KpiPeriod   @relation(fields: [periodId], references: [id], onDelete: Cascade)
   
   employeeId        String
@@ -603,6 +613,8 @@ model Reconciliation {
 
   @@unique([periodId, employeeId, kpiDefinitionId])
   @@index([status])
+  @@index([employeeId])
+  @@index([kpiDefinitionId])
   @@map("reconciliations")
 }
 
@@ -626,6 +638,7 @@ model KpiActualFeed {
   import        DataImport?   @relation(fields: [importId], references: [id])
 
   @@index([employeeEmail, kpiDefinitionId, periodMonth, periodYear])
+  @@index([importId])
   @@map("kpi_actual_feeds")
 }
 
@@ -669,6 +682,7 @@ model WebhookLog {
   source IntegrationSource? @relation(fields: [sourceId], references: [id])
 
   @@index([sourceCode, createdAt])
+  @@index([sourceId])
   @@map("webhook_logs")
 }
 
@@ -685,6 +699,7 @@ model TelegramLink {
 
   user User @relation(fields: [userId], references: [id])
 
+  @@index([userId])
   @@map("telegram_links")
 }
 
@@ -708,6 +723,7 @@ model ProductSku {
 
   shiftLogs ProductionShiftLog[]
 
+  @@index([rawMaterialId])
   @@map("product_skus")
 }
 
@@ -752,6 +768,7 @@ model RawMaterialTransaction {
   createdBy   User?               @relation(fields: [createdById], references: [id])
 
   @@index([rawMaterialId, createdAt])
+  @@index([shiftLogId])
   @@map("raw_material_transactions")
 }
 
@@ -807,6 +824,7 @@ model ProductionShiftLog {
   @@unique([shiftDate, shiftType, skuId])
   @@index([status])
   @@index([shiftDate])
+  @@index([skuId])
   @@map("production_shift_logs")
 }
 
@@ -859,6 +877,7 @@ model AntiGamingAudit {
   reviewedBy  User?              @relation("AuditReviewer", fields: [reviewedById], references: [id])
 
   @@index([status])
+  @@index([shiftLogId])
   @@map("anti_gaming_audits")
 }
 
@@ -966,6 +985,8 @@ model KpiAnomaly {
 
   @@index([status])
   @@index([periodId])
+  @@index([employeeId])
+  @@index([kpiDefinitionId])
   @@map("kpi_anomalies")
 }
 
@@ -1123,7 +1144,6 @@ model ShiftKpiScore {
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 
-  @@index([shiftLogId])
   @@index([periodTargetId])
   @@index([status])
   @@index([createdAt])

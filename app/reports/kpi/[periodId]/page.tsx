@@ -1,3 +1,4 @@
+import { formatVnDateTime } from "@/lib/vn-time";
 import { notFound, redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -139,7 +140,7 @@ export default async function KpiReportPage({
             </b>
           </span>
           <span>
-            Xuất lúc: {new Date().toLocaleString("vi-VN")}
+            Xuất lúc: {formatVnDateTime(new Date())}
           </span>
           <span>Người xuất: {user.fullName}</span>
         </div>
@@ -431,7 +432,7 @@ export default async function KpiReportPage({
         </p>
         <p className="mt-1">
           Báo cáo sinh tự động từ hệ thống Quản lý Công việc &amp; KPI ·{" "}
-          {company?.value ?? "GANI FOODY"} · {new Date().toLocaleString("vi-VN")}
+          {company?.value ?? "GANI FOODY"} · {formatVnDateTime(new Date())}
         </p>
       </footer>
     </div>

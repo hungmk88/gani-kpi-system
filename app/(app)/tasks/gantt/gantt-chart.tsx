@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { TriangleAlert } from "lucide-react";
 import type { GanttResult } from "@/lib/gantt";
 import { TASK_STATUS_LABEL } from "@/lib/constants";
+import { formatVnDate, vnDateKey, vnParts } from "@/lib/vn-time";
 
 const DAY = 86400_000;
 const ROW_H = 38;
@@ -48,19 +49,16 @@ export default function GanttChart({
   const ticks = useMemo(() => {
     const out: { x: number; label: string; isWeekend: boolean; isToday: boolean }[] =
       [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Theo lịch VN để server (UTC) và trình duyệt vẽ ra cùng một trục ngày
+    const todayKey = vnDateKey(new Date());
     for (let d = 0; d < data.totalDays; d++) {
       const date = new Date(rangeStart + d * DAY);
-      const dow = date.getDay();
+      const p = vnParts(date);
       out.push({
         x: d * dayWidth,
-        label:
-          dayWidth >= 26
-            ? `${date.getDate()}/${date.getMonth() + 1}`
-            : `${date.getDate()}`,
-        isWeekend: dow === 0 || dow === 6,
-        isToday: date.getTime() === today.getTime(),
+        label: dayWidth >= 26 ? `${p.day}/${p.month}` : `${p.day}`,
+        isWeekend: p.weekday === 0 || p.weekday === 6,
+        isToday: vnDateKey(date) === todayKey,
       });
     }
     return out;
@@ -311,11 +309,9 @@ export default function GanttChart({
                     <Link
                       key={it.id}
                       href={`/tasks/${it.id}`}
-                      title={`${it.code} · ${it.title}\n${new Date(
+                      title={`${it.code} · ${it.title}\n${formatVnDate(
                         it.start
-                      ).toLocaleDateString("vi-VN")} → ${new Date(
-                        it.end
-                      ).toLocaleDateString("vi-VN")} (${it.durationDays} ngày)\nTiến độ ${
+                      )} → ${formatVnDate(it.end)} (${it.durationDays} ngày)\nTiến độ ${
                         it.progress
                       }%${it.isCritical ? "\nNẰM TRÊN ĐƯỜNG GĂNG" : `\nDư địa ${it.slackDays} ngày`}`}
                       className="absolute flex items-center"

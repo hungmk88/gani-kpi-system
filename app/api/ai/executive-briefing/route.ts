@@ -5,6 +5,7 @@ import { ERR } from "@/lib/constants";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { gatherExecutiveBriefingFacts } from "@/lib/services/analytics-service";
 import { buildExecutiveBriefing } from "@/lib/ai/executive-advisor";
+import { assertAiQuota } from "@/lib/services/ai-service";
 
 export const runtime = "nodejs";
 // Gọi Gemini có thể mất tới ~25-30s ở dòng model "thinking" — trần mặc định
@@ -33,6 +34,7 @@ export async function POST(req: Request) {
         403
       );
     }
+    await assertAiQuota(user);
 
     const { health, facts, accuracy } = await gatherExecutiveBriefingFacts();
     const briefing = await buildExecutiveBriefing(health, facts);

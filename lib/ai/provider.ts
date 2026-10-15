@@ -2,7 +2,13 @@
  * TẦNG GỌI AI — Google Gemini.
  *
  * Gọi thẳng REST API thay vì cài SDK: bớt một gói phụ thuộc nặng, và quan trọng
- * hơn là kiểm soát được timeout, số lần thử lại, cùng việc ép định dạng JSON.
+ * hơn là kiểm soát được timeout, số lần thử lại (thử lại ĐÚNG 1 lần khi Gemini
+ * báo quá tải 429 hoặc lỗi 5xx), cùng việc ép định dạng JSON.
+ *
+ * Khoá API gửi qua header `x-goog-api-key`, KHÔNG gắn vào URL — URL hay bị ghi
+ * nguyên văn vào log proxy/log lỗi.
+ * Chi tiết lỗi từ Gemini chỉ ghi vào log server; trường `error` trả lên tầng
+ * trên luôn là câu chung chung, không chứa nội dung phản hồi gốc.
  *
  * Ba tầng chắn (Guardrail) theo đúng tài liệu thiết kế:
  *   Tầng 1 — Làm sạch đầu vào: cắt độ dài, chặn câu lệnh chèn (prompt injection).
@@ -17,7 +23,8 @@ const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
  *
  * "gemini-2.0-flash" (số gốc ban đầu) đã ngừng hoạt động hẳn — gọi vào trả
  * 404 "no longer available". Kiểm tra lại danh sách model còn dùng được bằng
- * GET https://generativelanguage.googleapis.com/v1beta/models?key=<khoá> nếu
+ * GET https://generativelanguage.googleapis.com/v1beta/models (header
+ * x-goog-api-key: <khoá>) nếu
  * sau này model dưới đây cũng bị Google khai tử.
  */
 export const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
@@ -114,6 +121,30 @@ export async function generateJson<T>(opts: {
 
   if (!apiKey) return fail("Chưa cấu hình GEMINI_API_KEY trong file .env");
 
+  const requestBody = JSON.stringify({
+    systemInstruction: {
+      parts: [{ text: opts.systemInstruction }],
+    },
+    contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
+    generationConfig: {
+      temperature: opts.temperature ?? 0.2,
+      responseMimeType: "application/json",
+      responseSchema: opts.schema,
+      // Model dòng "thinking" (gemini-3.x) mặc định nghĩ rất lâu trước khi
+      // trả JSON — đo thật: 17.5s ở mức nghĩ mặc định, dễ vượt timeout bên
+      // dưới. Hạ xuống "low" thì còn ~6s, JSON vẫn đúng schema, lại rẻ hơn
+      // vì bớt hẳn thoughtsTokenCount. Việc ở đây chỉ cần trích xuất/tóm tắt
+      // có cấu trúc, không cần suy luận nhiều bước.
+      thinkingConfig: { thinkingLevel: "low" },
+    },
+    safetySettings: [
+      "HARM_CATEGORY_HARASSMENT",
+      "HARM_CATEGORY_HATE_SPEECH",
+      "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+      "HARM_CATEGORY_DANGEROUS_CONTENT",
+    ].map((category) => ({ category, threshold: "BLOCK_ONLY_HIGH" })),
+  });
+
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -121,41 +152,43 @@ export async function generateJson<T>(opts: {
   );
 
   try {
-    const res = await fetch(
-      `${ENDPOINT}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
+    const callOnce = () =>
+      fetch(`${ENDPOINT}/${encodeURIComponent(model)}:generateContent`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
         signal: controller.signal,
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: opts.systemInstruction }],
-          },
-          contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
-          generationConfig: {
-            temperature: opts.temperature ?? 0.2,
-            responseMimeType: "application/json",
-            responseSchema: opts.schema,
-            // Model dòng "thinking" (gemini-3.x) mặc định nghĩ rất lâu trước khi
-            // trả JSON — đo thật: 17.5s ở mức nghĩ mặc định, dễ vượt timeout bên
-            // dưới. Hạ xuống "low" thì còn ~6s, JSON vẫn đúng schema, lại rẻ hơn
-            // vì bớt hẳn thoughtsTokenCount. Việc ở đây chỉ cần trích xuất/tóm tắt
-            // có cấu trúc, không cần suy luận nhiều bước.
-            thinkingConfig: { thinkingLevel: "low" },
-          },
-          safetySettings: [
-            "HARM_CATEGORY_HARASSMENT",
-            "HARM_CATEGORY_HATE_SPEECH",
-            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-            "HARM_CATEGORY_DANGEROUS_CONTENT",
-          ].map((category) => ({ category, threshold: "BLOCK_ONLY_HIGH" })),
-        }),
-      }
-    );
+        body: requestBody,
+      });
+
+    let res = await callOnce();
+
+    // Thử lại đúng 1 lần khi quá tải / lỗi phía Google. Lỗi 4xx khác (sai
+    // khoá, sai schema...) thử lại cũng vô ích nên bỏ qua.
+    if (res.status === 429 || res.status >= 500) {
+      const firstBody = await res.text().catch(() => "");
+      console.warn(
+        `[AI] Gemini ${model} trả ${res.status}, thử lại 1 lần:`,
+        firstBody.slice(0, 500)
+      );
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const waitMs =
+        Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(retryAfter * 1000, 3000)
+          : 1000;
+      await new Promise((r) => setTimeout(r, waitMs));
+      res = await callOnce();
+    }
 
     if (!res.ok) {
-      const body = await res.text();
-      return fail(`Gemini trả lỗi ${res.status}: ${body.slice(0, 300)}`);
+      const body = await res.text().catch(() => "");
+      console.error(
+        `[AI] Gemini ${model} trả lỗi ${res.status}:`,
+        body.slice(0, 1000)
+      );
+      return fail(`Dịch vụ AI tạm thời không phản hồi (mã ${res.status}).`);
     }
 
     const json = await res.json();
@@ -164,7 +197,8 @@ export async function generateJson<T>(opts: {
 
     if (!text) {
       const reason = json?.candidates?.[0]?.finishReason ?? "không rõ";
-      return fail(`Gemini không trả về nội dung (lý do: ${reason})`);
+      console.warn(`[AI] Gemini ${model} không trả nội dung, finishReason=${reason}`);
+      return fail("Dịch vụ AI không trả về nội dung.");
     }
 
     try {
@@ -177,19 +211,19 @@ export async function generateJson<T>(opts: {
         model,
       };
     } catch {
+      console.warn(`[AI] Gemini ${model} trả chuỗi không phải JSON hợp lệ`);
       return {
-        ...fail("Gemini trả về chuỗi không phải JSON hợp lệ"),
+        ...fail("Dịch vụ AI trả về dữ liệu không hợp lệ."),
         raw: text,
       };
     }
   } catch (e) {
-    const msg =
-      e instanceof Error && e.name === "AbortError"
-        ? "Gemini phản hồi quá chậm, đã huỷ sau khi chờ hết giờ"
-        : e instanceof Error
-          ? e.message
-          : String(e);
-    return fail(msg);
+    if (e instanceof Error && e.name === "AbortError") {
+      console.warn(`[AI] Gemini ${model} quá thời gian chờ, đã huỷ`);
+      return fail("Dịch vụ AI phản hồi quá chậm, đã huỷ sau khi chờ hết giờ.");
+    }
+    console.error(`[AI] Gọi Gemini ${model} thất bại:`, e);
+    return fail("Không kết nối được dịch vụ AI.");
   } finally {
     clearTimeout(timer);
   }

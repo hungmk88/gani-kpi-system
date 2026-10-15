@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { handle, ok, requireUser } from "@/lib/api";
+import { BusinessError } from "@/lib/rbac";
 import { generateLinkCode } from "@/lib/integrations/signature";
 import { telegramEnabled } from "@/lib/telegram-api";
 
@@ -23,12 +24,31 @@ export async function POST() {
       where: { userId: user.id, usedAt: null },
     });
 
-    // Vòng lặp phòng trường hợp hiếm gặp: mã 6 số trùng với mã đang sống
-    let code = generateLinkCode();
-    for (let i = 0; i < 5; i++) {
-      const clash = await prisma.telegramLink.findUnique({ where: { code } });
-      if (!clash) break;
-      code = generateLinkCode();
+    // Dọn luôn mã hết hạn chưa dùng của mọi người — giải phóng không gian mã
+    // (cột code là unique) và để mã cũ không còn nằm chờ bị dò trúng.
+    await prisma.telegramLink.deleteMany({
+      where: { usedAt: null, expiresAt: { lt: new Date() } },
+    });
+
+    // Vòng lặp phòng trường hợp hiếm gặp: mã 6 số trùng với mã đã có
+    let code: string | null = null;
+    for (let i = 0; i < 8; i++) {
+      const candidate = generateLinkCode();
+      const clash = await prisma.telegramLink.findUnique({
+        where: { code: candidate },
+        select: { id: true },
+      });
+      if (!clash) {
+        code = candidate;
+        break;
+      }
+    }
+    if (!code) {
+      throw new BusinessError(
+        "LINK_CODE_UNAVAILABLE",
+        "Chưa sinh được mã nối, vui lòng bấm lại sau ít giây.",
+        503
+      );
     }
 
     const expiresAt = new Date(Date.now() + TTL_MINUTES * 60_000);
@@ -48,7 +68,7 @@ export async function POST() {
       botUsername: process.env.TELEGRAM_BOT_USERNAME || null,
       telegramEnabled: telegramEnabled(),
       alreadyLinked: !!current?.telegramChatId,
-      instruction: `Mở Telegram, nhắn cho bot của công ty: /start ${code}`,
+      instruction: `Mở Telegram, nhắn RIÊNG cho bot của công ty (không gõ trong nhóm): /start ${code}`,
     });
   });
 }

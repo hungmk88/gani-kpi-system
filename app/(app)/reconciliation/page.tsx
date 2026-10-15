@@ -123,6 +123,7 @@ export default async function ReconciliationPage() {
                       reconciliationId={m.id}
                       sources={sources}
                       unit={m.kpiDefinition.unit}
+                      allowCustom={user.role === "CEO"}
                     />
                   </div>
                 </div>

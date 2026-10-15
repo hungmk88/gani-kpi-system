@@ -112,8 +112,10 @@ export default function KpiWorkTable({
     if (data) {
       setMessage(
         `Đã chốt ${data.finalized} dòng KPI.${
-          data.periodFinalized ? " Toàn kỳ đã khoá." : ""
-        }`
+          data.skipped?.length
+            ? ` ${data.skipped.length} dòng chưa qua bước trưởng phòng nên chưa chốt.`
+            : ""
+        }${data.periodFinalized ? " Toàn kỳ đã khoá." : ""}`
       );
     }
   }

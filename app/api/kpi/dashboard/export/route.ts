@@ -1,62 +1,49 @@
 // File: app/api/kpi/dashboard/export/route.ts
 
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { getSession } from "@/lib/auth";
+import { NextRequest } from "next/server";
+import { handle, requireUser } from "@/lib/api";
 import {
+  assertDashboardAccess,
   getDashboardSummary,
   getDashboardDistribution,
   getDashboardTrends,
-  type DashboardPeriod,
+  normalizePeriod,
+  redactDashboardMoney,
 } from "@/lib/services/kpi-dashboard";
 import { buildDashboardReport } from "@/lib/excel";
+import { vnDateKey } from "@/lib/vn-time";
 
 export const runtime = "nodejs";
 
 /** Xuất Excel cho Dashboard KPI sản xuất — cùng số với 3 API vẽ biểu đồ. */
 export async function GET(request: NextRequest) {
-  try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  return handle(async () => {
+    const user = await requireUser();
+    const { includeMoney } = await assertDashboardAccess(user);
 
-    const user = await prisma.user.findUnique({ where: { id: session.id } });
-    if (!user || !["CEO", "ADMIN"].includes(user.role)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    const { period = "today", days = "7" } = Object.fromEntries(
-      request.nextUrl.searchParams
-    );
-    const numDays = Math.min(90, Math.max(1, parseInt(days) || 7));
+    const params = request.nextUrl.searchParams;
+    const period = normalizePeriod(params.get("period"));
+    const numDays = Math.min(90, Math.max(1, parseInt(params.get("days") ?? "7", 10) || 7));
 
     const [summary, distribution, trends] = await Promise.all([
-      getDashboardSummary(period as DashboardPeriod),
+      getDashboardSummary(period),
       getDashboardDistribution(),
       getDashboardTrends(numDays),
     ]);
 
     const buffer = await buildDashboardReport({
       period,
-      summary,
+      summary: includeMoney ? summary : redactDashboardMoney(summary),
       distribution,
-      trends,
+      trends: includeMoney ? trends : redactDashboardMoney(trends),
     });
 
-    const stamp = new Date().toISOString().slice(0, 10);
     return new Response(buffer as ArrayBuffer, {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="GANI_Dashboard_KPI_${period}_${stamp}.xlsx"`,
+        "Content-Disposition": `attachment; filename="GANI_Dashboard_KPI_${period}_${vnDateKey()}.xlsx"`,
       },
     });
-  } catch (error) {
-    console.error("Error exporting dashboard report:", error);
-    return NextResponse.json(
-      { error: "Failed to export report" },
-      { status: 500 }
-    );
-  }
+  });
 }

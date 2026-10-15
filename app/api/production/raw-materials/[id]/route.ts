@@ -63,7 +63,7 @@ export async function PATCH(
 
 const txSchema = z.object({
   action: z.enum(["STOCK_IN", "ADJUSTMENT"]),
-  quantityKg: z.number(),
+  quantityKg: z.number().finite(),
   note: z.string().max(500).optional(),
 });
 
@@ -96,42 +96,59 @@ export async function POST(
       );
     }
 
-    const material = await prisma.rawMaterial.findUnique({ where: { id } });
-    if (!material) {
+    if (Math.round(body.quantityKg * 100) === 0) {
+      throw new BusinessError(
+        ERR.VALIDATION_FAILED,
+        "Số lượng phải khác 0 (chỉnh tay: dương để cộng, âm để trừ).",
+        400
+      );
+    }
+
+    const exists = await prisma.rawMaterial.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!exists) {
       throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy NVL.", 404);
     }
 
-    const delta = body.action === "STOCK_IN" ? body.quantityKg : body.quantityKg;
-    const balanceAfter = Math.round((material.currentStockKg + delta) * 100) / 100;
-
-    const [, transaction] = await prisma.$transaction([
-      prisma.rawMaterial.update({
-        where: { id },
-        data: { currentStockKg: balanceAfter },
-      }),
-      prisma.rawMaterialTransaction.create({
-        data: {
-          rawMaterialId: id,
-          type: body.action,
-          quantityKg: delta,
-          balanceAfterKg: balanceAfter,
-          createdById: user.id,
-          note: body.note ?? null,
-        },
-      }),
-    ]);
+    // Cộng/trừ NGUYÊN TỬ bằng increment ở DB — không ghi đè số dư tính từ
+    // một lần đọc cũ (hai người nhập kho cùng lúc, hoặc nhập kho đúng lúc một
+    // ca đang khoá và trừ kho, sẽ làm mất lượt của nhau). Số dư sau giao dịch
+    // đọc lại từ kết quả update, cùng transaction với dòng sổ giao dịch.
+    const delta = Math.round(body.quantityKg * 100) / 100;
+    const { material, transaction, balanceAfter } = await prisma.$transaction(
+      async (tx) => {
+        const material = await tx.rawMaterial.update({
+          where: { id },
+          data: { currentStockKg: { increment: delta } },
+        });
+        const balanceAfter = Math.round(material.currentStockKg * 100) / 100;
+        const transaction = await tx.rawMaterialTransaction.create({
+          data: {
+            rawMaterialId: id,
+            type: body.action,
+            quantityKg: delta,
+            balanceAfterKg: balanceAfter,
+            createdById: user.id,
+            note: body.note ?? null,
+          },
+        });
+        return { material, transaction, balanceAfter };
+      }
+    );
 
     await writeAudit({
       actor: user,
       action: `RAW_MATERIAL_${body.action}`,
       entityName: "raw_materials",
       entityId: id,
-      before: { currentStockKg: material.currentStockKg },
-      after: { currentStockKg: balanceAfter, delta },
+      before: { currentStockKg: Math.round((balanceAfter - delta) * 100) / 100 },
+      after: { currentStockKg: balanceAfter, delta, transactionId: transaction.id },
       reason: body.note ?? null,
       ...clientMeta(req),
     });
 
-    return ok({ material: { ...material, currentStockKg: balanceAfter }, transaction }, 201);
+    return ok({ material, transaction }, 201);
   });
 }

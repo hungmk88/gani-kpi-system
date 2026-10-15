@@ -67,13 +67,16 @@ export async function GET(
       where: { id },
       include: {
         sku: true,
-        createdBy: true,
-        qcOfficer: true,
-        lockedBy: true,
-        participants: { include: { user: true } },
-        kpiResults: { include: { user: true } },
+        createdBy: { select: { id: true, fullName: true } },
+        qcOfficer: { select: { id: true, fullName: true } },
+        lockedBy: { select: { id: true, fullName: true } },
+        participants: { select: { userId: true } },
+        kpiResults: { include: { user: { select: { id: true, fullName: true } } } },
         audits: {
-          include: { explainedBy: true, reviewedBy: true },
+          include: {
+            explainedBy: { select: { id: true, fullName: true } },
+            reviewedBy: { select: { id: true, fullName: true } },
+          },
           orderBy: { createdAt: "desc" },
         },
       },

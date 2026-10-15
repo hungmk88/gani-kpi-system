@@ -99,7 +99,9 @@ export default function TaskActions({
     }
   }
 
-  const quick = QUICK[task.status] ?? [];
+  // Mở lại việc đã nghiệm thu là quyền của người quản việc — API cũng chặn.
+  const quick =
+    task.status === "DONE" && !canApprove ? [] : QUICK[task.status] ?? [];
 
   return (
     <div className="card p-5">

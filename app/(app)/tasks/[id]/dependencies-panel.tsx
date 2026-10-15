@@ -1,5 +1,6 @@
 "use client";
 
+import { formatVnDate } from "@/lib/vn-time";
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -62,11 +63,18 @@ export default function DependenciesPanel({
     setBusy(true);
     setError(null);
     try {
-      await fetch(
-        `/api/tasks/${taskId}/dependencies?dependsOnId=${dependsOnId}`,
+      const r = await fetch(
+        `/api/tasks/${taskId}/dependencies?dependsOnId=${encodeURIComponent(dependsOnId)}`,
         { method: "DELETE" }
       );
+      if (!r.ok) {
+        const d = await r.json().catch(() => null);
+        setError(d?.message || "Không gỡ được quan hệ phụ thuộc.");
+        return;
+      }
       router.refresh();
+    } catch {
+      setError("Mất kết nối tới máy chủ.");
     } finally {
       setBusy(false);
     }
@@ -126,7 +134,7 @@ export default function DependenciesPanel({
                     className={`block ${b.isLate ? "font-medium text-red-600" : "text-ink-400"}`}
                   >
                     {b.code} · hạn{" "}
-                    {new Date(b.dueDate).toLocaleDateString("vi-VN")}
+                    {formatVnDate(b.dueDate)}
                     {b.isLate && " · ĐÃ TRỄ"}
                   </span>
                 </Link>

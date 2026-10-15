@@ -4,6 +4,7 @@ import { handle, ok, requireUser } from "@/lib/api";
 import { assertPermission, BusinessError } from "@/lib/rbac";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { ERR } from "@/lib/constants";
+import { recalcResult } from "@/lib/services/kpi-service";
 
 const schema = z.object({
   periodId: z.string().min(1),
@@ -42,6 +43,15 @@ export async function POST(req: Request) {
         409
       );
     }
+    // Trưởng phòng chỉ đặt mục tiêu khi kỳ còn mở; sau mốc khoá thì chỉ Ban
+    // Giám đốc / quản trị chỉnh (và mọi lần chỉnh đều vào nhật ký).
+    if (user.role === "MANAGER" && period.status !== "OPEN") {
+      throw new BusinessError(
+        ERR.SLA_LOCKED,
+        "Kỳ đã qua mốc khoá — trưởng phòng không sửa mục tiêu được nữa. Liên hệ Ban Giám đốc.",
+        409
+      );
+    }
 
     const ids = body.updates.map((u) => u.resultId);
     const rows = await prisma.kpiResult.findMany({
@@ -56,6 +66,20 @@ export async function POST(req: Request) {
       );
     }
     for (const r of rows) {
+      if (r.status === "FINALIZED") {
+        throw new BusinessError(
+          ERR.KPI_FINALIZED,
+          "Có dòng KPI đã chốt — không sửa mục tiêu được.",
+          409
+        );
+      }
+      if (user.role === "MANAGER" && r.employeeId === user.id) {
+        throw new BusinessError(
+          ERR.FORBIDDEN,
+          "Không tự đặt mục tiêu cho chính mình — Ban Giám đốc đặt mục tiêu của trưởng phòng.",
+          403
+        );
+      }
       if (r.periodId !== body.periodId) {
         throw new BusinessError(
           ERR.VALIDATION_FAILED,
@@ -85,11 +109,15 @@ export async function POST(req: Request) {
       )
     );
 
+    // Mục tiêu đổi thì điểm phải tính lại ngay, không để điểm và mục tiêu lệch nhau
+    for (const r of rows) await recalcResult(r.id);
+
     await writeAudit({
       actor: user,
       action: "KPI_TARGET_BULK_SET",
       entityName: "kpi_results",
       entityId: body.periodId,
+      before: rows.map((r) => ({ resultId: r.id, targetValue: r.targetValue })),
       after: { count: rows.length, updates: body.updates },
       ...clientMeta(req),
     });

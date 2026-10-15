@@ -1,8 +1,9 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
-async function main() {
+/**
+ * Cấu hình KPI 6 chỉ tiêu ca sản xuất (KpiConfig), bậc thưởng (BonusConfig),
+ * định mức hao hụt và SKU mẫu. Gọi từ prisma/seed.mjs — trước đây là seed.ts
+ * nhưng không có script nào chạy nó, nên môi trường mới thiếu hẳn cấu hình.
+ */
+export async function seedProductionKpi(prisma) {
   console.log("🌱 Seeding GANI FOODY KPI System...");
 
   // ============ 1. SEED KPI CONFIGS (6 KPI PHÒNG SX) ============
@@ -293,12 +294,3 @@ async function main() {
   console.log(`  • 4 Product SKUs (mã sản phẩm)`);
   console.log("\n🎯 Tiếp theo: Xây dựng Page 'Năm Quyết Định' cho Phòng SX");
 }
-
-main()
-  .catch((e) => {
-    console.error("❌ Seed error:", e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });

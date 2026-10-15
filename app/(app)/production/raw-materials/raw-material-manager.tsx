@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatVnDateTime } from "@/lib/vn-time";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui";
 
@@ -28,6 +29,7 @@ const TX_TYPE_LABEL: Record<string, string> = {
   STOCK_IN: "Nhập kho",
   SHIFT_DEDUCTION: "Trừ theo ca",
   ADJUSTMENT: "Chỉnh tay",
+  SHIFT_REVERSAL: "Hoàn kho (mở lại ca)",
 };
 
 export default function RawMaterialManager({
@@ -322,7 +324,7 @@ export default function RawMaterialManager({
                           {m.transactions.map((t) => (
                             <tr key={t.id}>
                               <td className="whitespace-nowrap text-xs text-ink-500">
-                                {new Date(t.createdAt).toLocaleString("vi-VN")}
+                                {formatVnDateTime(t.createdAt)}
                               </td>
                               <td className="text-xs">
                                 {TX_TYPE_LABEL[t.type] ?? t.type}

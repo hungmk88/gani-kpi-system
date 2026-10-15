@@ -70,27 +70,30 @@ export async function POST(req: Request) {
       );
     }
 
-    const material = await prisma.rawMaterial.create({
-      data: {
-        code: body.code,
-        name: body.name,
-        unit: body.unit,
-        currentStockKg: body.initialStockKg,
-      },
-    });
-
-    if (body.initialStockKg > 0) {
-      await prisma.rawMaterialTransaction.create({
+    // Tạo mã + dòng NHẬP KHO khởi tạo trong cùng transaction.
+    const material = await prisma.$transaction(async (tx) => {
+      const material = await tx.rawMaterial.create({
         data: {
-          rawMaterialId: material.id,
-          type: "STOCK_IN",
-          quantityKg: body.initialStockKg,
-          balanceAfterKg: body.initialStockKg,
-          createdById: user.id,
-          note: "Tồn kho khởi tạo lúc tạo mã NVL",
+          code: body.code,
+          name: body.name,
+          unit: body.unit,
+          currentStockKg: body.initialStockKg,
         },
       });
-    }
+      if (body.initialStockKg > 0) {
+        await tx.rawMaterialTransaction.create({
+          data: {
+            rawMaterialId: material.id,
+            type: "STOCK_IN",
+            quantityKg: body.initialStockKg,
+            balanceAfterKg: body.initialStockKg,
+            createdById: user.id,
+            note: "Tồn kho khởi tạo lúc tạo mã NVL",
+          },
+        });
+      }
+      return material;
+    });
 
     await writeAudit({
       actor: user,

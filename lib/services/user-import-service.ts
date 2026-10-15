@@ -112,29 +112,38 @@ export async function importUsersFromFile(
 
   // Băm mật khẩu trước, ngoài transaction: bcrypt chậm có chủ đích, để trong
   // transaction thì giữ khoá ghi database lâu một cách vô ích.
-  const withHashes = await Promise.all(
-    prepared.map(async (r) => ({ ...r, passwordHash: await hashPassword(r.password) }))
-  );
+  // bcryptjs chạy bằng JS thuần, chiếm CPU — băm theo từng lô nhỏ thay vì
+  // bắn cùng lúc hàng nghìn lời gọi làm nghẽn cả server.
+  const withHashes: (typeof prepared[number] & { passwordHash: string })[] = [];
+  const HASH_BATCH = 8;
+  for (let i = 0; i < prepared.length; i += HASH_BATCH) {
+    const batch = prepared.slice(i, i + HASH_BATCH);
+    withHashes.push(
+      ...(await Promise.all(
+        batch.map(async (r) => ({
+          ...r,
+          passwordHash: await hashPassword(r.password),
+        }))
+      ))
+    );
+  }
 
-  await prisma.$transaction(
-    withHashes.map((r) =>
-      prisma.user.create({
-        data: {
-          email: r.email,
-          fullName: r.fullName,
-          jobTitle: r.jobTitle,
-          role: r.role,
-          departmentId: r.departmentId,
-          phone: r.phone,
-          productionRole: r.productionRole,
-          passwordHash: r.passwordHash,
-          // Mật khẩu tạm nằm trong file Excel mà nhiều người xem được.
-          // Ai vào cũng phải tự đặt mật khẩu riêng trước khi làm gì khác.
-          mustChangePassword: true,
-        },
-      })
-    )
-  );
+  // Một câu lệnh duy nhất — vẫn "được ăn cả, ngã về không".
+  await prisma.user.createMany({
+    data: withHashes.map((r) => ({
+      email: r.email,
+      fullName: r.fullName,
+      jobTitle: r.jobTitle,
+      role: r.role,
+      departmentId: r.departmentId,
+      phone: r.phone,
+      productionRole: r.productionRole,
+      passwordHash: r.passwordHash,
+      // Mật khẩu tạm nằm trong file Excel mà nhiều người xem được.
+      // Ai vào cũng phải tự đặt mật khẩu riêng trước khi làm gì khác.
+      mustChangePassword: true,
+    })),
+  });
 
   await writeAudit({
     actor,

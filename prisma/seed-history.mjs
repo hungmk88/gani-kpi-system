@@ -1,3 +1,4 @@
+import { vnAt, vnDate } from "./vn-date.mjs";
 /**
  * LỊCH SỬ CHO PHẦN PHÂN TÍCH & DỰ BÁO (Phase 4).
  *
@@ -95,7 +96,7 @@ export async function seedHistory(ctx) {
 
     const nm = m === 12 ? 1 : m + 1;
     const ny = m === 12 ? y + 1 : y;
-    const at = (d) => new Date(ny, nm - 1, d, 23, 59, 59);
+    const at = (d) => vnDate(ny, nm, d, 23, 59, 59);
 
     const period = await prisma.kpiPeriod.upsert({
       where: { month_year: { month: m, year: y } },
@@ -213,14 +214,10 @@ export async function seedHistory(ctx) {
   for (const w of workers) {
     for (let i = 0; i < 9; i++) {
       const daysAgo = 12 + i * 9;
-      const start = new Date();
-      start.setDate(start.getDate() - daysAgo);
-      start.setHours(8, 0, 0, 0);
+      const start = vnAt(-daysAgo, 8);
 
       const planDays = 3 + Math.floor(rng() * 4);
-      const due = new Date(start);
-      due.setDate(due.getDate() + planDays);
-      due.setHours(17, 0, 0, 0);
+      const due = vnAt(-daysAgo + planDays, 17);
 
       // Đúng hạn hay trễ, theo tỷ lệ riêng của từng người
       const onTime = rng() < w.onTimeRate;
@@ -264,9 +261,7 @@ export async function seedHistory(ctx) {
   const boss = userMap["tp.sales@ganifoody.vn"];
   if (overloaded && boss) {
     for (let i = 0; i < 7; i++) {
-      const due = new Date();
-      due.setDate(due.getDate() + 4 + i * 2);
-      due.setHours(17, 0, 0, 0);
+      const due = vnAt(4 + i * 2, 17);
       await prisma.task.create({
         data: {
           code: "TASK-" + yearNow + "-" + String(seq++).padStart(4, "0"),

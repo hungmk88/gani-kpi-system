@@ -3,12 +3,28 @@ import { prisma } from "@/lib/db";
 import { handle, ok, requireUser } from "@/lib/api";
 import { BusinessError } from "@/lib/rbac";
 import { notify } from "@/lib/telegram";
+import { PUBLIC_USER_SELECT } from "@/lib/services/task-service";
 import { ERR } from "@/lib/constants";
+
+/** Chỉ nhận link http(s) — chặn javascript:, data:... bị nhúng vào trang. */
+function isHttpUrl(v: string) {
+  try {
+    return ["https:", "http:"].includes(new URL(v).protocol);
+  } catch {
+    return false;
+  }
+}
 
 const schema = z.object({
   body: z.string().min(1, "Chưa nhập nội dung.").max(2000),
   kind: z.enum(["COMMENT", "EVIDENCE"]).default("COMMENT"),
-  fileUrl: z.string().max(1000).nullable().optional(),
+  fileUrl: z
+    .string()
+    .trim()
+    .max(1000, "Đường dẫn tệp quá dài.")
+    .refine(isHttpUrl, "Đường dẫn tệp phải bắt đầu bằng http:// hoặc https://.")
+    .nullable()
+    .optional(),
 });
 
 export async function POST(
@@ -50,7 +66,7 @@ export async function POST(
         kind: input.kind,
         fileUrl: input.fileUrl ?? null,
       },
-      include: { user: true },
+      include: { user: { select: PUBLIC_USER_SELECT } },
     });
 
     // Báo cho những người liên quan còn lại

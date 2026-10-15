@@ -613,12 +613,29 @@ function KpisTab({
   }
 
   async function toggle(id: string, isActive: boolean) {
-    await fetch(`/api/admin/kpi-definitions?id=${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive }),
-    });
-    router.refresh();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/admin/kpi-definitions?id=${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isActive }),
+        }
+      );
+      if (!res.ok) {
+        // Báo đúng lý do server trả về thay vì im lặng như đã thành công
+        const data = await res.json().catch(() => null);
+        setError(data?.message || "Không cập nhật được trạng thái chỉ tiêu.");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("Mất kết nối tới máy chủ.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -1071,7 +1088,7 @@ function SystemTab({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ chatId }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       setResult(
         res.ok && data.ok ? (
           <span className="inline-flex items-center gap-1.5">
@@ -1079,7 +1096,8 @@ function SystemTab({
           </span>
         ) : (
           <span className="inline-flex items-center gap-1.5">
-            <CircleX size={14} strokeWidth={2} /> {data.error || data.message}
+            <CircleX size={14} strokeWidth={2} />{" "}
+            {data.error || data.message || "Gửi thất bại."}
           </span>
         )
       );

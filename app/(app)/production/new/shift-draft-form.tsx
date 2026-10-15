@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { vnDateKey } from "@/lib/vn-time";
 import { useRouter } from "next/navigation";
 import {
   PRODUCTION_ROLE_LABEL,
@@ -56,8 +57,13 @@ export default function ShiftDraftForm({
 
   const sku = skus.find((s) => s.id === skuId);
 
+  // Chỉ cộng giờ của các dòng thực sự gửi lên (đã chọn người, giờ > 0) — nếu
+  // cộng cả dòng trống thì tổng giờ lệch với danh sách người và server từ chối.
   const totalLaborHours = useMemo(
-    () => rows.reduce((s, r) => s + (Number(r.hoursWorked) || 0), 0),
+    () =>
+      rows
+        .filter((r) => r.userId && Number(r.hoursWorked) > 0)
+        .reduce((s, r) => s + (Number(r.hoursWorked) || 0), 0),
     [rows]
   );
 
@@ -89,7 +95,8 @@ export default function ShiftDraftForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          shiftDate: new Date(shiftDate + "T00:00:00").toISOString(),
+          // Gửi nguyên "YYYY-MM-DD" — server quy về 00:00 giờ VN của ngày ca.
+          shiftDate,
           shiftType,
           skuId,
           rawOutputKg: Number(rawOutputKg),
@@ -372,8 +379,7 @@ export default function ShiftDraftForm({
   }
 }
 
+/** Hôm nay theo lịch VN — không theo múi giờ của trình duyệt. */
 function today() {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return vnDateKey(new Date());
 }

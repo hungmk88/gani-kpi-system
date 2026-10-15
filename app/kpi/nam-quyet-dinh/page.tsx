@@ -4,13 +4,21 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { LineChart, Save, Lightbulb } from "lucide-react";
+import { LineChart, Save, Lightbulb, CircleCheck } from "lucide-react";
+import { formatVnDate } from "@/lib/vn-time";
+import { SHIFT_TYPE_LABEL } from "@/lib/production/constants";
 
 interface KpiDefinition {
   code: string;
   name: string;
   unit: string;
   weight: number;
+  isHigherBetter?: boolean;
+}
+
+interface Permissions {
+  canApprove: boolean;
+  canEdit: boolean;
 }
 
 interface PeriodTarget {
@@ -28,7 +36,7 @@ interface PeriodTarget {
 interface ShiftTarget {
   id: string;
   shiftDate: string;
-  shiftType: "MORNING" | "AFTERNOON" | "NIGHT";
+  shiftType: string;
   output_target: number | null;
   waste_target: number | null;
 }
@@ -57,10 +65,28 @@ function NamQuyetDinhContent() {
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("period"); // "period" | "shift"
 
-  const [period, setPeriod] = useState<any>(null);
+  const [period, setPeriod] = useState<{ id: string; name: string; status: string } | null>(null);
   const [periodTarget, setPeriodTarget] = useState<PeriodTarget | null>(null);
   const [kpiDefinitions, setKpiDefinitions] = useState<KpiDefinition[]>([]);
   const [shiftTargets, setShiftTargets] = useState<ShiftTarget[]>([]);
+  const [permissions, setPermissions] = useState<Permissions>({ canApprove: false, canEdit: false });
+  const [notice, setNotice] = useState("");
+
+  /**
+   * Lỗi theo chuẩn { errorCode, message } của handle()/fail() (bản cũ: .error).
+   * 401 → về trang đăng nhập; trả về null để caller dừng lại.
+   */
+  const readError = async (res: Response, fallback: string) => {
+    if (res.status === 401) {
+      router.replace("/login");
+      return null;
+    }
+    const body = await res.json().catch(() => null);
+    if (res.status === 403) {
+      return body?.message || "Bạn không có quyền truy cập mục tiêu KPI Phòng SX.";
+    }
+    return body?.message || body?.error || fallback;
+  };
 
   // Fetch targets
   useEffect(() => {
@@ -71,20 +97,26 @@ function NamQuyetDinhContent() {
     }
 
     fetchTargets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [periodId]);
 
   const fetchTargets = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/kpi/targets/${periodId}`);
-      
-      if (!response.ok) throw new Error("Failed to fetch targets");
-      
+      const response = await fetch(`/api/kpi/targets/${encodeURIComponent(periodId)}`);
+
+      if (!response.ok) {
+        const msg = await readError(response, "Không tải được mục tiêu KPI.");
+        if (msg) setError(msg);
+        return;
+      }
+
       const data = await response.json();
       setPeriod(data.period);
       setPeriodTarget(data.periodTarget);
-      setKpiDefinitions(data.kpiDefinitions);
-      setShiftTargets(data.shiftTargets);
+      setKpiDefinitions(data.kpiDefinitions ?? []);
+      setShiftTargets(data.shiftTargets ?? []);
+      setPermissions(data.permissions ?? { canApprove: false, canEdit: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lỗi khi tải dữ liệu");
     } finally {
@@ -92,9 +124,8 @@ function NamQuyetDinhContent() {
     }
   };
 
-  const handleSaveTarget = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  /** Trưởng phòng chỉ lưu nháp; chỉ CEO lưu kèm phê duyệt. */
+  const saveTarget = async (status: "DRAFT" | "APPROVED") => {
     if (!periodTarget) {
       setError("Lỗi: không có dữ liệu mục tiêu");
       return;
@@ -103,36 +134,56 @@ function NamQuyetDinhContent() {
     try {
       setSaving(true);
       setError("");
+      setNotice("");
 
       const response = await fetch("/api/kpi/targets", {
-        method: periodTarget.id ? "PUT" : "POST",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...(periodTarget.id && { periodTargetId: periodTarget.id }),
           periodId,
-          department: "PRODUCTION",
           output_target: periodTarget.output_target,
           waste_target: periodTarget.waste_target,
           quality_target: periodTarget.quality_target,
           spec_target: periodTarget.spec_target,
           safety_target: periodTarget.safety_target,
           deadline_target: periodTarget.deadline_target,
+          status,
         }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to save");
+        const msg = await readError(response, "Không lưu được mục tiêu KPI.");
+        if (msg) setError(msg);
+        return;
       }
 
       const result = await response.json();
       setPeriodTarget(result.data);
-      alert("Mục tiêu KPI đã được lưu thành công!");
+      setNotice(
+        status === "APPROVED"
+          ? "Đã lưu và phê duyệt mục tiêu KPI."
+          : "Đã lưu nháp mục tiêu KPI — chờ Ban Giám đốc phê duyệt."
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lỗi khi lưu dữ liệu");
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveTarget = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveTarget("DRAFT");
+  };
+
+  const weightOf = (code: string) =>
+    kpiDefinitions.find((d) => d.code === code)?.weight;
+
+  const STATUS_LABEL: Record<string, string> = {
+    NOT_CREATED: "Chưa tạo",
+    DRAFT: "Nháp — chờ Ban Giám đốc duyệt",
+    APPROVED: "Đã phê duyệt",
+    LOCKED: "Đã khoá",
   };
 
   if (loading) {
@@ -155,6 +206,12 @@ function NamQuyetDinhContent() {
             {period?.name} • Phòng Sản Xuất (HCM01)
           </p>
         </div>
+
+        {notice && (
+          <div className="mb-6 flex items-center gap-1.5 p-4 bg-green-50 border border-green-200 rounded-lg text-green-800">
+            <CircleCheck size={16} strokeWidth={2} /> {notice}
+          </div>
+        )}
 
         {/* Error Alert */}
         {error && (
@@ -193,21 +250,31 @@ function NamQuyetDinhContent() {
             <div className="space-y-6">
               {/* 6 KPI Inputs */}
               {[
-                { key: "output_target", label: "Sản Lượng Thực Tế", unit: "kg/ca", placeholder: "500" },
-                { key: "waste_target", label: "Tỷ Lệ Hao Hụt", unit: "%", placeholder: "4" },
-                { key: "quality_target", label: "Tỷ Lệ Chất Lượng (OK)", unit: "%", placeholder: "95" },
-                { key: "spec_target", label: "Tỷ Lệ Đúng Spec", unit: "%", placeholder: "98" },
-                { key: "safety_target", label: "An Toàn Lao Động", unit: "điểm", placeholder: "100" },
-                { key: "deadline_target", label: "Đúng Deadline Batch", unit: "%", placeholder: "100" },
-              ].map(({ key, label, unit, placeholder }) => (
+                { key: "output_target", code: "PROD_OUTPUT", label: "Sản Lượng Thực Tế", unit: "kg/ca", placeholder: "500" },
+                { key: "waste_target", code: "PROD_WASTE", label: "Tỷ Lệ Hao Hụt", unit: "%", placeholder: "4" },
+                { key: "quality_target", code: "PROD_QUALITY", label: "Tỷ Lệ Chất Lượng (OK)", unit: "%", placeholder: "95" },
+                { key: "spec_target", code: "PROD_SPEC", label: "Tỷ Lệ Đúng Spec", unit: "%", placeholder: "98" },
+                { key: "safety_target", code: "PROD_SAFETY", label: "An Toàn Lao Động", unit: "điểm", placeholder: "100" },
+                { key: "deadline_target", code: "PROD_DEADLINE", label: "Đúng Deadline Batch", unit: "%", placeholder: "100" },
+              ].map(({ key, code, label, unit, placeholder }) => (
                 <div key={key} className="flex items-center gap-4">
-                  <label className="w-1/3 font-medium text-gray-700">{label}</label>
+                  <label className="w-1/3 font-medium text-gray-700">
+                    {label}
+                    {weightOf(code) !== undefined && (
+                      <span className="ml-1 text-xs font-normal text-gray-500">
+                        ({weightOf(code)}%)
+                      </span>
+                    )}
+                  </label>
                   <div className="flex-1 flex gap-2">
                     <input
                       type="number"
                       step="0.01"
+                      min={0}
                       placeholder={placeholder}
-                      value={periodTarget[key as keyof PeriodTarget] || ""}
+                      disabled={!permissions.canEdit}
+                      // 0 là chỉ tiêu hợp lệ (vd 0 sự cố) — dùng ?? để không biến 0 thành ô trống
+                      value={periodTarget[key as keyof PeriodTarget] ?? ""}
                       onChange={(e) =>
                         setPeriodTarget({
                           ...periodTarget,
@@ -226,17 +293,27 @@ function NamQuyetDinhContent() {
             <div className="mt-8 flex gap-4">
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || !permissions.canEdit}
                 className="inline-flex items-center gap-1.5 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
               >
                 {saving ? (
                   "Đang lưu..."
                 ) : (
                   <>
-                    <Save size={16} strokeWidth={2} /> Lưu Mục Tiêu
+                    <Save size={16} strokeWidth={2} /> Lưu Nháp
                   </>
                 )}
               </button>
+              {permissions.canApprove && (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => saveTarget("APPROVED")}
+                  className="inline-flex items-center gap-1.5 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
+                >
+                  <CircleCheck size={16} strokeWidth={2} /> Lưu &amp; Phê Duyệt
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => router.back()}
@@ -247,12 +324,22 @@ function NamQuyetDinhContent() {
             </div>
 
             {/* Status */}
-            {periodTarget.id && (
-              <div className="mt-4 text-sm text-gray-600">
-                <p>Trạng thái: <span className="font-medium">{periodTarget.status}</span></p>
-                <p>Lần cập nhật cuối: {periodTarget.id ? "Vừa tạo/cập nhật" : "Chưa lưu"}</p>
-              </div>
-            )}
+            <div className="mt-4 text-sm text-gray-600">
+              <p>
+                Trạng thái:{" "}
+                <span className="font-medium">
+                  {STATUS_LABEL[periodTarget.status] ?? periodTarget.status}
+                </span>
+              </p>
+              {!permissions.canEdit && (
+                <p className="text-amber-700">
+                  Kỳ hoặc mục tiêu đã khoá — chỉ xem, không sửa được.
+                </p>
+              )}
+              <p className="text-xs text-gray-500 mt-1">
+                Mục tiêu chỉ được dùng để chấm thưởng ca sau khi Ban Giám đốc phê duyệt.
+              </p>
+            </div>
           </form>
         )}
 
@@ -264,16 +351,12 @@ function NamQuyetDinhContent() {
                 shiftTargets.map((shift) => (
                   <div key={shift.id} className="p-4 border border-gray-200 rounded-lg">
                     <div className="font-medium text-gray-900">
-                      {new Date(shift.shiftDate).toLocaleDateString("vi-VN")} •{" "}
-                      {shift.shiftType === "MORNING"
-                        ? "Sáng"
-                        : shift.shiftType === "AFTERNOON"
-                        ? "Chiều"
-                        : "Tối"}
+                      {formatVnDate(shift.shiftDate)} •{" "}
+                      {SHIFT_TYPE_LABEL[shift.shiftType] ?? shift.shiftType}
                     </div>
                     <div className="mt-2 text-sm text-gray-600">
-                      Sản Lượng: {shift.output_target} kg/ca | Hao Hụt:{" "}
-                      {shift.waste_target}%
+                      Sản Lượng: {shift.output_target ?? "—"} kg/ca | Hao Hụt:{" "}
+                      {shift.waste_target ?? "—"}%
                     </div>
                   </div>
                 ))

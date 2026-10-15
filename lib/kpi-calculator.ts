@@ -1,14 +1,49 @@
 // File: lib/kpi-calculator.ts
 
 import { prisma } from "@/lib/db";
+import { BusinessError } from "@/lib/rbac";
+import { writeAudit } from "@/lib/audit";
+import {
+  ERR,
+  KPI_SCORE_CAP,
+  PRODUCTION_DEPARTMENT_CODE,
+} from "@/lib/constants";
+import { vnDayRange, vnParts } from "@/lib/vn-time";
+import type { SessionUser } from "@/lib/auth";
 
 /**
- * Trọng số 6 KPI Phòng SX.
+ * BỘ TÍNH ĐIỂM "6 CHỈ TIÊU / CA" CỦA PHÒNG SẢN XUẤT.
  *
- * Đọc từ bảng KpiConfig (Quản trị → 6 chỉ tiêu), KHÔNG viết cứng nữa — sửa
- * trọng số qua giao diện có hiệu lực ngay lần tính điểm kế tiếp.
+ * Đây là đường chấm điểm thứ hai, song song với lib/production/kpi-engine.ts
+ * (2 tầng 60/40). Chưa bỏ — chờ quyết định sản phẩm — nhưng phải ĐÚNG và AN
+ * TOÀN:
+ *   - Số thực tế do SERVER tự rút từ ca sản xuất đã khoá, không nhận từ client.
+ *   - Chỉ tiêu nào chưa có nguồn dữ liệu (Đúng Spec, Đúng Deadline) thì để
+ *     null = "chưa có dữ liệu" và LOẠI khỏi phép tính (xem calculateScores).
+ *   - Trọng số + chiều tốt/xấu đọc từ KpiConfig (Quản trị → 6 chỉ tiêu).
  */
-const KPI_CODES = [
+
+/**
+ * Nhãn phạm vi dùng chung cho KpiConfig / BonusConfig / KpiPeriodTarget.
+ * Lưu ý: đây KHÔNG phải mã phòng ban trong bảng Department (mã đó là
+ * PRODUCTION_DEPARTMENT_CODE = "PROD"). Ba bảng cấu hình trên từ đầu đã seed
+ * với nhãn "PRODUCTION" — giữ nguyên để không lệch dữ liệu cũ.
+ */
+export const PRODUCTION_KPI_SCOPE = "PRODUCTION";
+
+/** Trần tổng điểm ca = trần chung toàn công ty (150), để bậc thưởng ≥120 chạm được. */
+export const SHIFT_SCORE_CAP = KPI_SCORE_CAP;
+
+/**
+ * Lương nền tính thưởng ca (VNĐ) — CHỈ dùng khi BonusConfig chưa seed. Số thật
+ * lấy từ cột baseSalary của bậc thưởng khớp trong BonusConfig.
+ */
+export const DEFAULT_SHIFT_BASE_SALARY_VND = 233_000;
+
+/** Mỗi vi phạm HACCP trong ca trừ chừng này điểm An Toàn (thang 100, sàn 0). */
+export const SAFETY_PENALTY_PER_HACCP_VIOLATION = 20;
+
+export const KPI_CODES = [
   "PROD_OUTPUT",
   "PROD_WASTE",
   "PROD_QUALITY",
@@ -17,407 +52,468 @@ const KPI_CODES = [
   "PROD_DEADLINE",
 ] as const;
 
-type KpiCode = (typeof KPI_CODES)[number];
+export type KpiCode = (typeof KPI_CODES)[number];
+
+/** Tiền tố cột tương ứng trong ShiftKpiScore / KpiPeriodTarget. */
+const FIELD: Record<KpiCode, "output" | "waste" | "quality" | "spec" | "safety" | "deadline"> = {
+  PROD_OUTPUT: "output",
+  PROD_WASTE: "waste",
+  PROD_QUALITY: "quality",
+  PROD_SPEC: "spec",
+  PROD_SAFETY: "safety",
+  PROD_DEADLINE: "deadline",
+};
+
+export type KpiDefinition = {
+  code: KpiCode;
+  name: string;
+  unit: string;
+  weight: number;
+  isHigherBetter: boolean;
+  /** false = KpiConfig thiếu/tắt mã này, đang dùng số gốc bên dưới. */
+  fromConfig: boolean;
+};
 
 /**
  * Số gốc — dùng khi KpiConfig chưa seed hoặc một mã bị tắt isActive, để việc
  * tính điểm ca không bao giờ vỡ hẳn giữa chừng vì thiếu dữ liệu cấu hình.
  */
-const DEFAULT_WEIGHTS: Record<KpiCode, number> = {
-  PROD_OUTPUT: 25,
-  PROD_WASTE: 25,
-  PROD_QUALITY: 20,
-  PROD_SPEC: 15,
-  PROD_SAFETY: 10,
-  PROD_DEADLINE: 5,
+const DEFAULT_DEFS: Record<KpiCode, Omit<KpiDefinition, "code" | "fromConfig">> = {
+  PROD_OUTPUT: { name: "Sản Lượng Thực Tế", unit: "kg/ca", weight: 25, isHigherBetter: true },
+  PROD_WASTE: { name: "Tỷ Lệ Hao Hụt", unit: "%", weight: 25, isHigherBetter: false },
+  PROD_QUALITY: { name: "Tỷ Lệ Chất Lượng (OK)", unit: "%", weight: 20, isHigherBetter: true },
+  PROD_SPEC: { name: "Tỷ Lệ Sản Phẩm Đúng Spec", unit: "%", weight: 15, isHigherBetter: true },
+  PROD_SAFETY: { name: "An Toàn Lao Động", unit: "điểm", weight: 10, isHigherBetter: true },
+  PROD_DEADLINE: { name: "Đúng Deadline Batch", unit: "%", weight: 5, isHigherBetter: true },
 };
 
-async function getKpiWeights(): Promise<Record<KpiCode, number>> {
+/** 6 chỉ tiêu theo cấu hình hiện hành (KpiConfig), thiếu mã nào thì dùng số gốc. */
+export async function getKpiDefinitions(): Promise<KpiDefinition[]> {
   const configs = await prisma.kpiConfig.findMany({
     where: {
-      department: "PRODUCTION",
+      department: PRODUCTION_KPI_SCOPE,
       isActive: true,
       code: { in: [...KPI_CODES] },
     },
   });
-  const map = new Map(configs.map((c) => [c.code, c.weightPercent]));
+  const map = new Map(configs.map((c) => [c.code, c]));
 
-  const weights = {} as Record<KpiCode, number>;
-  for (const code of KPI_CODES) {
-    const w = map.get(code);
-    if (w === undefined) {
-      console.warn(
-        `[KPI_CALCULATOR] Thiếu cấu hình cho ${code} trong KpiConfig — dùng tạm số gốc ${DEFAULT_WEIGHTS[code]}%. Vào Quản trị → 6 chỉ tiêu để thiết lập.`
-      );
-      weights[code] = DEFAULT_WEIGHTS[code];
-    } else {
-      weights[code] = w;
-    }
-  }
-  return weights;
+  return KPI_CODES.map((code) => {
+    const c = map.get(code);
+    if (!c) return { code, ...DEFAULT_DEFS[code], fromConfig: false };
+    return {
+      code,
+      name: c.name,
+      unit: c.unit,
+      weight: c.weightPercent,
+      isHigherBetter: c.isHigherBetter,
+      fromConfig: true,
+    };
+  });
 }
 
+/* ------------------------------------------------------------ PHÂN QUYỀN */
+
+/** CEO, ADMIN, hoặc Trưởng phòng (MANAGER) của phòng Sản xuất. */
+export async function canManageProductionKpi(user: SessionUser): Promise<boolean> {
+  if (user.role === "CEO" || user.role === "ADMIN") return true;
+  if (user.role !== "MANAGER" || !user.departmentId) return false;
+  const dept = await prisma.department.findUnique({
+    where: { id: user.departmentId },
+    select: { code: true },
+  });
+  return dept?.code === PRODUCTION_DEPARTMENT_CODE;
+}
+
+export async function assertCanManageProductionKpi(
+  user: SessionUser,
+  message = "Chỉ Ban Giám đốc, quản trị hệ thống hoặc Giám đốc Sản xuất mới thực hiện được thao tác này."
+) {
+  if (!(await canManageProductionKpi(user))) {
+    throw new BusinessError(ERR.FORBIDDEN, message, 403);
+  }
+}
+
+/* ------------------------------------------------------------ CÔNG THỨC */
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 /**
- * Tính Achievement % cho 1 KPI
+ * % đạt của 1 chỉ tiêu — cùng ngữ nghĩa với calculateKpiScore() ở lib/kpi.ts.
  *
- * @param actual - Giá trị thực tế
- * @param target - Giá trị target
- * @param isHigherBetter - true = cao tốt, false = thấp tốt
- * @returns Achievement % (0-150%, capped at 150)
+ * Trả về null = "không chấm được" (thiếu số thực tế, thiếu chỉ tiêu, hoặc
+ * chỉ tiêu cao-tốt bằng 0). Chỉ tiêu null bị loại khỏi tổng, KHÔNG tính là 0.
+ *
+ * Thấp-tốt (vd hao hụt):
+ *   - thực tế 0, chỉ tiêu > 0  → vượt xa mục tiêu, chạm trần
+ *   - thực tế 0, chỉ tiêu 0    → đạt đúng mục tiêu, 100%
+ *   - thực tế > 0, chỉ tiêu 0  → không đạt, 0%
+ *   - còn lại                  → chỉ tiêu / thực tế × 100
  */
 export function calculateAchievementPercent(
   actual: number | null | undefined,
   target: number | null | undefined,
-  isHigherBetter: boolean
-): number {
-  if (!actual || !target || target === 0) return 0;
+  isHigherBetter: boolean,
+  cap: number = SHIFT_SCORE_CAP
+): number | null {
+  if (actual === null || actual === undefined || !Number.isFinite(actual)) return null;
+  if (target === null || target === undefined || !Number.isFinite(target)) return null;
 
-  let achievement: number;
-
+  let raw: number;
   if (isHigherBetter) {
-    // Cao tốt: achievement = (actual / target) × 100
-    achievement = (actual / target) * 100;
+    if (target === 0) return null; // không có chỉ tiêu thì không chấm
+    raw = (actual / target) * 100;
+  } else if (actual === 0) {
+    raw = target === 0 ? 100 : cap;
   } else {
-    // Thấp tốt: achievement = (target / actual) × 100
-    // VD: target hao hụt 4%, actual 3% → 4/3 × 100 = 133%
-    achievement = (target / actual) * 100;
+    if (target === 0) return 0;
+    raw = (target / actual) * 100;
+  }
+  return Math.max(0, Math.min(raw, cap));
+}
+
+export type ShiftActuals = Record<KpiCode, number | null>;
+export type ShiftTargets = Record<KpiCode, number | null>;
+
+export type KpiLine = {
+  code: KpiCode;
+  name: string;
+  unit: string;
+  actual: number | null;
+  target: number | null;
+  /** null = chưa có dữ liệu → bị loại khỏi tổng điểm */
+  achievement: number | null;
+  /** Trọng số cấu hình (KpiConfig) */
+  weight: number;
+  /** Trọng số thực dùng sau khi chia lại cho các chỉ tiêu có dữ liệu */
+  effectiveWeight: number;
+  score: number;
+  included: boolean;
+};
+
+/**
+ * Tính điểm 6 chỉ tiêu.
+ *
+ * CHỈ TIÊU THIẾU DỮ LIỆU — LOẠI RA VÀ CHIA LẠI TRỌNG SỐ (đã chọn, không chấm 0):
+ * Đúng Spec và Đúng Deadline hiện chưa có nguồn số liệu trong ca sản xuất.
+ * Chấm 0 thì phạt oan cả ca vì lỗi của hệ thống; điền cứng 97/100 (cách cũ ở
+ * client) thì là bịa số. Nên chỉ tiêu nào achievement = null bị loại, phần
+ * trọng số còn lại được phóng lên cho đủ 100:
+ *   trọng số thực = trọng số cấu hình × 100 / tổng trọng số các chỉ tiêu có dữ liệu
+ * Ví dụ thiếu Spec (15) + Deadline (5): Sản lượng 25 → 25 × 100/80 = 31,25.
+ * Cách này cũng tự xử lý trường hợp Quản trị cấu hình tổng trọng số ≠ 100.
+ *
+ * Tổng điểm = Σ achievement × trọng số thực / 100, trần SHIFT_SCORE_CAP (150) —
+ * cùng trần với từng chỉ tiêu, nên bậc thưởng ≥120 đạt được thật.
+ */
+export function calculateScores(
+  defs: KpiDefinition[],
+  actuals: ShiftActuals,
+  targets: ShiftTargets
+): { lines: KpiLine[]; totalScore: number } {
+  const prelim = defs.map((d) => ({
+    d,
+    actual: actuals[d.code],
+    target: targets[d.code],
+    achievement: calculateAchievementPercent(actuals[d.code], targets[d.code], d.isHigherBetter),
+  }));
+  const usableWeight = prelim
+    .filter((p) => p.achievement !== null && p.d.weight > 0)
+    .reduce((s, p) => s + p.d.weight, 0);
+
+  if (usableWeight <= 0) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      "Không đủ dữ liệu để chấm điểm: chưa chỉ tiêu nào có cả số thực tế lẫn mục tiêu.",
+      422
+    );
   }
 
-  // Cap at 150% để không quá cao
-  return Math.min(achievement, 150);
+  const lines: KpiLine[] = prelim.map(({ d, actual, target, achievement }) => {
+    const included = achievement !== null && d.weight > 0;
+    const effectiveWeight = included ? (d.weight * 100) / usableWeight : 0;
+    const score = included ? ((achievement as number) * effectiveWeight) / 100 : 0;
+    return {
+      code: d.code,
+      name: d.name,
+      unit: d.unit,
+      actual: actual === null ? null : round2(actual),
+      target,
+      achievement: achievement === null ? null : round2(achievement),
+      weight: d.weight,
+      effectiveWeight: round2(effectiveWeight),
+      score: round2(score),
+      included,
+    };
+  });
+
+  const total = lines.reduce((s, l) => s + l.score, 0);
+  return { lines, totalScore: round2(Math.min(total, SHIFT_SCORE_CAP)) };
 }
 
 /**
- * Tính Weighted Score cho 1 KPI
- * Weighted Score = Achievement% × Weight / 100
+ * Bậc thưởng theo BonusConfig.
  *
- * @param achievement - Achievement % (0-150)
- * @param weight - Trọng số KPI (0-100)
- * @returns Weighted Score (0-1.5)
+ * Chọn bậc có achievementMin cao nhất mà điểm ≥ achievementMin. KHÔNG dùng
+ * achievementMax: bảng seed để khoảng hở (vd 99,99 → 100, 119,99 → 120) nên
+ * điểm 99,995 từng rơi vào khe và mất thưởng. Bậc liền mạch theo mốc dưới.
  */
-export function calculateWeightedScore(
-  achievement: number,
-  weight: number
-): number {
-  return (achievement * weight) / 100;
+export async function getBonusTier(totalScore: number) {
+  const tiers = await prisma.bonusConfig.findMany({
+    where: { department: PRODUCTION_KPI_SCOPE, isActive: true },
+    orderBy: { achievementMin: "desc" },
+  });
+  const tier = tiers.find((t) => totalScore >= t.achievementMin);
+  const baseSalary =
+    tier?.baseSalary ?? tiers[0]?.baseSalary ?? DEFAULT_SHIFT_BASE_SALARY_VND;
+  return {
+    bonusMultiplier: tier?.bonusMultiplier ?? 0,
+    baseSalary,
+    description: tier?.description ?? null,
+  };
 }
 
-/**
- * Tính Total Score (Tổng 6 KPI)
- * Total = Tổng của 6 weighted scores
- *
- * @param scores - Array của 6 weighted scores
- * @returns Total Score (0-100)
- */
-export function calculateTotalScore(scores: number[]): number {
-  const total = scores.reduce((sum, score) => sum + score, 0);
-  // Cap at 100 (achievement 100% ở tất cả KPI = 100 điểm)
-  return Math.min(total, 100);
+/** Bonus = lương nền × hệ số */
+export function calculateBonusAmount(baseSalary: number, bonusMultiplier: number): number {
+  return Math.round(baseSalary * bonusMultiplier);
 }
 
-/**
- * Lấy Bonus Multiplier từ BonusConfig
- * Dựa vào achievement % so với bậc thang
- *
- * @param totalScore - Total Score (0-100)
- * @returns Bonus Multiplier (1.5 / 1.0 / 0.75 / 0)
- */
-export async function getBonusMultiplier(
-  totalScore: number
-): Promise<number> {
-  // Convert score (0-100) to achievement % (0-150)
-  // Score 100 = 100% achievement
-  // Score 150 = 150% achievement
-  const achievementPercent = totalScore;
+/* ------------------------------------------------- SỐ THỰC TẾ CỦA CA */
 
-  const bonusConfig = await prisma.bonusConfig.findFirst({
+type ShiftFactsForKpi = {
+  rawOutputKg: number;
+  rawMaterialInputKg: number;
+  qcPassedKg: number;
+  haccpViolationCount: number;
+};
+
+/**
+ * Rút số thực tế từ ca đã khoá — nguồn DUY NHẤT của số thực tế.
+ *
+ *   Sản lượng  = sản lượng thô đã qua KCS đối chiếu (rawOutputKg, kg/ca)
+ *   Hao hụt %  = (NVL cấp vào − sản lượng thô) / NVL cấp vào × 100, sàn 0
+ *   Chất lượng = KCS đạt / sản lượng thô × 100
+ *   An toàn    = 100 − 20 × số vi phạm HACCP, sàn 0
+ *   Đúng Spec, Đúng Deadline: CHƯA CÓ NGUỒN → null ("chưa có dữ liệu")
+ */
+export function deriveShiftActuals(s: ShiftFactsForKpi): ShiftActuals {
+  return {
+    PROD_OUTPUT: s.rawOutputKg,
+    PROD_WASTE:
+      s.rawMaterialInputKg > 0
+        ? Math.max(0, ((s.rawMaterialInputKg - s.rawOutputKg) / s.rawMaterialInputKg) * 100)
+        : null,
+    PROD_QUALITY: s.rawOutputKg > 0 ? (s.qcPassedKg / s.rawOutputKg) * 100 : null,
+    PROD_SPEC: null,
+    PROD_SAFETY: Math.max(
+      0,
+      100 - SAFETY_PENALTY_PER_HACCP_VIOLATION * s.haccpViolationCount
+    ),
+    PROD_DEADLINE: null,
+  };
+}
+
+/** Trạng thái điểm ca không được tính đè. */
+const FROZEN_SCORE_STATUSES = ["APPROVED", "LOCKED"];
+/** Mục tiêu kỳ phải được CEO duyệt mới dùng để chấm thưởng. */
+const USABLE_TARGET_STATUSES = ["APPROVED", "LOCKED"];
+
+/**
+ * Tính (hoặc tính lại) điểm 6 chỉ tiêu cho 1 ca. Mọi số liệu do server tự lấy:
+ * ca phải LOCKED, kỳ KPI tìm theo tháng VN của ngày ca, mục tiêu lấy từ
+ * KpiPeriodTarget (đè bằng KpiShiftTarget của đúng ca nếu có).
+ */
+export async function calculateShiftKpiScore(
+  actor: SessionUser,
+  shiftLogId: string,
+  meta: { ip?: string | null; userAgent?: string | null } = {}
+) {
+  const shift = await prisma.productionShiftLog.findUnique({
+    where: { id: shiftLogId },
+    select: {
+      id: true,
+      status: true,
+      shiftDate: true,
+      shiftType: true,
+      rawOutputKg: true,
+      rawMaterialInputKg: true,
+      qcPassedKg: true,
+      haccpViolationCount: true,
+    },
+  });
+  if (!shift) {
+    throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy ca sản xuất.", 404);
+  }
+  if (shift.status !== "LOCKED") {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      "Ca phải được Ban Giám đốc khoá số (LOCKED) rồi mới tính điểm KPI — trước đó số còn sửa được.",
+      409
+    );
+  }
+
+  const { month, year } = vnParts(shift.shiftDate);
+  const period = await prisma.kpiPeriod.findUnique({
+    where: { month_year: { month, year } },
+  });
+  if (!period) {
+    throw new BusinessError(
+      ERR.NOT_FOUND,
+      `Chưa mở kỳ KPI tháng ${month}/${year} nên chưa có mục tiêu để chấm ca này.`,
+      404
+    );
+  }
+  const periodTarget = await prisma.kpiPeriodTarget.findUnique({
+    where: { periodId: period.id },
+  });
+  if (!periodTarget) {
+    throw new BusinessError(
+      ERR.NOT_FOUND,
+      `Chưa thiết lập mục tiêu KPI Phòng SX cho kỳ ${period.name}.`,
+      404
+    );
+  }
+  if (!USABLE_TARGET_STATUSES.includes(periodTarget.status)) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      `Mục tiêu KPI kỳ ${period.name} chưa được Ban Giám đốc phê duyệt — chưa dùng để chấm thưởng được.`,
+      409
+    );
+  }
+
+  const shiftTarget = await prisma.kpiShiftTarget.findFirst({
     where: {
-      department: "PRODUCTION",
-      isActive: true,
-      achievementMin: { lte: achievementPercent },
-      achievementMax: { gte: achievementPercent },
+      periodTargetId: periodTarget.id,
+      shiftType: shift.shiftType,
+      shiftDate: vnDayRange(shift.shiftDate),
     },
   });
 
-  return bonusConfig?.bonusMultiplier || 0;
-}
-
-/**
- * Tính Bonus Amount
- * Bonus = baseSalary × bonusMultiplier
- */
-export function calculateBonusAmount(
-  baseSalary: number,
-  bonusMultiplier: number
-): number {
-  return baseSalary * bonusMultiplier;
-}
-
-/**
- * Main Function: Tính toàn bộ điểm cho 1 ca
- *
- * Input: shiftLogId + dailyKpiResults (6 KPI values)
- * Output: ShiftKpiScore record
- */
-export async function calculateShiftKpiScore(
-  shiftLogId: string,
-  periodTargetId: string,
-  kpiResults: {
-    output_actual?: number;
-    waste_actual?: number;
-    quality_actual?: number;
-    spec_actual?: number;
-    safety_actual?: number;
-    deadline_actual?: number;
+  const targets = {} as ShiftTargets;
+  for (const code of KPI_CODES) {
+    const key = `${FIELD[code]}_target` as const;
+    targets[code] = shiftTarget?.[key] ?? periodTarget[key] ?? null;
   }
-) {
-  try {
-    // 1. Lấy Period Target (để có targets)
-    const periodTarget = await prisma.kpiPeriodTarget.findUnique({
-      where: { id: periodTargetId },
-    });
 
-    if (!periodTarget) {
-      throw new Error("Period target not found");
-    }
+  const defs = await getKpiDefinitions();
+  const actuals = deriveShiftActuals(shift);
+  const { lines, totalScore } = calculateScores(defs, actuals, targets);
+  const tier = await getBonusTier(totalScore);
+  const bonusAmount = calculateBonusAmount(tier.baseSalary, tier.bonusMultiplier);
 
-    // 1b. Lấy trọng số hiện hành từ KpiConfig (Quản trị → 6 chỉ tiêu)
-    const KPI_WEIGHTS = await getKpiWeights();
+  // Không ghi tiền vào breakdownJson — JSON này đi thẳng ra màn hình, còn tiền
+  // chỉ người được xem tiền mới thấy (xem canSeeMoney).
+  const breakdownJson = JSON.stringify({
+    version: 2,
+    kpis: lines,
+    totalScore,
+    scoreCap: SHIFT_SCORE_CAP,
+    bonusMultiplier: tier.bonusMultiplier,
+    excludedNote:
+      "Chỉ tiêu 'chưa có dữ liệu' bị loại, trọng số chia lại cho các chỉ tiêu còn lại.",
+  });
 
-    // 2. Tính 6 KPI Achievements & Weighted Scores
-    const output_achievement = calculateAchievementPercent(
-      kpiResults.output_actual,
-      periodTarget.output_target,
-      true // Cao tốt
-    );
-    const output_weighted = calculateWeightedScore(
-      output_achievement,
-      KPI_WEIGHTS.PROD_OUTPUT
-    );
+  const L = Object.fromEntries(lines.map((l) => [l.code, l])) as Record<KpiCode, KpiLine>;
+  // achievement trong DB là cột NOT NULL — chỉ tiêu bị loại lưu 0 kèm
+  // actual = null; ý nghĩa "chưa có dữ liệu" nằm ở breakdownJson (included=false).
+  const columns = {
+    output_actual: L.PROD_OUTPUT.actual,
+    output_target: L.PROD_OUTPUT.target,
+    output_achievement: L.PROD_OUTPUT.achievement ?? 0,
+    output_weighted_score: L.PROD_OUTPUT.score,
+    waste_actual: L.PROD_WASTE.actual,
+    waste_target: L.PROD_WASTE.target,
+    waste_achievement: L.PROD_WASTE.achievement ?? 0,
+    waste_weighted_score: L.PROD_WASTE.score,
+    quality_actual: L.PROD_QUALITY.actual,
+    quality_target: L.PROD_QUALITY.target,
+    quality_achievement: L.PROD_QUALITY.achievement ?? 0,
+    quality_weighted_score: L.PROD_QUALITY.score,
+    spec_actual: L.PROD_SPEC.actual,
+    spec_target: L.PROD_SPEC.target,
+    spec_achievement: L.PROD_SPEC.achievement ?? 0,
+    spec_weighted_score: L.PROD_SPEC.score,
+    safety_actual: L.PROD_SAFETY.actual,
+    safety_target: L.PROD_SAFETY.target,
+    safety_achievement: L.PROD_SAFETY.achievement ?? 0,
+    safety_weighted_score: L.PROD_SAFETY.score,
+    deadline_actual: L.PROD_DEADLINE.actual,
+    deadline_target: L.PROD_DEADLINE.target,
+    deadline_achievement: L.PROD_DEADLINE.achievement ?? 0,
+    deadline_weighted_score: L.PROD_DEADLINE.score,
+  };
 
-    const waste_achievement = calculateAchievementPercent(
-      kpiResults.waste_actual,
-      periodTarget.waste_target,
-      false // Thấp tốt
-    );
-    const waste_weighted = calculateWeightedScore(
-      waste_achievement,
-      KPI_WEIGHTS.PROD_WASTE
-    );
+  const now = new Date();
+  const data = {
+    ...columns,
+    periodTargetId: periodTarget.id,
+    totalScore,
+    bonusMultiplier: tier.bonusMultiplier,
+    baseSalary: tier.baseSalary,
+    bonusAmount,
+    breakdownJson,
+    status: "CALCULATED",
+    calculatedById: actor.id,
+    calculatedAt: now,
+  };
 
-    const quality_achievement = calculateAchievementPercent(
-      kpiResults.quality_actual,
-      periodTarget.quality_target,
-      true
-    );
-    const quality_weighted = calculateWeightedScore(
-      quality_achievement,
-      KPI_WEIGHTS.PROD_QUALITY
-    );
-
-    const spec_achievement = calculateAchievementPercent(
-      kpiResults.spec_actual,
-      periodTarget.spec_target,
-      true
-    );
-    const spec_weighted = calculateWeightedScore(
-      spec_achievement,
-      KPI_WEIGHTS.PROD_SPEC
-    );
-
-    const safety_achievement = calculateAchievementPercent(
-      kpiResults.safety_actual,
-      periodTarget.safety_target,
-      true
-    );
-    const safety_weighted = calculateWeightedScore(
-      safety_achievement,
-      KPI_WEIGHTS.PROD_SAFETY
-    );
-
-    const deadline_achievement = calculateAchievementPercent(
-      kpiResults.deadline_actual,
-      periodTarget.deadline_target,
-      true
-    );
-    const deadline_weighted = calculateWeightedScore(
-      deadline_achievement,
-      KPI_WEIGHTS.PROD_DEADLINE
-    );
-
-    // 3. Tính Total Score
-    const totalScore = calculateTotalScore([
-      output_weighted,
-      waste_weighted,
-      quality_weighted,
-      spec_weighted,
-      safety_weighted,
-      deadline_weighted,
-    ]);
-
-    // 4. Lấy Bonus Multiplier
-    const bonusMultiplier = await getBonusMultiplier(totalScore);
-
-    // 5. Tính Bonus Amount
-    const bonusAmount = calculateBonusAmount(233000, bonusMultiplier);
-
-    // 6. Tạo Breakdown JSON
-    const breakdownJson = JSON.stringify({
-      kpis: [
-        {
-          code: "PROD_OUTPUT",
-          name: "Sản Lượng Thực Tế",
-          actual: kpiResults.output_actual,
-          target: periodTarget.output_target,
-          unit: "kg/ca",
-          achievement: output_achievement.toFixed(2),
-          weight: KPI_WEIGHTS.PROD_OUTPUT,
-          score: output_weighted.toFixed(2),
-        },
-        {
-          code: "PROD_WASTE",
-          name: "Tỷ Lệ Hao Hụt",
-          actual: kpiResults.waste_actual,
-          target: periodTarget.waste_target,
-          unit: "%",
-          achievement: waste_achievement.toFixed(2),
-          weight: KPI_WEIGHTS.PROD_WASTE,
-          score: waste_weighted.toFixed(2),
-        },
-        {
-          code: "PROD_QUALITY",
-          name: "Tỷ Lệ Chất Lượng (OK)",
-          actual: kpiResults.quality_actual,
-          target: periodTarget.quality_target,
-          unit: "%",
-          achievement: quality_achievement.toFixed(2),
-          weight: KPI_WEIGHTS.PROD_QUALITY,
-          score: quality_weighted.toFixed(2),
-        },
-        {
-          code: "PROD_SPEC",
-          name: "Tỷ Lệ Đúng Spec",
-          actual: kpiResults.spec_actual,
-          target: periodTarget.spec_target,
-          unit: "%",
-          achievement: spec_achievement.toFixed(2),
-          weight: KPI_WEIGHTS.PROD_SPEC,
-          score: spec_weighted.toFixed(2),
-        },
-        {
-          code: "PROD_SAFETY",
-          name: "An Toàn Lao Động",
-          actual: kpiResults.safety_actual,
-          target: periodTarget.safety_target,
-          unit: "điểm",
-          achievement: safety_achievement.toFixed(2),
-          weight: KPI_WEIGHTS.PROD_SAFETY,
-          score: safety_weighted.toFixed(2),
-        },
-        {
-          code: "PROD_DEADLINE",
-          name: "Đúng Deadline Batch",
-          actual: kpiResults.deadline_actual,
-          target: periodTarget.deadline_target,
-          unit: "%",
-          achievement: deadline_achievement.toFixed(2),
-          weight: KPI_WEIGHTS.PROD_DEADLINE,
-          score: deadline_weighted.toFixed(2),
-        },
-      ],
-      totalScore: totalScore.toFixed(2),
-      bonusMultiplier: bonusMultiplier.toFixed(2),
-      bonusAmount: bonusAmount.toFixed(0),
-    });
-
-    // 7. Lưu vào database
-    const shiftKpiScore = await prisma.shiftKpiScore.upsert({
+  const { before, saved } = await prisma.$transaction(async (tx) => {
+    const existing = await tx.shiftKpiScore.findUnique({
       where: { shiftLogId },
-      create: {
-        shiftLogId,
-        periodTargetId,
-        output_actual: kpiResults.output_actual,
-        output_target: periodTarget.output_target,
-        output_achievement,
-        output_weighted_score: output_weighted,
-        waste_actual: kpiResults.waste_actual,
-        waste_target: periodTarget.waste_target,
-        waste_achievement,
-        waste_weighted_score: waste_weighted,
-        quality_actual: kpiResults.quality_actual,
-        quality_target: periodTarget.quality_target,
-        quality_achievement,
-        quality_weighted_score: quality_weighted,
-        spec_actual: kpiResults.spec_actual,
-        spec_target: periodTarget.spec_target,
-        spec_achievement,
-        spec_weighted_score: spec_weighted,
-        safety_actual: kpiResults.safety_actual,
-        safety_target: periodTarget.safety_target,
-        safety_achievement,
-        safety_weighted_score: safety_weighted,
-        deadline_actual: kpiResults.deadline_actual,
-        deadline_target: periodTarget.deadline_target,
-        deadline_achievement,
-        deadline_weighted_score: deadline_weighted,
-        totalScore,
-        bonusMultiplier,
-        bonusAmount,
-        breakdownJson,
-        status: "CALCULATED",
-        calculatedAt: new Date(),
-      },
-      update: {
-        output_actual: kpiResults.output_actual,
-        output_achievement,
-        output_weighted_score: output_weighted,
-        waste_actual: kpiResults.waste_actual,
-        waste_achievement,
-        waste_weighted_score: waste_weighted,
-        quality_actual: kpiResults.quality_actual,
-        quality_achievement,
-        quality_weighted_score: quality_weighted,
-        spec_actual: kpiResults.spec_actual,
-        spec_achievement,
-        spec_weighted_score: spec_weighted,
-        safety_actual: kpiResults.safety_actual,
-        safety_achievement,
-        safety_weighted_score: safety_weighted,
-        deadline_actual: kpiResults.deadline_actual,
-        deadline_achievement,
-        deadline_weighted_score: deadline_weighted,
-        totalScore,
-        bonusMultiplier,
-        bonusAmount,
-        breakdownJson,
-        status: "CALCULATED",
-        calculatedAt: new Date(),
-      },
+      select: { id: true, status: true, totalScore: true, bonusMultiplier: true, bonusAmount: true },
     });
+    if (existing && FROZEN_SCORE_STATUSES.includes(existing.status)) {
+      throw new BusinessError(
+        ERR.KPI_FINALIZED,
+        "Điểm KPI ca này đã được phê duyệt — không tính đè được.",
+        409
+      );
+    }
+    const saved = await tx.shiftKpiScore.upsert({
+      where: { shiftLogId },
+      create: { shiftLogId, ...data },
+      update: data,
+    });
+    return { before: existing, saved };
+  });
 
-    return shiftKpiScore;
-  } catch (error) {
-    console.error("Error calculating shift KPI score:", error);
-    throw error;
-  }
+  await writeAudit({
+    actor,
+    action: before ? "SHIFT_KPI_SCORE_RECALCULATE" : "SHIFT_KPI_SCORE_CALCULATE",
+    entityName: "shift_kpi_scores",
+    entityId: saved.id,
+    before: before ?? undefined,
+    after: {
+      shiftLogId,
+      periodTargetId: periodTarget.id,
+      totalScore,
+      bonusMultiplier: tier.bonusMultiplier,
+      bonusAmount,
+      actuals,
+      targets,
+    },
+    ...meta,
+  });
+
+  return saved;
 }
 
+/* --------------------------------------------- ĐỌC breakdownJson AN TOÀN */
+
 /**
- * Ví dụ sử dụng:
- *
- * const score = await calculateShiftKpiScore(
- *   "shift-log-id",
- *   "period-target-id",
- *   {
- *     output_actual: 480,      // kg/ca
- *     waste_actual: 3.5,       // %
- *     quality_actual: 98,      // %
- *     spec_actual: 97,         // %
- *     safety_actual: 95,       // điểm
- *     deadline_actual: 100,    // %
- *   }
- * );
- *
- * console.log(`Score: ${score.totalScore}`);
- * console.log(`Bonus: ${score.bonusAmount} VND`);
+ * Đọc breakdownJson (cả bản cũ lẫn bản mới) và bỏ mọi trường tiền nếu
+ * includeMoney = false. Bản cũ lưu bonusAmount ngay trong JSON.
  */
+export function parseBreakdown(json: string | null, includeMoney: boolean) {
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+    if (!includeMoney) {
+      delete parsed.bonusAmount;
+      delete parsed.baseSalary;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}

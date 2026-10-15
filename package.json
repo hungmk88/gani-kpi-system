@@ -11,9 +11,9 @@
     "db:push": "prisma db push",
     "db:seed": "node prisma/seed.mjs",
     "db:studio": "prisma studio",
-    "db:reset": "prisma db push --force-reset && node prisma/seed.mjs",
+    "db:reset": "node scripts/guard-local-db.mjs && prisma migrate reset --force --skip-seed && node prisma/seed.mjs",
     "scheduler": "node scripts/scheduler.mjs",
-    "setup": "prisma generate && prisma db push && node prisma/seed.mjs",
+    "setup": "prisma generate && prisma migrate deploy && node prisma/seed.mjs",
     "test:smoke": "node scripts/smoke-test.mjs",
     "test:phase2": "node scripts/smoke-test-phase2.mjs",
     "test:all": "node scripts/smoke-test.mjs && node scripts/smoke-test-phase2.mjs && node scripts/smoke-test-phase3.mjs && node scripts/smoke-test-production.mjs && node scripts/smoke-test-phase4.mjs && node scripts/smoke-test-operations.mjs && node scripts/smoke-test-dashboard.mjs",
@@ -22,7 +22,12 @@
     "test:phase4": "node scripts/smoke-test-phase4.mjs",
     "backup": "node scripts/backup.mjs",
     "test:ops": "node scripts/smoke-test-operations.mjs",
-    "test:dashboard": "node scripts/smoke-test-dashboard.mjs"
+    "test:dashboard": "node scripts/smoke-test-dashboard.mjs",
+    "test": "vitest run",
+    "test:tz": "TZ=UTC vitest run && TZ=Asia/Ho_Chi_Minh vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "prisma migrate deploy",
+    "fix:dates": "node scripts/fix-dates.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
@@ -33,11 +38,9 @@
     "lucide-react": "^1.46.0",
     "next": "^15.1.3",
     "node-cron": "^3.0.3",
-    "numeral": "^2.0.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^3.10.1",
-    "xlsx": "^0.18.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -48,6 +51,7 @@
     "@types/react-dom": "^19.0.2",
     "prisma": "^6.1.0",
     "tailwindcss": "^4.0.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.4"
   }
 }

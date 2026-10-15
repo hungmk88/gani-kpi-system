@@ -1,3 +1,4 @@
+import { vnMonthRange, vnParts } from "../vn-time";
 import { prisma } from "../db";
 import { PRODUCTION_FEED_SOURCE } from "./constants";
 import { safeDiv, safePercent } from "./kpi-engine";
@@ -33,11 +34,9 @@ export async function runProductionKpiSync(
   month: number,
   year: number
 ): Promise<ProductionSyncResult> {
-  const from = new Date(year, month - 1, 1, 0, 0, 0, 0);
-  const to = new Date(year, month, 0, 23, 59, 59, 999);
-
+  // Ranh giới tháng theo giờ Việt Nam, không theo múi giờ của server
   const shifts = await prisma.productionShiftLog.findMany({
-    where: { status: "LOCKED", shiftDate: { gte: from, lte: to } },
+    where: { status: "LOCKED", shiftDate: vnMonthRange(year, month) },
     include: {
       participants: { include: { user: true } },
       kpiResults: true,
@@ -121,6 +120,15 @@ export async function runProductionKpiSync(
 
   const round2 = (n: number) => Math.round(n * 100) / 100;
 
+  // Tra định nghĩa KPI một lần cho cả vòng lặp, không truy vấn lại mỗi người
+  const defs = new Map(
+    (
+      await prisma.kpiDefinition.findMany({
+        where: { code: { in: ["PROD_OUT", "PROD_DEFECT", "PROD_ONTIME", "PROD_SAFE"] } },
+      })
+    ).map((d) => [d.code, d])
+  );
+
   for (const [userId, agg] of byUser) {
     const values: Record<string, number | null> = {
       // Tổng thành phẩm quy cho người này trong tháng
@@ -136,14 +144,28 @@ export async function runProductionKpiSync(
     for (const [code, value] of Object.entries(values)) {
       if (value === null) continue;
 
-      const def = await prisma.kpiDefinition.findUnique({ where: { code } });
+      const def = defs.get(code);
       if (!def) {
         if (!result.skippedNoKpi.includes(code)) result.skippedNoKpi.push(code);
         continue;
       }
 
-      // Nhật ký thô luôn ghi, kể cả khi kỳ tháng chưa mở
-      await prisma.kpiActualFeed.create({
+      // Nhật ký thô ghi kể cả khi kỳ tháng chưa mở — nhưng CHỈ khi số đổi so
+      // với lần gộp trước. Cron chạy mỗi 2 tiếng; ghi lặp cùng một số sẽ phình
+      // bảng feed và làm bộ đối soát tưởng nguồn vừa đổi.
+      const lastFeed = await prisma.kpiActualFeed.findFirst({
+        where: {
+          kpiDefinitionId: def.id,
+          employeeEmail: agg.email,
+          periodMonth: month,
+          periodYear: year,
+          sourceCode: PRODUCTION_FEED_SOURCE,
+        },
+        orderBy: { createdAt: "desc" },
+        select: { value: true },
+      });
+      const changed = !lastFeed || lastFeed.value !== value;
+      if (changed) await prisma.kpiActualFeed.create({
         data: {
           kpiDefinitionId: def.id,
           employeeEmail: agg.email,
@@ -164,7 +186,7 @@ export async function runProductionKpiSync(
           }),
         },
       });
-      result.feedsWritten++;
+      if (changed) result.feedsWritten++;
 
       if (!period || period.status === "FINALIZED") continue;
 
@@ -194,7 +216,8 @@ export async function runProductionKpiSync(
  * Tháng trước vẫn cần vì có ca khoá muộn sau khi đã sang tháng mới.
  */
 export async function runProductionKpiSyncRecent(now = new Date()) {
-  const cur = { month: now.getMonth() + 1, year: now.getFullYear() };
+  const vn = vnParts(now);
+  const cur = { month: vn.month, year: vn.year };
   const prev =
     cur.month === 1
       ? { month: 12, year: cur.year - 1 }

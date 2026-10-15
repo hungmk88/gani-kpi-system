@@ -1,3 +1,4 @@
+import { vnDate, vnDayRange, vnParts } from "../vn-time";
 import { prisma } from "@/lib/db";
 import type { SessionUser } from "@/lib/auth";
 import { taskScopeWhere } from "@/lib/rbac";
@@ -224,11 +225,10 @@ function buildGateState(
  * giấu việc số liệu chưa đầy đủ.
  */
 async function buildProductionSummary(now: Date): Promise<ProductionSummary> {
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
-  const startOfTomorrow = new Date(startOfToday);
-  startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  // Ranh giới ngày/tháng theo giờ Việt Nam
+  const { gte: startOfToday, lt: startOfTomorrow } = vnDayRange(now);
+  const vn = vnParts(now);
+  const startOfMonth = vnDate(vn.year, vn.month, 1);
 
   const [participantsToday, confirmed, pendingQcShifts] = await Promise.all([
     prisma.productionShiftParticipant.findMany({
@@ -258,7 +258,7 @@ async function buildProductionSummary(now: Date): Promise<ProductionSummary> {
     outputTonnes:
       Math.round(((confirmed._sum.qcPassedKg ?? 0) / 1000) * 10) / 10,
     pendingQcShifts,
-    monthLabel: periodName(now.getMonth() + 1, now.getFullYear()),
+    monthLabel: periodName(vn.month, vn.year),
   };
 }
 
@@ -268,8 +268,7 @@ async function buildProductionSummary(now: Date): Promise<ProductionSummary> {
 
 export async function buildDashboard(user: SessionUser, now = new Date()) {
   const scope = taskScopeWhere(user);
-  const endOfToday = new Date(now);
-  endOfToday.setHours(23, 59, 59, 999);
+  const endOfToday = new Date(vnDayRange(now).lt.getTime() - 1);
   const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
 
   const openWhere = { ...scope, status: { in: OPEN_STATUSES } };

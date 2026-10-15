@@ -5,18 +5,19 @@ import {
   getDashboardSummary,
   getDashboardDistribution,
   getDashboardTrends,
+  normalizePeriod,
+  redactDashboardMoney,
   PERIOD_LABEL,
-  type DashboardPeriod,
 } from "@/lib/services/kpi-dashboard";
+import {
+  canSeeMoney,
+  withProductionRole,
+} from "@/lib/services/production-service";
+import { SHIFT_TYPES, SHIFT_TYPE_LABEL } from "@/lib/production/constants";
+import { formatVnDate, formatVnDateTime } from "@/lib/vn-time";
 import PrintToolbar from "./print-toolbar";
 
 export const dynamic = "force-dynamic";
-
-const SHIFT_LABEL: Record<string, string> = {
-  MORNING: "Sáng",
-  AFTERNOON: "Chiều",
-  NIGHT: "Tối",
-};
 
 /**
  * BÁO CÁO DASHBOARD KPI SẢN XUẤT — bản in.
@@ -34,16 +35,19 @@ export default async function KpiDashboardReportPage({
   if (!user) redirect("/login");
   if (user.role !== "CEO" && user.role !== "ADMIN") redirect("/dashboard");
 
-  const period = (
-    ["today", "week", "month"].includes(periodParam ?? "") ? periodParam : "today"
-  ) as DashboardPeriod;
-  const numDays = Math.min(90, Math.max(1, parseInt(daysParam ?? "7") || 7));
+  const period = normalizePeriod(periodParam);
+  const numDays = Math.min(90, Math.max(1, parseInt(daysParam ?? "7", 10) || 7));
 
-  const [summary, distribution, trends] = await Promise.all([
+  // Tiền thưởng chỉ CEO / Giám đốc SX được xem — người khác thấy "—".
+  const includeMoney = canSeeMoney(await withProductionRole(user));
+
+  const [rawSummary, distribution, rawTrends] = await Promise.all([
     getDashboardSummary(period),
     getDashboardDistribution(),
     getDashboardTrends(numDays),
   ]);
+  const summary = includeMoney ? rawSummary : redactDashboardMoney(rawSummary);
+  const trends = includeMoney ? rawTrends : redactDashboardMoney(rawTrends);
 
   const company = await prisma.systemSetting.findUnique({
     where: { key: "COMPANY_NAME" },
@@ -64,7 +68,7 @@ export default async function KpiDashboardReportPage({
           <span>
             Kỳ xem: <b>{PERIOD_LABEL[period]}</b>
           </span>
-          <span>Xuất lúc: {new Date().toLocaleString("vi-VN")}</span>
+          <span>Xuất lúc: {formatVnDateTime(new Date())}</span>
           <span>Người xuất: {user.fullName}</span>
         </div>
       </header>
@@ -78,8 +82,8 @@ export default async function KpiDashboardReportPage({
         <div className="mb-5 grid grid-cols-5 gap-3">
           <Stat label="Tổng ca tính" value={String(summary.summary.totalShifts)} />
           <Stat label="Điểm trung bình" value={summary.summary.avgScore.toFixed(2)} />
-          <Stat label="Tổng thưởng" value={`${fmt(summary.summary.totalBonus)} ₫`} />
-          <Stat label="Trung bình/ca" value={`${fmt(summary.summary.avgBonus)} ₫`} />
+          <Stat label="Tổng thưởng" value={vnd(summary.summary.totalBonus)} />
+          <Stat label="Trung bình/ca" value={vnd(summary.summary.avgBonus)} />
           <Stat label="Đã duyệt" value={`${summary.summary.percentApproved}%`} />
         </div>
 
@@ -115,24 +119,14 @@ export default async function KpiDashboardReportPage({
             <h3 className="mb-2 text-sm font-semibold text-ink-700">Theo ca</h3>
             <table className="w-full text-sm">
               <tbody>
-                <tr>
-                  <td className="py-1 text-ink-600">Sáng</td>
-                  <td className="py-1 text-right font-semibold">
-                    {summary.shiftTypes.MORNING}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-1 text-ink-600">Chiều</td>
-                  <td className="py-1 text-right font-semibold">
-                    {summary.shiftTypes.AFTERNOON}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-1 text-ink-600">Tối</td>
-                  <td className="py-1 text-right font-semibold">
-                    {summary.shiftTypes.NIGHT}
-                  </td>
-                </tr>
+                {SHIFT_TYPES.map((t) => (
+                  <tr key={t}>
+                    <td className="py-1 text-ink-600">{SHIFT_TYPE_LABEL[t]}</td>
+                    <td className="py-1 text-right font-semibold">
+                      {summary.shiftTypes[t] ?? 0}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -159,16 +153,16 @@ export default async function KpiDashboardReportPage({
                 {summary.topScores.map((s, i) => (
                   <tr key={i}>
                     <td className="border border-ink-200 px-2 py-1">
-                      {new Date(s.shiftDate).toLocaleDateString("vi-VN")}
+                      {formatVnDate(s.shiftDate)}
                     </td>
                     <td className="border border-ink-200 px-2 py-1">
-                      {SHIFT_LABEL[s.shiftType] ?? s.shiftType}
+                      {SHIFT_TYPE_LABEL[s.shiftType] ?? s.shiftType}
                     </td>
                     <td className="border border-ink-200 px-2 py-1 text-right font-semibold">
                       {s.totalScore.toFixed(2)}
                     </td>
                     <td className="border border-ink-200 px-2 py-1 text-right">
-                      {fmt(s.bonusAmount)} ₫
+                      {vnd(s.bonusAmount)}
                     </td>
                     <td className="border border-ink-200 px-2 py-1">{s.status}</td>
                   </tr>
@@ -220,7 +214,7 @@ export default async function KpiDashboardReportPage({
           <Stat label="Điểm TB/ngày" value={trends.statistics.avgDailyScore.toFixed(2)} />
           <Stat
             label="Tổng thưởng"
-            value={`${fmt(trends.statistics.totalBonusDistributed)} ₫`}
+            value={vnd(trends.statistics.totalBonusDistributed)}
           />
         </div>
         <table className="w-full border-collapse text-xs">
@@ -244,10 +238,10 @@ export default async function KpiDashboardReportPage({
                   {d.avgScore ?? "—"}
                 </td>
                 <td className="border border-ink-200 px-2 py-1 text-right">
-                  {d.movingAvg}
+                  {d.movingAvg ?? "—"}
                 </td>
                 <td className="border border-ink-200 px-2 py-1 text-right">
-                  {fmt(d.totalBonus)} ₫
+                  {vnd(d.totalBonus)}
                 </td>
               </tr>
             ))}
@@ -258,7 +252,7 @@ export default async function KpiDashboardReportPage({
       <footer className="mt-8 border-t border-ink-200 pt-4 text-xs text-ink-500">
         <p>
           Báo cáo sinh tự động từ hệ thống Quản lý Công việc &amp; KPI ·{" "}
-          {company?.value ?? "GANI FOODY"} · {new Date().toLocaleString("vi-VN")}
+          {company?.value ?? "GANI FOODY"} · {formatVnDateTime(new Date())}
         </p>
       </footer>
     </div>
@@ -277,6 +271,12 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function fmt(n: number | null | undefined) {
-  if (n === null || n === undefined) return "—";
+  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
   return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(n);
+}
+
+/** Số tiền kèm ₫; null (đã ẩn với người không được xem tiền) → "—". */
+function vnd(n: number | null | undefined) {
+  const s = fmt(n);
+  return s === "—" ? s : `${s} ₫`;
 }

@@ -1,3 +1,4 @@
+import { vnDayRange, vnStartOfDay } from "./vn-time";
 /**
  * BỘ DỰNG DỮ LIỆU GANTT + TÍNH ĐƯỜNG GĂNG.
  *
@@ -184,10 +185,10 @@ export function buildGantt(
   const max = times.length ? Math.max(...times) : now.getTime() + 7 * DAY;
 
   // Nới hai đầu cho dễ nhìn, và luôn phủ được ngày hôm nay
-  const rangeStart = new Date(Math.min(min, now.getTime()) - 2 * DAY);
-  rangeStart.setHours(0, 0, 0, 0);
-  const rangeEnd = new Date(Math.max(max, now.getTime()) + 2 * DAY);
-  rangeEnd.setHours(23, 59, 59, 999);
+  const rangeStart = vnStartOfDay(Math.min(min, now.getTime()) - 2 * DAY);
+  const rangeEnd = new Date(
+    vnDayRange(Math.max(max, now.getTime()) + 2 * DAY).lt.getTime() - 1
+  );
 
   const critical = items.filter((i) => i.isCritical);
 

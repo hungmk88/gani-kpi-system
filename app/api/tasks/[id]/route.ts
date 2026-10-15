@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { handle, ok, requireUser } from "@/lib/api";
-import { BusinessError } from "@/lib/rbac";
+import { assertCanAssignTask, BusinessError } from "@/lib/rbac";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { notify, sendCeoAlert } from "@/lib/telegram";
 import { scoreTaskRisk } from "@/lib/risk";
 import { riskContextFor } from "@/lib/services/risk-service";
+import { PUBLIC_USER_SELECT } from "@/lib/services/task-service";
+import { formatVnDateTime } from "@/lib/vn-time";
 import { ERR, TASK_PRIORITIES, TASK_STATUSES } from "@/lib/constants";
 
 const patchSchema = z.object({
@@ -23,7 +25,11 @@ const patchSchema = z.object({
 async function loadAndAuthorize(taskId: string, user: Awaited<ReturnType<typeof requireUser>>) {
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    include: { assignee: true, department: true, creator: true },
+    include: {
+      assignee: { select: PUBLIC_USER_SELECT },
+      creator: { select: PUBLIC_USER_SELECT },
+      department: true,
+    },
   });
   if (!task) {
     throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy công việc.", 404);
@@ -53,7 +59,7 @@ export async function GET(
     const task = await loadAndAuthorize(id, user);
     const comments = await prisma.taskComment.findMany({
       where: { taskId: id },
-      include: { user: true },
+      include: { user: { select: PUBLIC_USER_SELECT } },
       orderBy: { createdAt: "asc" },
     });
     return ok({ task, comments });
@@ -70,46 +76,94 @@ export async function PATCH(
     const task = await loadAndAuthorize(id, user);
     const body = patchSchema.parse(await req.json());
 
-    // Chỉ trưởng phòng / BGĐ mới được đổi người phụ trách, và vẫn bị chặn vượt cấp
+    // Người "quản" việc: BGĐ, người giao việc, hoặc trưởng phòng của chính
+    // phòng sở hữu task. Người chỉ là assignee (kể cả trưởng phòng phòng khác
+    // đang làm hộ) KHÔNG nằm trong nhóm này.
+    const isManagerOfTask =
+      user.role === "CEO" ||
+      task.creatorId === user.id ||
+      (user.role === "MANAGER" && task.departmentId === user.departmentId);
+
+    // Đổi người phụ trách: phải qua đúng chốt chặn giao việc như lúc tạo,
+    // tính theo phòng ban CỦA TASK và phòng ban của người nhận mới.
     if (body.assigneeId !== undefined && body.assigneeId !== task.assigneeId) {
-      if (user.role === "EMPLOYEE") {
+      if (!isManagerOfTask) {
         throw new BusinessError(
           ERR.FORBIDDEN,
-          "Nhân viên không được đổi người phụ trách.",
+          "Chỉ người giao việc, trưởng phòng phụ trách hoặc Ban Giám đốc mới được đổi người phụ trách.",
           403
         );
       }
+      let newAssigneeDeptId: string | null = null;
       if (body.assigneeId) {
         const newAssignee = await prisma.user.findUnique({
           where: { id: body.assigneeId },
+          select: { isActive: true, departmentId: true },
         });
-        if (!newAssignee) {
-          throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy nhân sự.", 404);
-        }
-        if (
-          user.role === "MANAGER" &&
-          newAssignee.departmentId !== user.departmentId
-        ) {
+        if (!newAssignee || !newAssignee.isActive) {
           throw new BusinessError(
-            ERR.CROSS_DEPT_ASSIGNMENT_FORBIDDEN,
-            "Không được giao việc cho nhân sự phòng ban khác. Hãy gửi Yêu cầu liên phòng ban.",
-            403
+            ERR.NOT_FOUND,
+            "Không tìm thấy nhân sự hoặc tài khoản đã bị khoá.",
+            404
           );
         }
+        newAssigneeDeptId = newAssignee.departmentId;
       }
+      assertCanAssignTask(user, task.departmentId, newAssigneeDeptId);
     }
 
-    // Chỉ trưởng phòng / BGĐ mới được nghiệm thu (chuyển sang DONE)
+    // Hạn chót và mức ưu tiên do người giao việc quyết, người làm không tự dời.
+    const dueChanged =
+      body.dueDate !== undefined &&
+      new Date(body.dueDate).getTime() !== new Date(task.dueDate).getTime();
+    if (dueChanged && !isManagerOfTask) {
+      throw new BusinessError(
+        ERR.FORBIDDEN,
+        "Bạn không được tự đổi hạn chót. Hãy ghi chú xin gia hạn để người giao việc quyết định.",
+        403
+      );
+    }
     if (
-      body.status === "DONE" &&
-      task.status !== "DONE" &&
-      user.role === "EMPLOYEE"
+      body.priority !== undefined &&
+      body.priority !== task.priority &&
+      !isManagerOfTask
     ) {
       throw new BusinessError(
         ERR.FORBIDDEN,
-        "Nhân viên chuyển việc sang 'Chờ duyệt', trưởng phòng mới là người nghiệm thu 'Hoàn thành'.",
+        "Chỉ người giao việc hoặc trưởng phòng phụ trách mới được đổi mức ưu tiên.",
         403
       );
+    }
+
+    if (body.status !== undefined && body.status !== task.status) {
+      // Chỉ trưởng phòng / BGĐ / người giao mới được nghiệm thu (chuyển sang DONE)
+      if (body.status === "DONE" && !isManagerOfTask) {
+        throw new BusinessError(
+          ERR.FORBIDDEN,
+          "Người làm chuyển việc sang 'Chờ duyệt', người giao việc / trưởng phòng mới là người nghiệm thu 'Hoàn thành'.",
+          403
+        );
+      }
+      if (body.status === "CANCELLED" && !isManagerOfTask) {
+        throw new BusinessError(
+          ERR.FORBIDDEN,
+          "Chỉ người giao việc, trưởng phòng phụ trách hoặc Ban Giám đốc mới được huỷ việc.",
+          403
+        );
+      }
+      // Mở lại việc đã nghiệm thu / đã huỷ cũng là quyền của người quản việc
+      if (
+        (task.status === "DONE" || task.status === "CANCELLED") &&
+        !isManagerOfTask
+      ) {
+        throw new BusinessError(
+          ERR.FORBIDDEN,
+          task.status === "DONE"
+            ? "Việc đã nghiệm thu — chỉ người giao việc hoặc trưởng phòng mới được mở lại."
+            : "Việc đã huỷ — chỉ người giao việc hoặc trưởng phòng mới được mở lại.",
+          403
+        );
+      }
     }
 
     const before = {
@@ -135,7 +189,10 @@ export async function PATCH(
       }
       if (body.status !== "BLOCKED") data.blockedSince = null;
       if (body.status === "DONE") {
-        data.completedAt = new Date();
+        // Gửi lại DONE cho việc đã DONE thì giữ nguyên thời điểm hoàn thành cũ
+        if (task.status !== "DONE" || !task.completedAt) {
+          data.completedAt = new Date();
+        }
         data.progress = 100;
       } else if (task.status === "DONE") {
         data.completedAt = null;
@@ -166,7 +223,10 @@ export async function PATCH(
     const updated = await prisma.task.update({
       where: { id },
       data,
-      include: { assignee: true, department: true },
+      include: {
+        assignee: { select: PUBLIC_USER_SELECT },
+        department: true,
+      },
     });
 
     // Ghi vết đổi trạng thái vào dòng thời gian của task
@@ -194,6 +254,7 @@ export async function PATCH(
         priority: updated.priority,
         progress: updated.progress,
         assigneeId: updated.assigneeId,
+        dueDate: updated.dueDate,
       },
       reason: body.note ?? null,
       ...clientMeta(req),
@@ -208,9 +269,9 @@ export async function PATCH(
       await notify({
         userId: body.assigneeId,
         title: `Bạn được chuyển giao việc: ${updated.title}`,
-        body: `Người chuyển: ${user.fullName} · Hạn ${new Date(
+        body: `Người chuyển: ${user.fullName} · Hạn ${formatVnDateTime(
           updated.dueDate
-        ).toLocaleString("vi-VN")}`,
+        )}`,
         level: "INFO",
         linkUrl: `/tasks/${id}`,
       });
@@ -224,6 +285,7 @@ export async function PATCH(
           role: "MANAGER",
           isActive: true,
         },
+        select: { id: true },
       });
       for (const m of managers) {
         if (m.id === user.id) continue;

@@ -1,42 +1,54 @@
 // File: app/api/kpi/targets/[period]/route.ts
 
-import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { handle, ok, requireUser } from "@/lib/api";
+import { BusinessError } from "@/lib/rbac";
+import { ERR } from "@/lib/constants";
+import {
+  PRODUCTION_KPI_SCOPE,
+  assertCanManageProductionKpi,
+  getKpiDefinitions,
+} from "@/lib/kpi-calculator";
 
+export const runtime = "nodejs";
+
+/**
+ * GET /api/kpi/targets/[periodId] — mục tiêu KPI Phòng SX của 1 kỳ.
+ * Quyền: CEO, ADMIN, Trưởng phòng Sản xuất.
+ * Trọng số 6 chỉ tiêu đọc từ KpiConfig (thiếu thì dùng số gốc).
+ */
 export async function GET(
-  request: NextRequest,
+  _req: Request,
   context: { params: Promise<{ period: string }> }
 ) {
-  try {
-    const params = await context.params;
-    const periodId = params.period;
+  return handle(async () => {
+    const user = await requireUser();
+    await assertCanManageProductionKpi(user, "Bạn không có quyền xem mục tiêu KPI Phòng SX.");
+    const { period: periodId } = await context.params;
 
-    // Lấy KpiPeriod
-    const period = await prisma.kpiPeriod.findUnique({
-      where: { id: periodId },
-    });
-
+    const period = await prisma.kpiPeriod.findUnique({ where: { id: periodId } });
     if (!period) {
-      return NextResponse.json(
-        { error: "Period not found" },
-        { status: 404 }
-      );
+      throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy kỳ KPI.", 404);
     }
 
-    // Lấy Period Target (mục tiêu chung cả phòng)
-    const periodTarget = await prisma.kpiPeriodTarget.findUnique({
-      where: { periodId: periodId },
-      include: {
-        createdBy: { select: { id: true, fullName: true } },
-        lastEditedBy: { select: { id: true, fullName: true } },
-        shiftTargets: {
-          orderBy: [{ shiftDate: "asc" }, { shiftType: "asc" }],
+    const [periodTarget, defs] = await Promise.all([
+      prisma.kpiPeriodTarget.findUnique({
+        where: { periodId },
+        include: {
+          createdBy: { select: { id: true, fullName: true } },
+          lastEditedBy: { select: { id: true, fullName: true } },
+          shiftTargets: {
+            orderBy: [{ shiftDate: "asc" }, { shiftType: "asc" }],
+          },
         },
-      },
-    });
+      }),
+      getKpiDefinitions(),
+    ]);
 
-    // Format response
-    const response = {
+    const periodLocked = period.status === "FINALIZED" || period.isLocked;
+    const isCeo = user.role === "CEO";
+
+    return ok({
       period: {
         id: period.id,
         month: period.month,
@@ -44,10 +56,10 @@ export async function GET(
         name: period.name,
         status: period.status,
       },
-      periodTarget: periodTarget || {
+      periodTarget: periodTarget ?? {
         id: null,
         status: "NOT_CREATED",
-        department: "PRODUCTION",
+        department: PRODUCTION_KPI_SCOPE,
         output_target: null,
         waste_target: null,
         quality_target: null,
@@ -55,53 +67,22 @@ export async function GET(
         safety_target: null,
         deadline_target: null,
       },
-      shiftTargets: periodTarget?.shiftTargets || [],
-      kpiDefinitions: [
-        {
-          code: "PROD_OUTPUT",
-          name: "Sản Lượng Thực Tế",
-          unit: "kg/ca",
-          weight: 25,
-        },
-        {
-          code: "PROD_WASTE",
-          name: "Tỷ Lệ Hao Hụt",
-          unit: "%",
-          weight: 25,
-        },
-        {
-          code: "PROD_QUALITY",
-          name: "Tỷ Lệ Chất Lượng (OK)",
-          unit: "%",
-          weight: 20,
-        },
-        {
-          code: "PROD_SPEC",
-          name: "Tỷ Lệ Sản Phẩm Đúng Spec",
-          unit: "%",
-          weight: 15,
-        },
-        {
-          code: "PROD_SAFETY",
-          name: "An Toàn Lao Động",
-          unit: "điểm",
-          weight: 10,
-        },
-        {
-          code: "PROD_DEADLINE",
-          name: "Đúng Deadline Batch",
-          unit: "%",
-          weight: 5,
-        },
-      ],
-    };
-
-    return NextResponse.json(response);
-  } catch (error) {
-    console.error("Error fetching targets:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch targets" },
-      { status: 500 }
-    );
-  }
+      shiftTargets: periodTarget?.shiftTargets ?? [],
+      kpiDefinitions: defs.map((d) => ({
+        code: d.code,
+        name: d.name,
+        unit: d.unit,
+        weight: d.weight,
+        isHigherBetter: d.isHigherBetter,
+      })),
+      permissions: {
+        canApprove: isCeo && !periodLocked,
+        canEdit:
+          !periodLocked &&
+          (isCeo ||
+            (period.status !== "MANAGER_LOCKED" &&
+              periodTarget?.status !== "LOCKED")),
+      },
+    });
+  });
 }

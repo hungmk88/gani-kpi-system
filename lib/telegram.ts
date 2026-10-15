@@ -1,3 +1,4 @@
+import { formatVnDateTime } from "./vn-time";
 import {
   appUrl,
   escapeHtml,
@@ -30,7 +31,7 @@ export async function sendCeoAlert(opts: {
     "──────────────────────────",
     `⚠️ <b>Vấn đề:</b> ${escapeHtml(opts.title)}`,
     `📝 <b>Chi tiết:</b> ${escapeHtml(opts.details)}`,
-    `⏰ <b>Phát hiện lúc:</b> ${new Date().toLocaleString("vi-VN")}`,
+    `⏰ <b>Phát hiện lúc:</b> ${formatVnDateTime(new Date())}`,
     "",
     `👉 <a href="${url}">Bấm vào đây để xử lý</a>`,
   ].join("\n");
@@ -96,7 +97,7 @@ export async function sendExecutiveBriefingTelegram(
     "<b>Khuyến nghị:</b>",
     recLines,
     "",
-    `🤖 <i>Sinh bởi ${briefing.engine === "GEMINI" ? "Gemini" : "bộ đọc luật cứng"} lúc ${new Date().toLocaleString("vi-VN")}</i>`,
+    `🤖 <i>Sinh bởi ${briefing.engine === "GEMINI" ? "Gemini" : "bộ đọc luật cứng"} lúc ${formatVnDateTime(new Date())}</i>`,
     `👉 <a href="${url}">Xem chi tiết trong hệ thống</a>`,
   ].join("\n");
 

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Database thật để chạy migration từ đầu — bắt lỗi migration lệch schema
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: kpi
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kpi
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/kpi
+      # Chỉ dùng trong CI để build được; production đặt secret thật trên Vercel
+      JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Unit test (giờ server UTC lẫn giờ VN phải cho cùng kết quả)
+        run: npm run test:tz
+      - name: Migration chạy sạch từ đầu và khớp schema
+        run: |
+          npx prisma migrate deploy
+          DIFF=$(npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script)
+          echo "$DIFF"
+          echo "$DIFF" | grep -q "empty migration" || (echo "::error::schema.prisma lệch so với migrations — tạo migration mới" && exit 1)
+      - name: Build
+        run: npx next build

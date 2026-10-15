@@ -16,6 +16,7 @@
  *   6. Tự chấm        — hệ thống đo lại xem dự báo của chính nó có đúng không
  *   7. Phân quyền     — nhân viên không xem được, trưởng phòng chỉ thấy phòng mình
  */
+import { assertLocalTarget } from "./lib/local-guard.mjs";
 import { PrismaClient } from "@prisma/client";
 
 try {
@@ -25,7 +26,8 @@ try {
 }
 
 const BASE = process.env.APP_URL || "http://localhost:3000";
-const PASSWORD = "Gani@2026";
+const PASSWORD = process.env.SMOKE_PASSWORD || "Gani@2026";
+assertLocalTarget({ appUrl: BASE });
 const prisma = new PrismaClient();
 
 let pass = 0;
