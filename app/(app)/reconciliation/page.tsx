@@ -69,7 +69,7 @@ export default async function ReconciliationPage() {
         />
         <StatCard
           label="Mức lệch cao nhất"
-          value={worst > 0 ? `${worst}%` : "—"}
+          value={worst > 0 ? `${fmt(worst)}%` : "—"}
           tone={worst > 20 ? "red" : worst > 0 ? "amber" : "green"}
           hint={`ngưỡng cảnh báo ${DATA_MISMATCH_THRESHOLD_PERCENT}%`}
         />
@@ -115,7 +115,7 @@ export default async function ReconciliationPage() {
                         từ {formatDateTime(m.createdAt)}
                       </div>
                     </div>
-                    <Badge tone="red">Lệch {m.variancePercent}%</Badge>
+                    <Badge tone="red">Lệch {fmt(m.variancePercent)}%</Badge>
                   </div>
 
                   <div className="p-4">

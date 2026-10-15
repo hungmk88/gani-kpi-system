@@ -83,9 +83,9 @@ export function PeriodGateTrack({ gate }: { gate: GateState }) {
           return (
             <li key={leg.key}>
               <div className={`h-1 rounded-full ${bar}`} />
-              <div className={`mt-1.5 text-[11px] leading-tight ${text}`}>
+              <div className={`mt-1.5 text-xs leading-tight ${text}`}>
                 {leg.label}
-                <span className="block font-mono text-[10px] font-normal opacity-80">
+                <span className="block text-xs font-normal tabular-nums">
                   {leg.state === "done" ? "đã đóng " : ""}
                   {formatDayMonth(leg.deadline)}
                   {leg.mine && leg.state === "now" && " · bạn ở đây"}
@@ -141,7 +141,6 @@ export function ProductionStatRow({ summary }: { summary: ProductionSummary }) {
       <StatCard
         label="Nhân lực hôm nay"
         value={`${summary.workforceToday} người`}
-        surface="gani-blue"
         hint={
           summary.workforceToday > 0
             ? "đang có mặt trong ca sản xuất"
@@ -152,7 +151,6 @@ export function ProductionStatRow({ summary }: { summary: ProductionSummary }) {
       <StatCard
         label={`Sản lượng ${summary.monthLabel}`}
         value={`${outputLabel} tấn`}
-        surface="gani-green"
         hint={
           summary.pendingQcShifts > 0
             ? `đã KCS xác nhận · còn ${summary.pendingQcShifts} ca chờ xác nhận`
@@ -189,8 +187,9 @@ function formatDayMonth(d: Date) {
 export function ActionQueue({ items }: { items: ActionItem[] }) {
   if (items.length === 0) {
     return (
-      <div className="mb-5 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-800">
-        <Check size={15} strokeWidth={2.5} aria-hidden />
+      // Trạng thái bình thường: thẻ trung tính, chỉ dấu tích mang màu lá
+      <div className="card mb-5 flex items-center gap-2 px-3.5 py-2.5 text-sm text-ink-700">
+        <Check size={16} strokeWidth={2.5} className="shrink-0 text-leaf-600" aria-hidden />
         <span>Không có việc nào đang chờ bạn. Hàng chờ sạch.</span>
       </div>
     );
@@ -213,7 +212,7 @@ export function ActionQueue({ items }: { items: ActionItem[] }) {
         <Link
           key={it.id}
           href={it.href}
-          className={`flex items-center gap-3 rounded-lg border border-l-[3px] border-ink-200/70 bg-white p-3 shadow-sm transition hover:shadow-md ${edge[it.tone]}`}
+          className={`flex items-center gap-3 rounded-[10px] border border-l-[3px] border-ink-200 bg-white p-3 transition hover:shadow-md ${edge[it.tone]}`}
         >
           <span
             className={`w-16 shrink-0 text-xs leading-tight font-semibold ${when[it.tone]}`}
@@ -227,7 +226,7 @@ export function ActionQueue({ items }: { items: ActionItem[] }) {
             <span className="mt-0.5 block text-xs text-ink-500">{it.detail}</span>
           </span>
           <span
-            className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium ${
+            className={`shrink-0 rounded-md px-2.5 py-1.5 text-xs font-medium ${
               it.hardLock
                 ? "bg-brand-600 text-white"
                 : "border border-ink-200 bg-white text-ink-700"
@@ -283,7 +282,7 @@ export function LeanTaskList({
             </span>
           </span>
           <span
-            className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${chip}`}
+            className={`shrink-0 rounded-md border px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ${chip}`}
           >
             {t.lateDays
               ? `trễ ${t.lateDays} ngày`
@@ -309,7 +308,7 @@ export function TaskGroupHeading({
   return (
     <div className="mb-2 flex items-center gap-2">
       <h3
-        className={`text-xs font-semibold tracking-wide uppercase ${
+        className={`text-sm font-semibold ${
           tone === "red" ? "text-red-700" : "text-amber-800"
         }`}
       >
@@ -384,9 +383,9 @@ export function SelfAnomalyPanel({
               </span>
             </div>
 
-            <p className="mb-3 text-sm text-ink-600">{a.reason}</p>
+            <p className="mb-3 text-sm text-ink-600">{plainAnomalyReason(a.reason)}</p>
 
-            <div className="mb-3 flex flex-wrap gap-x-6 gap-y-1 font-mono text-xs text-ink-500">
+            <div className="mb-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-500 tabular-nums">
               <span>
                 bạn khai: <b className="text-ink-800">{fmt(a.reportedValue)}</b>
               </span>
@@ -416,6 +415,24 @@ function fmt(n: number) {
   return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
 }
 
+/**
+ * Lời giải thích bất thường do bộ máy phân tích viết sẵn (đã lưu trong CSDL)
+ * còn dùng thuật ngữ "thước bền" và số thập phân dấu chấm. Đổi sang lời thường
+ * khi HIỂN THỊ — không sửa dữ liệu gốc.
+ */
+export function plainAnomalyReason(reason: string) {
+  const vn = (n: string) => n.replace(".", ",");
+  return reason
+    .replace(
+      /Lệch ([\d.]+) lần theo thước bền/,
+      (_, n: string) => `Lệch gấp ${vn(n)} lần mức dao động thường ngày`
+    )
+    .replace(
+      / và ([\d.]+) lần theo độ lệch chuẩn/,
+      (_, n: string) => ` (${vn(n)} lần theo độ lệch chuẩn)`
+    );
+}
+
 export function AlertCard({ alert }: { alert: DashboardAlert }) {
   const titleColor = {
     red: "text-red-700",
@@ -427,7 +444,7 @@ export function AlertCard({ alert }: { alert: DashboardAlert }) {
     <Link href={alert.href} className="card block p-3 transition hover:shadow-md">
       <div className={`text-xs font-semibold ${titleColor}`}>{alert.title}</div>
       <p className="mt-1 text-xs leading-snug text-ink-600">{alert.detail}</p>
-      <p className="mt-1.5 font-mono text-[10px] text-ink-400">{alert.footnote}</p>
+      <p className="mt-1.5 text-xs text-ink-500">{alert.footnote}</p>
     </Link>
   );
 }

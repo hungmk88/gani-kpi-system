@@ -1,30 +1,150 @@
 @import "tailwindcss";
 
+/*
+ * HỆ THIẾT KẾ GANI (Đợt 3 — Ban Giám đốc duyệt 15/10/2026).
+ *
+ * Nguyên tắc: "bình tĩnh khi ổn, rõ ràng khi có chuyện". Màu thương hiệu lấy
+ * từ logo; trạng thái bình thường dùng màu trung tính; chỉ NGOẠI LỆ mới được
+ * tô màu. Chỉ còn 4 màu ngữ nghĩa: danger (red) · warning (amber) · success
+ * (leaf = lá xanh của logo) · info (brand = xanh lam của logo) + trung tính.
+ *
+ * Các thang Tailwind còn sót trong code (emerald/green, sky/cyan/violet,
+ * slate/gray, rose) được ÁNH XẠ về đúng 4 màu trên ngay tại đây — để cả hệ
+ * thống đồng bộ mà không phải sửa từng trang.
+ */
 @theme {
-  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-sans: var(--font-be-vietnam), "Segoe UI", system-ui, -apple-system, sans-serif;
 
-  --color-brand-50: #eef7ff;
-  --color-brand-100: #d9edff;
-  --color-brand-200: #bce0ff;
-  --color-brand-300: #8ecdff;
-  --color-brand-400: #59b0ff;
-  --color-brand-500: #328eff;
-  --color-brand-600: #1b6ef5;
-  --color-brand-700: #1458e1;
-  --color-brand-800: #1748b6;
-  --color-brand-900: #19408f;
+  /* Xanh lam của chữ "GANI" trong logo — #1E89CA. Nút chính dùng 600 (5,7:1). */
+  --color-brand-50: #eef7fc;
+  --color-brand-100: #d6ecf8;
+  --color-brand-200: #add8f1;
+  --color-brand-300: #7fc0e6;
+  --color-brand-400: #4fa6da;
+  --color-brand-500: #1e89ca;
+  --color-brand-600: #176ca3;
+  --color-brand-700: #145e8e;
+  --color-brand-800: #114b70;
+  --color-brand-900: #0e3d5b;
 
-  --color-ink-50: #f6f7f9;
-  --color-ink-100: #eceef2;
-  --color-ink-200: #d5dae2;
-  --color-ink-300: #b0b9c8;
-  --color-ink-400: #8492a8;
-  --color-ink-500: #65758d;
-  --color-ink-600: #505e74;
-  --color-ink-700: #424c5e;
-  --color-ink-800: #3a4250;
-  --color-ink-900: #343a45;
-  --color-ink-950: #22262e;
+  /* Lá xanh của logo — #3BA548. Màu "đạt / hoàn thành". Chữ dùng 700. */
+  --color-leaf-50: #eef8ef;
+  --color-leaf-100: #d5efd8;
+  --color-leaf-200: #abddb1;
+  --color-leaf-300: #7cc886;
+  --color-leaf-400: #55b65f;
+  --color-leaf-500: #3ba548;
+  --color-leaf-600: #2b7d37;
+  --color-leaf-700: #257532;
+  --color-leaf-800: #1d5c27;
+  --color-leaf-900: #164720;
+
+  /* Trung tính ẤM (thay xám lạnh slate). 400 trở lên đạt ≥4,5:1 trên nền trắng. */
+  --color-ink-50: #f7f7f4;
+  --color-ink-100: #efefea;
+  --color-ink-200: #e4e4df;
+  --color-ink-300: #cdcdc5;
+  --color-ink-400: #767669;
+  --color-ink-500: #66665c;
+  --color-ink-600: #55554c;
+  --color-ink-700: #42423b;
+  --color-ink-800: #2f2f2a;
+  --color-ink-900: #22231f;
+  --color-ink-950: #171814;
+
+  /* Danger — đỏ trễ hạn / bị chặn / lỗi */
+  --color-red-50: #fef3f2;
+  --color-red-100: #fee4e2;
+  --color-red-200: #fecdca;
+  --color-red-300: #fda29b;
+  --color-red-400: #f97066;
+  --color-red-500: #f04438;
+  --color-red-600: #d92d20;
+  --color-red-700: #b42318;
+  --color-red-800: #912018;
+  --color-red-900: #7a271a;
+
+  /* --- Ánh xạ các thang thừa về 4 màu ngữ nghĩa --- */
+  --color-emerald-50: #eef8ef;
+  --color-emerald-100: #d5efd8;
+  --color-emerald-200: #abddb1;
+  --color-emerald-300: #7cc886;
+  --color-emerald-400: #55b65f;
+  --color-emerald-500: #3ba548;
+  --color-emerald-600: #2b7d37;
+  --color-emerald-700: #257532;
+  --color-emerald-800: #1d5c27;
+  --color-emerald-900: #164720;
+  --color-green-50: #eef8ef;
+  --color-green-100: #d5efd8;
+  --color-green-200: #abddb1;
+  --color-green-300: #7cc886;
+  --color-green-400: #55b65f;
+  --color-green-500: #3ba548;
+  --color-green-600: #2b7d37;
+  --color-green-700: #257532;
+  --color-green-800: #1d5c27;
+  --color-green-900: #164720;
+  --color-sky-50: #eef7fc;
+  --color-sky-100: #d6ecf8;
+  --color-sky-200: #add8f1;
+  --color-sky-300: #7fc0e6;
+  --color-sky-400: #4fa6da;
+  --color-sky-500: #1e89ca;
+  --color-sky-600: #176ca3;
+  --color-sky-700: #145e8e;
+  --color-sky-800: #114b70;
+  --color-sky-900: #0e3d5b;
+  --color-cyan-50: #eef7fc;
+  --color-cyan-100: #d6ecf8;
+  --color-cyan-200: #add8f1;
+  --color-cyan-300: #7fc0e6;
+  --color-cyan-400: #4fa6da;
+  --color-cyan-500: #1e89ca;
+  --color-cyan-600: #176ca3;
+  --color-cyan-700: #145e8e;
+  --color-cyan-800: #114b70;
+  --color-cyan-900: #0e3d5b;
+  --color-violet-50: #eef7fc;
+  --color-violet-100: #d6ecf8;
+  --color-violet-200: #add8f1;
+  --color-violet-300: #7fc0e6;
+  --color-violet-400: #4fa6da;
+  --color-violet-500: #1e89ca;
+  --color-violet-600: #176ca3;
+  --color-violet-700: #145e8e;
+  --color-violet-800: #114b70;
+  --color-violet-900: #0e3d5b;
+  --color-slate-50: #f7f7f4;
+  --color-slate-100: #efefea;
+  --color-slate-200: #e4e4df;
+  --color-slate-300: #cdcdc5;
+  --color-slate-400: #767669;
+  --color-slate-500: #66665c;
+  --color-slate-600: #55554c;
+  --color-slate-700: #42423b;
+  --color-slate-800: #2f2f2a;
+  --color-slate-900: #22231f;
+  --color-gray-50: #f7f7f4;
+  --color-gray-100: #efefea;
+  --color-gray-200: #e4e4df;
+  --color-gray-300: #cdcdc5;
+  --color-gray-400: #767669;
+  --color-gray-500: #66665c;
+  --color-gray-600: #55554c;
+  --color-gray-700: #42423b;
+  --color-gray-800: #2f2f2a;
+  --color-gray-900: #22231f;
+  --color-rose-50: #fef3f2;
+  --color-rose-100: #fee4e2;
+  --color-rose-200: #fecdca;
+  --color-rose-300: #fda29b;
+  --color-rose-400: #f97066;
+  --color-rose-500: #f04438;
+  --color-rose-600: #d92d20;
+  --color-rose-700: #b42318;
+  --color-rose-800: #912018;
+  --color-rose-900: #7a271a;
 }
 
 :root {
@@ -40,6 +160,13 @@ body {
   background-color: var(--color-ink-50);
   color: var(--color-ink-900);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Số liệu thẳng cột trong bảng, thẻ số, điểm KPI */
+.tabular,
+.tbl,
+.stat-value {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Thanh cuộn mảnh cho các bảng dài */
@@ -62,8 +189,10 @@ body {
 }
 
 @layer components {
+  /* Thẻ: một bo góc (10px), chỉ viền — không bóng khi đứng yên. Thẻ bấm được
+     tự thêm hover:shadow-md ở chỗ dùng. */
   .card {
-    @apply rounded-xl border border-ink-200/70 bg-white shadow-sm;
+    @apply rounded-[10px] border border-ink-200 bg-white;
   }
 
   /* Tailwind v4 không cho @apply một class do mình tự định nghĩa,
@@ -73,33 +202,40 @@ body {
   .btn-ghost,
   .btn-danger,
   .btn-success {
-    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition
-           disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium transition
+           outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2
+           disabled:cursor-not-allowed disabled:bg-ink-200 disabled:text-ink-500 disabled:border-transparent;
   }
-  .btn-primary {
+  /* Bốn loại nút: Chính · Phụ (viền) · Chữ · Nguy hiểm.
+     `.btn-success` giữ tên cho code cũ nhưng trông như nút Chính — "duyệt /
+     xong" không cần một màu riêng thứ năm. */
+  .btn-primary,
+  .btn-success {
     @apply bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
   }
   .btn-ghost {
-    @apply border border-ink-200 bg-white text-ink-700 hover:bg-ink-50;
+    @apply border border-ink-300 bg-white text-ink-800 hover:bg-ink-50;
+  }
+  .btn {
+    @apply bg-transparent text-brand-700 hover:bg-brand-50;
   }
   .btn-danger {
-    @apply bg-red-600 text-white hover:bg-red-700;
+    @apply bg-red-700 text-white hover:bg-red-800;
   }
-  .btn-success {
-    @apply bg-emerald-600 text-white hover:bg-emerald-700;
-  }
+  /* Nút nhỏ: cao 36px trên máy tính, 44px trên điện thoại (ngón tay/găng tay) */
   .btn-sm {
-    @apply px-2.5 py-1.5 text-xs;
+    @apply min-h-11 px-3 py-1.5 text-sm sm:min-h-9 sm:text-xs;
   }
 
   .input {
     /* 16px trên điện thoại: ô nhập dưới 16px làm iPhone tự phóng to mỗi lần chạm */
     @apply w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-base text-ink-900 sm:text-sm
            outline-none transition placeholder:text-ink-400
-           focus:border-brand-400 focus:ring-2 focus:ring-brand-100;
+           focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25;
   }
+  /* Nhãn viết thường câu, 13px — chữ IN HOA làm dấu tiếng Việt chồng lên nhau */
   .label {
-    @apply mb-1.5 block text-xs font-semibold tracking-wide text-ink-600 uppercase;
+    @apply mb-1.5 block text-[13px] font-medium text-ink-700;
   }
 
   .badge {
@@ -107,14 +243,14 @@ body {
   }
 
   .table-wrap {
-    @apply overflow-x-auto rounded-xl border border-ink-200/70 bg-white;
+    @apply overflow-x-auto rounded-[10px] border border-ink-200 bg-white;
   }
   .tbl {
     @apply w-full min-w-[720px] border-collapse text-sm;
   }
   .tbl thead th {
-    @apply border-b border-ink-200 bg-ink-50/80 px-3 py-2.5 text-left text-xs font-semibold
-           tracking-wide text-ink-600 uppercase whitespace-nowrap;
+    @apply border-b border-ink-200 bg-[#fafaf7] px-3 py-2.5 text-left text-[13px] font-semibold
+           text-ink-600 whitespace-nowrap;
   }
   .tbl tbody td {
     @apply border-b border-ink-100 px-3 py-2.5 align-middle;
@@ -123,8 +259,9 @@ body {
     @apply bg-brand-50/40;
   }
 
+  /* Tiêu đề khối: viết thường câu, đậm vừa — đọc nhanh hơn chữ in hoa giãn */
   .section-title {
-    @apply text-sm font-semibold tracking-wide text-ink-500 uppercase;
+    @apply text-base font-semibold text-ink-800;
   }
 }
 

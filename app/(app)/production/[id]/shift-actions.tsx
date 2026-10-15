@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Lock, LockOpen, Check, ShieldAlert } from "lucide-react";
+import { Lock, LockOpen, Check, CircleCheck, ShieldAlert } from "lucide-react";
 import { STAGE_LABEL } from "@/lib/production/constants";
 import {
   computeQualityLoss,
@@ -43,7 +43,10 @@ type Participant = {
 const BIG_GAP_KG = 5;
 const OVERRIDE_MIN_REASON = 10;
 
-const fmtKg = (n: number) => new Intl.NumberFormat("vi-VN").format(n) + " kg";
+/** 374,5 kg — số kiểu Việt Nam, tối đa 2 chữ số thập phân */
+const fmtNum = (n: number) =>
+  new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
+const fmtKg = (n: number) => fmtNum(n) + " kg";
 const fmtVnd = (n: number) =>
   new Intl.NumberFormat("vi-VN").format(Math.round(n)) + " ₫";
 
@@ -101,13 +104,17 @@ export default function ShiftActions({
       <h3 className="section-title mb-3">Thao tác</h3>
 
       {error && (
-        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div
+          role="alert"
+          className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
           {error}
         </div>
       )}
       {message && (
-        <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          {message}
+        <div role="status" className="mb-3 flex items-start gap-1.5 text-sm text-leaf-700">
+          <CircleCheck size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
+          <span>{message}</span>
         </div>
       )}
 
@@ -167,8 +174,8 @@ export default function ShiftActions({
 
       {shift.status === "LOCKED" && (
         <div className="space-y-3">
-          <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-            <Lock size={14} strokeWidth={2} /> Ca đã khoá số và chấm điểm xong.
+          <div className="flex items-center gap-1.5 text-sm font-medium text-leaf-700">
+            <Lock size={16} strokeWidth={2} /> Ca đã khoá số và chấm điểm xong.
           </div>
           {isCeo && (
             <ReopenForm
@@ -230,7 +237,7 @@ function QcForm({
   const blockedHint = !entered
     ? "Nhập số kg Đạt QC để bật nút xác nhận."
     : !gapAcked
-      ? `Tick ô xác nhận số lệch ${diff} kg ở trên để bật nút.`
+      ? `Tick ô xác nhận số lệch ${fmtKg(diff)} ở trên để bật nút.`
       : !reasonOk
         ? `Ghi lý do vượt quyền — còn thiếu ${OVERRIDE_MIN_REASON - reasonLen} ký tự.`
         : null;
@@ -286,7 +293,7 @@ function QcForm({
       )}
 
       <p className="text-xs text-ink-500">
-        Sản xuất khai sản lượng thô <b>{shift.rawOutputKg} kg</b>. Phân loại cho
+        Sản xuất khai sản lượng thô <b>{fmtKg(shift.rawOutputKg)}</b>. Phân loại cho
         đủ số đó.
       </p>
 
@@ -334,13 +341,13 @@ function QcForm({
 
       {entered && (
         <div
-          className={`rounded-lg border px-3 py-2 text-xs ${
+          className={`rounded-md px-3 py-2 text-xs tabular-nums ${
             bigGap
-              ? "border-red-200 bg-red-50 text-red-800"
-              : "border-ink-200 bg-ink-50 text-ink-600"
+              ? "border border-red-200 bg-red-50 text-red-800"
+              : "bg-ink-50 text-ink-600"
           }`}
         >
-          Tổng phân loại {accounted} kg · lệch {diff} kg so với sản lượng thô
+          Tổng phân loại {fmtKg(accounted)} · lệch {fmtKg(diff)} so với sản lượng thô
           {bigGap &&
             ` — lệch quá ${BIG_GAP_KG} kg sẽ bị hệ thống bắt là bất thường cân đối.`}
           {bigGap && (
@@ -357,15 +364,15 @@ function QcForm({
         </div>
       )}
 
-      <details open className="rounded-lg border border-ink-200 p-2">
-        <summary className="cursor-pointer text-xs font-medium text-ink-700">
+      <details open className="rounded-md bg-ink-50 p-3">
+        <summary className="cursor-pointer text-sm font-medium text-ink-700">
           Ghi lỗi theo từng công đoạn ({participants.length} người)
         </summary>
-        <p className="mt-2 mb-2 text-[11px] text-ink-500">
+        <p className="mt-2 mb-2 text-xs text-ink-500">
           Đây là thứ duy nhất phân biệt được người làm tốt và người làm ẩu trong
           cùng một ca. Bỏ trống thì cả ca chấm như nhau.
         </p>
-        <div className="mb-1 grid grid-cols-[1.6fr_1fr_1fr] gap-2 text-[10px] font-semibold tracking-wide text-ink-500 uppercase">
+        <div className="mb-1 grid grid-cols-[1.6fr_1fr_1fr] gap-2 text-xs font-medium text-ink-500">
           <div>Người · công đoạn</div>
           <div>Lỗi cá nhân (kg)</div>
           <div>Vi phạm</div>
@@ -433,7 +440,7 @@ function QcForm({
         )}
       </button>
       {blockedHint && !busy && (
-        <p className="text-[11px] text-ink-500">{blockedHint}</p>
+        <p className="text-xs text-ink-500">{blockedHint}</p>
       )}
     </div>
   );
@@ -463,7 +470,7 @@ function CeoQcOverride({
         đốc chỉ làm thay khi thật cần, và phải ghi lý do vào nhật ký.
       </div>
       {open ? (
-        <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+        <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-3">
           <div className="flex items-start gap-1.5 text-xs text-amber-800">
             <ShieldAlert size={14} strokeWidth={2} className="mt-0.5 shrink-0" />
             <span>
@@ -560,11 +567,11 @@ function CeoLockForm({
     <div className="space-y-3">
       {selfOverrideWarning}
 
-      <div className="rounded-lg border border-ink-200 bg-ink-50/60 px-3 py-2 text-xs text-ink-600">
-        Chuẩn của mã <b>{shift.skuCode}</b>: sản lượng{" "}
-        <b>{shift.skuStandardTargetKg} kg</b>, hao hụt{" "}
-        <b>{shift.skuLossRate}%</b>. Kho khai cấp{" "}
-        <b>{shift.rawMaterialInputKg} kg</b>.
+      <div className="rounded-md bg-ink-50 px-3 py-2 text-xs text-ink-600 tabular-nums">
+        Chuẩn của mã <b className="font-mono">{shift.skuCode}</b>: sản lượng{" "}
+        <b>{fmtKg(shift.skuStandardTargetKg)}</b>, hao hụt{" "}
+        <b>{fmtNum(shift.skuLossRate)}%</b>. Kho khai cấp{" "}
+        <b>{fmtKg(shift.rawMaterialInputKg)}</b>.
       </div>
 
       <div>
@@ -578,7 +585,7 @@ function CeoLockForm({
         />
         {targetChanged && (
           <div className="mt-2">
-            <p className="mb-1 text-[11px] text-amber-700">
+            <p className="mb-1 text-xs text-amber-800">
               Khác chuẩn SKU — bắt buộc ghi lý do. Đặt chỉ tiêu sau khi đã biết
               kết quả là chỗ dễ bị nghi ngờ nhất, nên phải có dấu vết.
             </p>
@@ -603,7 +610,7 @@ function CeoLockForm({
         />
         {nvlChanged && (
           <div className="mt-2">
-            <p className="mb-1 text-[11px] text-amber-700">
+            <p className="mb-1 text-xs text-amber-800">
               Khác số kho đã khai — bắt buộc ghi lý do.
             </p>
             <input
@@ -616,18 +623,18 @@ function CeoLockForm({
         )}
       </div>
 
-      <div className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-xs text-brand-900">
-        Định mức nguyên liệu hệ thống tự tính: <b>{stdNorm} kg</b>
+      <div className="rounded-md bg-ink-50 px-3 py-2 text-xs text-ink-700 tabular-nums">
+        Định mức nguyên liệu hệ thống tự tính: <b>{fmtKg(stdNorm)}</b>
         {Number(nvl) > 0 && (
           <>
             {" · "}
             {Number(nvl) > stdNorm ? (
               <span className="text-red-700">
-                vượt {Math.round((Number(nvl) - stdNorm) * 100) / 100} kg
+                vượt {fmtKg(Math.round((Number(nvl) - stdNorm) * 100) / 100)}
               </span>
             ) : (
-              <span className="text-emerald-700">
-                dưới {Math.round((stdNorm - Number(nvl)) * 100) / 100} kg
+              <span className="text-leaf-700">
+                dưới {fmtKg(Math.round((stdNorm - Number(nvl)) * 100) / 100)}
               </span>
             )}
           </>
@@ -650,7 +657,7 @@ function CeoLockForm({
       >
         <Lock size={15} strokeWidth={2} /> Duyệt & khoá số liệu
       </button>
-      <p className="text-[11px] text-ink-500">
+      <p className="text-xs text-ink-500">
         Khoá xong hệ thống mới chấm điểm và quét chống chạy chỉ tiêu.
       </p>
 
@@ -677,12 +684,12 @@ function CeoLockForm({
           if (d) setConfirmOpen(false);
         }}
       >
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 tabular-nums">
           <dt className="text-ink-500">Chỉ tiêu sản lượng</dt>
           <dd className="font-semibold text-ink-900">
             {fmtKg(Number(target) || 0)}
             {targetChanged && (
-              <span className="ml-1 text-xs font-normal text-amber-700">
+              <span className="ml-1 text-xs font-normal text-amber-800">
                 (chuẩn {fmtKg(shift.skuStandardTargetKg)})
               </span>
             )}
@@ -691,7 +698,7 @@ function CeoLockForm({
           <dd className="font-semibold text-ink-900">
             {fmtKg(Number(nvl) || 0)}
             {nvlChanged && (
-              <span className="ml-1 text-xs font-normal text-amber-700">
+              <span className="ml-1 text-xs font-normal text-amber-800">
                 (kho khai {fmtKg(shift.rawMaterialInputKg)})
               </span>
             )}
@@ -702,14 +709,16 @@ function CeoLockForm({
             <>
               <dt className="text-ink-500">Tổn thất chất lượng (dự tính)</dt>
               <dd
-                className={`font-semibold ${projectedLoss.qualityLossVnd > 0 ? "text-red-700" : "text-emerald-700"}`}
+                className={`font-semibold ${projectedLoss.qualityLossVnd > 0 ? "text-red-700" : "text-ink-900"}`}
               >
                 {fmtVnd(projectedLoss.qualityLossVnd)}
               </dd>
             </>
           )}
           <dt className="text-ink-500">Chấm điểm cho</dt>
-          <dd className="font-semibold text-ink-900">{participantsCount} người</dd>
+          <dd className="font-semibold text-ink-900">
+            {participantsCount.toLocaleString("vi-VN")} người
+          </dd>
         </dl>
         <p>
           Khoá xong: chấm điểm từng người, quét chống chạy chỉ tiêu và trừ kho

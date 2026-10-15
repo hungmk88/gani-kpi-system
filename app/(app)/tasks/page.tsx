@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Plus } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { can, taskScopeWhere } from "@/lib/rbac";
@@ -88,7 +89,7 @@ export default async function TasksPage({
             </Link>
             {canCreate && (
               <Link href="/tasks/new" className="btn-primary">
-                + Giao việc mới
+                <Plus size={16} aria-hidden /> Giao việc mới
               </Link>
             )}
           </div>

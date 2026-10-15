@@ -112,10 +112,10 @@ export default function ResolvePanel({
               </span>
 
               <span className="shrink-0 text-right">
-                <span className="block font-semibold text-ink-900">
+                <span className="block font-semibold text-ink-900 tabular-nums">
                   {fmt(s.value)}
                 </span>
-                <span className="block text-[11px] text-ink-400">{unit}</span>
+                <span className="block text-xs text-ink-400">{unit}</span>
               </span>
             </button>
           );

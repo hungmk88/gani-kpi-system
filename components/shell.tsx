@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Home,
   CheckSquare,
@@ -19,6 +19,9 @@ import {
   Bell,
   KeyRound,
   Menu as MenuIcon,
+  MoreHorizontal,
+  X,
+  LogOut,
   type LucideIcon,
 } from "lucide-react";
 import { ROLE_LABEL } from "@/lib/constants";
@@ -31,20 +34,29 @@ type NavItem = {
   mobile?: boolean;
   /** Chỉ hiện cho người có vai trò trong xưởng (hoặc BGĐ / quản trị). */
   productionOnly?: boolean;
+  /** Nhóm trên thanh bên — menu phẳng 9 mục khó dò */
+  group: "work" | "kpi" | "factory" | "system";
+};
+
+const GROUP_LABEL: Record<NavItem["group"], string> = {
+  work: "Công việc",
+  kpi: "KPI & đánh giá",
+  factory: "Xưởng",
+  system: "Hệ thống",
 };
 
 const NAV: NavItem[] = [
-  { href: "/dashboard", label: "Trang chủ", icon: Home, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
-  { href: "/tasks", label: "Công việc", icon: CheckSquare, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
-  { href: "/kpi", label: "KPI", icon: BarChart3, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true },
-  { href: "/requests", label: "Yêu cầu liên phòng", icon: Repeat2, roles: ["MANAGER", "CEO"] },
-  { href: "/leave-requests", label: "Nghỉ phép", icon: Palmtree, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"] },
-  { href: "/reconciliation", label: "Đối soát dữ liệu", icon: Scale, roles: ["MANAGER", "CEO"] },
-  { href: "/production", label: "Xưởng sản xuất", icon: Factory, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], productionOnly: true },
-  { href: "/analytics", label: "Phân tích & Dự báo", icon: TrendingUp, roles: ["MANAGER", "CEO"] },
-  { href: "/ceo", label: "Bảng điều hành", icon: Target, roles: ["CEO"], mobile: true },
-  { href: "/audit", label: "Nhật ký hệ thống", icon: ScrollText, roles: ["CEO", "ADMIN"] },
-  { href: "/admin", label: "Quản trị", icon: Settings, roles: ["ADMIN"], mobile: true },
+  { href: "/dashboard", label: "Trang chủ", icon: Home, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true, group: "work" },
+  { href: "/tasks", label: "Công việc", icon: CheckSquare, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true, group: "work" },
+  { href: "/kpi", label: "KPI", icon: BarChart3, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], mobile: true, group: "kpi" },
+  { href: "/requests", label: "Yêu cầu liên phòng", icon: Repeat2, roles: ["MANAGER", "CEO"], group: "work" },
+  { href: "/leave-requests", label: "Nghỉ phép", icon: Palmtree, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], group: "work" },
+  { href: "/reconciliation", label: "Đối soát dữ liệu", icon: Scale, roles: ["MANAGER", "CEO"], group: "kpi" },
+  { href: "/production", label: "Xưởng sản xuất", icon: Factory, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], productionOnly: true, group: "factory" },
+  { href: "/analytics", label: "Phân tích & Dự báo", icon: TrendingUp, roles: ["MANAGER", "CEO"], group: "kpi" },
+  { href: "/ceo", label: "Bảng điều hành", icon: Target, roles: ["CEO"], mobile: true, group: "kpi" },
+  { href: "/audit", label: "Nhật ký hệ thống", icon: ScrollText, roles: ["CEO", "ADMIN"], group: "system" },
+  { href: "/admin", label: "Quản trị", icon: Settings, roles: ["ADMIN"], mobile: true, group: "system" },
 ];
 
 export default function Shell({
@@ -73,10 +85,81 @@ export default function Shell({
   const items = NAV.filter(
     (n) => n.roles.includes(user.role) && (!n.productionOnly || inFactory)
   );
-  const mobileItems = items.filter((n) => n.mobile).slice(0, 5);
+  // Thanh dưới điện thoại theo vai trò: người trong xưởng cần "Xưởng" ngay
+  // ở thanh dưới (trước đây phải mở Menu mới thấy); BGĐ cần Bảng điều hành;
+  // quản trị cần Quản trị. Cộng Thông báo và "Thêm" mở toàn bộ menu.
+  const pick = (href: string) => items.find((n) => n.href === href);
+  const thirdItem =
+    (user.productionRole ? pick("/production") : undefined) ??
+    (user.role === "CEO" ? pick("/ceo") : undefined) ??
+    (user.role === "ADMIN" ? pick("/admin") : undefined) ??
+    pick("/kpi");
+  const mobileItems = [pick("/dashboard"), pick("/tasks"), thirdItem].filter(
+    (n): n is NavItem => !!n
+  );
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
+
+  // Chuyển trang thì đóng ngăn menu; Esc cũng đóng
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
+  const groups = (["work", "kpi", "factory", "system"] as const)
+    .map((g) => ({ g, list: items.filter((n) => n.group === g) }))
+    .filter((x) => x.list.length > 0);
+  const roleLine = `${ROLE_LABEL[user.role]}${
+    user.departmentName && user.departmentName !== ROLE_LABEL[user.role]
+      ? ` · ${user.departmentName}`
+      : ""
+  }`;
+
+  const navList = (onNavigate?: () => void) => (
+    <div className="space-y-4">
+      {groups.map(({ g, list }) => (
+        <div key={g}>
+          <div className="mb-1 px-3 text-xs font-medium text-ink-400">
+            {GROUP_LABEL[g]}
+          </div>
+          <div className="space-y-0.5">
+            {list.map((n) => {
+              const active = isActive(n.href);
+              return (
+                <Link
+                  key={n.href}
+                  href={n.href}
+                  onClick={onNavigate}
+                  aria-current={active ? "page" : undefined}
+                  className={`relative flex min-h-10 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
+                    active
+                      ? "bg-brand-50 text-brand-800 before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-brand-600"
+                      : "text-ink-600 hover:bg-ink-50 hover:text-ink-900"
+                  }`}
+                >
+                  <n.icon size={18} strokeWidth={2} className="shrink-0" />
+                  {n.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const unreadBadge =
+    unread > 0 ? (
+      <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-xs leading-none font-semibold text-white">
+        {unread > 99 ? "99+" : unread}
+      </span>
+    ) : null;
 
   async function logout() {
     // Server chưa thu hồi được phiên thì ĐỪNG chuyển sang /login: trang đó sẽ
@@ -124,64 +207,55 @@ export default function Shell({
         </div>
       )}
       {/* ---------------- Sidebar (desktop) ---------------- */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-ink-200 bg-white lg:flex">
-        <div className="flex items-center gap-2.5 border-b border-ink-100 px-5 py-4">
+      {/* Dính theo màn hình: trang dài thì Thông báo / Đăng xuất vẫn trong tầm mắt */}
+      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-ink-200 bg-white lg:flex print:hidden">
+        <Link
+          href="/dashboard"
+          className="flex items-center gap-2.5 border-b border-ink-100 px-5 py-4"
+        >
           <Image src="/logo-mark.png" alt="" width={36} height={36} className="shrink-0" />
           <div>
-            <div className="text-lg font-bold text-brand-700">GANI FOODY</div>
+            <div className="text-[17px] font-bold tracking-tight text-brand-700">
+              GANI FOODY
+            </div>
             <div className="text-xs text-ink-500">Công việc &amp; KPI</div>
           </div>
-        </div>
+        </Link>
 
-        <nav className="flex-1 space-y-1 p-3">
-          {items.map((n) => (
-            <Link
-              key={n.href}
-              href={n.href}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                isActive(n.href)
-                  ? "bg-brand-50 text-brand-700"
-                  : "text-ink-600 hover:bg-ink-50"
-              }`}
-            >
-              <n.icon size={18} strokeWidth={2} className="shrink-0" />
-              {n.label}
-            </Link>
-          ))}
+        <nav aria-label="Điều hướng chính" className="flex-1 overflow-y-auto p-3">
+          {navList()}
         </nav>
 
         <div className="border-t border-ink-100 p-3">
           <Link
             href="/notifications"
-            className="mb-2 flex items-center justify-between rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-ink-50"
+            aria-current={isActive("/notifications") ? "page" : undefined}
+            className={`mb-2 flex min-h-10 items-center justify-between rounded-md px-3 py-2 text-sm font-medium ${
+              isActive("/notifications")
+                ? "bg-brand-50 text-brand-800"
+                : "text-ink-600 hover:bg-ink-50"
+            }`}
           >
             <span className="flex items-center gap-3">
               <Bell size={18} strokeWidth={2} /> Thông báo
             </span>
-            {unread > 0 && (
-              <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                {unread > 99 ? "99+" : unread}
-              </span>
-            )}
+            {unreadBadge}
           </Link>
-          <div className="rounded-lg bg-ink-50 px-3 py-2.5">
+          <div className="rounded-md bg-ink-50 px-3 py-2.5">
             <div className="truncate text-sm font-medium text-ink-800">
               {user.fullName}
             </div>
-            <div className="truncate text-xs text-ink-500">
-              {ROLE_LABEL[user.role]}
-              {user.departmentName ? ` · ${user.departmentName}` : ""}
-            </div>
+            <div className="truncate text-xs text-ink-500">{roleLine}</div>
             <div className="mt-2 flex items-center gap-3">
               <Link
                 href="/doi-mat-khau"
-                className="text-xs font-medium text-ink-600 hover:underline"
+                className="text-xs font-medium text-ink-600 hover:text-ink-900 hover:underline"
               >
                 Đổi mật khẩu
               </Link>
               <button
                 onClick={logout}
-                className="text-xs font-medium text-red-600 hover:underline"
+                className="text-xs font-medium text-ink-600 hover:text-red-700 hover:underline"
               >
                 Đăng xuất
               </button>
@@ -192,84 +266,163 @@ export default function Shell({
 
       {/* ---------------- Nội dung ---------------- */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Thanh trên (mobile) */}
-        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-ink-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
-          <div className="flex items-center gap-2">
+        {/* Thanh trên (điện thoại) */}
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-ink-200 bg-white/95 px-4 backdrop-blur lg:hidden print:hidden">
+          <Link href="/dashboard" className="flex min-w-0 items-center gap-2">
             <Image src="/logo-mark.png" alt="" width={28} height={28} className="shrink-0" />
-            <div>
-              <div className="font-bold text-brand-700">GANI FOODY</div>
-              <div className="text-[11px] text-ink-500">
-                {ROLE_LABEL[user.role]}
-                {user.departmentName ? ` · ${user.departmentName}` : ""}
-              </div>
-            </div>
-          </div>
-          <button
-            onClick={() => setMenuOpen((v) => !v)}
-            className="btn-ghost btn-sm inline-flex items-center gap-1.5"
-          >
-            <MenuIcon size={16} strokeWidth={2} /> Menu
-          </button>
-        </header>
-
-        {menuOpen && (
-          <div className="border-b border-ink-200 bg-white p-3 lg:hidden">
-            {items.map((n) => (
-              <Link
-                key={n.href}
-                href={n.href}
-                onClick={() => setMenuOpen(false)}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${
-                  isActive(n.href)
-                    ? "bg-brand-50 text-brand-700"
-                    : "text-ink-600"
-                }`}
-              >
-                <n.icon size={18} strokeWidth={2} className="shrink-0" />
-                {n.label}
-              </Link>
-            ))}
+            <span className="truncate font-bold tracking-tight text-brand-700">
+              GANI FOODY
+            </span>
+          </Link>
+          <div className="flex items-center gap-1">
             <Link
               href="/notifications"
-              onClick={() => setMenuOpen(false)}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-ink-600"
+              aria-label={`Thông báo${unread > 0 ? ` (${unread} chưa đọc)` : ""}`}
+              className="relative flex h-11 w-11 items-center justify-center rounded-md text-ink-600 hover:bg-ink-50"
             >
-              <Bell size={18} strokeWidth={2} /> Thông báo {unread > 0 && `(${unread})`}
-            </Link>
-            <Link
-              href="/doi-mat-khau"
-              onClick={() => setMenuOpen(false)}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-ink-600"
-            >
-              <KeyRound size={18} strokeWidth={2} /> Đổi mật khẩu
+              <Bell size={20} strokeWidth={2} />
+              {unread > 0 && (
+                <span className="absolute top-1.5 right-1.5 min-w-4 rounded-full bg-red-600 px-1 text-center text-[11px] leading-4 font-semibold text-white">
+                  {unread > 9 ? "9+" : unread}
+                </span>
+              )}
             </Link>
             <button
-              onClick={logout}
-              className="mt-1 w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-red-600"
+              onClick={() => setMenuOpen(true)}
+              aria-label="Mở menu"
+              aria-expanded={menuOpen}
+              aria-controls="mobile-menu"
+              className="flex h-11 w-11 items-center justify-center rounded-md text-ink-700 hover:bg-ink-50"
             >
-              Đăng xuất
+              <MenuIcon size={22} strokeWidth={2} />
             </button>
+          </div>
+        </header>
+
+        {/* Ngăn menu nổi (điện thoại): phủ lên trang, không đẩy nội dung —
+            trước đây menu mở ở đầu trang, đang cuộn giữa trang bấm thì
+            tưởng không có gì xảy ra. */}
+        {menuOpen && (
+          <div className="fixed inset-0 z-50 lg:hidden" id="mobile-menu">
+            <div
+              className="absolute inset-0 bg-black/40"
+              onClick={() => setMenuOpen(false)}
+              aria-hidden
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Menu"
+              className="absolute inset-y-0 right-0 flex w-[min(320px,85vw)] flex-col bg-white shadow-xl"
+            >
+              <div className="flex h-14 items-center justify-between border-b border-ink-100 px-4">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-ink-900">
+                    {user.fullName}
+                  </div>
+                  <div className="truncate text-xs text-ink-500">{roleLine}</div>
+                </div>
+                <button
+                  onClick={() => setMenuOpen(false)}
+                  aria-label="Đóng menu"
+                  className="flex h-11 w-11 items-center justify-center rounded-md text-ink-600 hover:bg-ink-50"
+                >
+                  <X size={20} strokeWidth={2} />
+                </button>
+              </div>
+              <nav aria-label="Menu" className="flex-1 overflow-y-auto p-3">
+                {navList(() => setMenuOpen(false))}
+                <div className="mt-4 space-y-0.5 border-t border-ink-100 pt-3">
+                  <Link
+                    href="/notifications"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex min-h-11 items-center justify-between rounded-md px-3 text-sm font-medium text-ink-600"
+                  >
+                    <span className="flex items-center gap-3">
+                      <Bell size={18} strokeWidth={2} /> Thông báo
+                    </span>
+                    {unreadBadge}
+                  </Link>
+                  <Link
+                    href="/doi-mat-khau"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium text-ink-600"
+                  >
+                    <KeyRound size={18} strokeWidth={2} /> Đổi mật khẩu
+                  </Link>
+                  <button
+                    onClick={logout}
+                    className="flex min-h-11 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium text-ink-600"
+                  >
+                    <LogOut size={18} strokeWidth={2} /> Đăng xuất
+                  </button>
+                </div>
+              </nav>
+            </div>
           </div>
         )}
 
-        <main className="flex-1 px-4 py-5 pb-24 sm:px-6 lg:px-8 lg:pb-8">
+        <main className="mx-auto w-full max-w-[1360px] flex-1 px-4 py-5 pb-[calc(88px+env(safe-area-inset-bottom))] sm:px-6 lg:px-8 lg:pb-8">
           {children}
         </main>
 
-        {/* Thanh dưới (mobile) — thao tác 3 chạm cho nhân viên ngoài xưởng */}
-        <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-ink-200 bg-white lg:hidden">
-          {mobileItems.map((n) => (
-            <Link
-              key={n.href}
-              href={n.href}
-              className={`flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium ${
-                isActive(n.href) ? "text-brand-700" : "text-ink-500"
+        {/* Thanh dưới (điện thoại) — theo vai trò, chừa vùng an toàn iPhone */}
+        <nav
+          aria-label="Điều hướng nhanh"
+          className="fixed inset-x-0 bottom-0 z-30 flex border-t border-ink-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden print:hidden"
+        >
+          {mobileItems.map((n) => {
+            const active = isActive(n.href);
+            return (
+              <Link
+                key={n.href}
+                href={n.href}
+                aria-current={active ? "page" : undefined}
+                className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-xs font-medium ${
+                  active ? "text-brand-700" : "text-ink-500"
+                }`}
+              >
+                <span
+                  className={`flex h-7 w-12 items-center justify-center rounded-full ${
+                    active ? "bg-brand-50" : ""
+                  }`}
+                >
+                  <n.icon size={20} strokeWidth={active ? 2.4 : 2} />
+                </span>
+                {n.href === "/production" ? "Xưởng" : n.href === "/ceo" ? "Điều hành" : n.label}
+              </Link>
+            );
+          })}
+          <Link
+            href="/notifications"
+            aria-current={isActive("/notifications") ? "page" : undefined}
+            className={`relative flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-xs font-medium ${
+              isActive("/notifications") ? "text-brand-700" : "text-ink-500"
+            }`}
+          >
+            <span
+              className={`relative flex h-7 w-12 items-center justify-center rounded-full ${
+                isActive("/notifications") ? "bg-brand-50" : ""
               }`}
             >
-              <n.icon size={20} strokeWidth={2} />
-              {n.label}
-            </Link>
-          ))}
+              <Bell size={20} strokeWidth={2} />
+              {unread > 0 && (
+                <span className="absolute -top-0.5 right-1.5 h-2 w-2 rounded-full bg-red-600" />
+              )}
+            </span>
+            Thông báo
+          </Link>
+          <button
+            onClick={() => setMenuOpen(true)}
+            aria-expanded={menuOpen}
+            aria-controls="mobile-menu"
+            className="flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-xs font-medium text-ink-500"
+          >
+            <span className="flex h-7 w-12 items-center justify-center">
+              <MoreHorizontal size={20} strokeWidth={2} />
+            </span>
+            Thêm
+          </button>
         </nav>
       </div>
     </div>

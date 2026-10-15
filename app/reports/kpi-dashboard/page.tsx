@@ -20,6 +20,7 @@ import {
   SHIFT_TYPE_LABEL,
 } from "@/lib/production/constants";
 import { formatVnDate, formatVnDateTime } from "@/lib/vn-time";
+import { fmtScore } from "@/components/ui";
 import PrintToolbar from "./print-toolbar";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,11 @@ export default async function KpiDashboardReportPage({
   const summary = includeMoney ? rawSummary : redactDashboardMoney(rawSummary);
   const trends = includeMoney ? rawTrends : redactDashboardMoney(rawTrends);
 
+  // Chưa có ca khoá thì tiền thưởng "0 ₫" là số giả — in "—"
+  const noShifts = summary.summary.totalShifts === 0;
+  // Chưa có lượt chấm nào thì trung bình/trung vị/độ lệch "0,00" cũng là số giả
+  const noSample = distribution.statistics.count === 0;
+
   const company = await prisma.systemSetting.findUnique({
     where: { key: "COMPANY_NAME" },
   });
@@ -66,11 +72,11 @@ export default async function KpiDashboardReportPage({
       <PrintToolbar period={period} days={numDays} />
 
       <header className="mb-8 border-b-4 border-brand-600 pb-5">
-        <div className="text-xs font-semibold tracking-widest text-brand-700 uppercase">
+        <div className="text-sm font-semibold text-brand-700">
           {company?.value ?? "GANI FOODY"} · Báo cáo điều hành
         </div>
         <h1 className="mt-2 text-3xl font-bold">
-          Báo cáo Dashboard KPI Sản xuất
+          Báo cáo KPI sản xuất
         </h1>
         <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-ink-600">
           <span>
@@ -88,29 +94,29 @@ export default async function KpiDashboardReportPage({
         </h2>
 
         {summary.summary.totalShifts === 0 && (
-          <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             Chưa có ca nào được khoá trong khoảng này. Điểm KPI ca chỉ sinh ra
             khi Ban Giám đốc khoá số — xem số ca còn chờ ở bảng &quot;Theo trạng
             thái&quot; bên dưới.
           </p>
         )}
 
-        <div className="mb-5 grid grid-cols-3 gap-3">
-          <Stat label="Số ca đã khoá" value={String(summary.summary.totalShifts)} />
-          <Stat label="Lượt chấm (người × ca)" value={String(summary.summary.resultCount)} />
-          <Stat label="Điểm cuối TB" value={num2(summary.summary.avgScore)} />
-          <Stat label="Điểm Tầng 2 TB" value={num2(summary.summary.avgTier2Score)} />
-          <Stat label="Tổng thưởng" value={vnd(summary.summary.totalBonus)} />
-          <Stat label="Thưởng TB/ca" value={vnd(summary.summary.avgBonus)} />
+        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 print:grid-cols-3">
+          <Stat label="Số ca đã khoá" value={fmt(summary.summary.totalShifts)} />
+          <Stat label="Lượt chấm (người × ca)" value={fmt(summary.summary.resultCount)} />
+          <Stat label="Điểm cuối trung bình" value={num2(summary.summary.avgScore)} />
+          <Stat label="Điểm tầng 2 trung bình" value={num2(summary.summary.avgTier2Score)} />
+          <Stat label="Tổng thưởng" value={noShifts ? "—" : vnd(summary.summary.totalBonus)} />
+          <Stat label="Thưởng trung bình mỗi ca" value={noShifts ? "—" : vnd(summary.summary.avgBonus)} />
           <Stat
-            label="% không bị khoá thưởng"
+            label="Tỷ lệ không bị khoá thưởng"
             value={
-              summary.summary.percentBonusUnlocked === null
+              noShifts || summary.summary.percentBonusUnlocked === null
                 ? "—"
-                : `${summary.summary.percentBonusUnlocked}%`
+                : `${fmt(summary.summary.percentBonusUnlocked)}%`
             }
           />
-          <Stat label="Lượt bị khoá thưởng" value={String(summary.summary.bonusLockedCount)} />
+          <Stat label="Lượt bị khoá thưởng" value={fmt(summary.summary.bonusLockedCount)} />
         </div>
 
         <div className="grid grid-cols-2 gap-6">
@@ -123,8 +129,8 @@ export default async function KpiDashboardReportPage({
                 {SHIFT_STATUSES.map((st) => (
                   <tr key={st}>
                     <td className="py-1 text-ink-600">{SHIFT_STATUS_LABEL[st]}</td>
-                    <td className="py-1 text-right font-semibold">
-                      {summary.statusCounts[st]}
+                    <td className="py-1 text-right font-semibold tabular-nums">
+                      {fmt(summary.statusCounts[st] ?? 0)}
                     </td>
                   </tr>
                 ))}
@@ -140,8 +146,8 @@ export default async function KpiDashboardReportPage({
                 {SHIFT_TYPES.map((t) => (
                   <tr key={t}>
                     <td className="py-1 text-ink-600">{SHIFT_TYPE_LABEL[t]}</td>
-                    <td className="py-1 text-right font-semibold">
-                      {summary.shiftTypes[t] ?? 0}
+                    <td className="py-1 text-right font-semibold tabular-nums">
+                      {fmt(summary.shiftTypes[t] ?? 0)}
                     </td>
                   </tr>
                 ))}
@@ -153,9 +159,9 @@ export default async function KpiDashboardReportPage({
         {summary.topScores.length > 0 && (
           <div className="mt-5">
             <h3 className="mb-2 text-sm font-semibold text-ink-700">
-              Top 5 ca điểm TB cao nhất
+              5 ca có điểm trung bình cao nhất
             </h3>
-            <table className="w-full border-collapse text-xs">
+            <table className="w-full border-collapse text-xs tabular-nums">
               <thead>
                 <tr className="bg-ink-100">
                   <th className="border border-ink-200 px-2 py-1 text-left">Ngày</th>
@@ -178,21 +184,21 @@ export default async function KpiDashboardReportPage({
                     </td>
                     <td className="border border-ink-200 px-2 py-1">
                       {s.skuName}{" "}
-                      <span className="text-ink-500">({s.skuCode})</span>
+                      <span className="font-mono text-ink-500">({s.skuCode})</span>
                     </td>
                     <td className="border border-ink-200 px-2 py-1 text-right font-semibold">
-                      {s.avgScore.toFixed(2)}
+                      {num2(s.avgScore)}
                     </td>
                     <td className="border border-ink-200 px-2 py-1 text-right">
                       {num2(s.tier2Score)}
                     </td>
                     <td className="border border-ink-200 px-2 py-1 text-right">
-                      {s.peopleCount}
+                      {fmt(s.peopleCount)}
                     </td>
                     <td className="border border-ink-200 px-2 py-1 text-right">
                       {vnd(s.shiftBonus)}
                       {s.bonusLocked && (
-                        <span className="ml-1 text-amber-700">(khoá)</span>
+                        <span className="ml-1 text-amber-800">(khoá)</span>
                       )}
                     </td>
                   </tr>
@@ -211,28 +217,39 @@ export default async function KpiDashboardReportPage({
         <p className="mb-3 text-xs text-ink-500">
           Mỗi khoảng là một bậc hệ số thưởng. Chỉ tính ca đã khoá số.
         </p>
-        <div className="mb-4 grid grid-cols-4 gap-3 text-sm">
-          <Stat label="Lượt chấm" value={String(distribution.statistics.count)} />
-          <Stat label="Trung bình" value={distribution.statistics.average.toFixed(2)} />
-          <Stat label="Trung vị" value={distribution.statistics.median.toFixed(2)} />
-          <Stat label="Độ lệch chuẩn" value={distribution.statistics.stdDev.toFixed(2)} />
+        <div className="mb-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 print:grid-cols-4">
+          <Stat label="Lượt chấm" value={fmt(distribution.statistics.count)} />
+          <Stat
+            label="Trung bình"
+            value={noSample ? "—" : num2(distribution.statistics.average)}
+          />
+          <Stat
+            label="Trung vị"
+            value={noSample ? "—" : num2(distribution.statistics.median)}
+          />
+          <Stat
+            label="Độ lệch chuẩn"
+            value={noSample ? "—" : num2(distribution.statistics.stdDev)}
+          />
         </div>
-        <table className="w-full text-sm">
+        <table className="w-full text-sm tabular-nums">
           <tbody>
             {distribution.chartData.map((b) => (
               <tr key={b.range}>
                 <td className="w-40 py-1 text-ink-600">
                   {b.range}{" "}
-                  <span className="text-xs text-ink-400">(hệ số {b.multiplier}×)</span>
+                  <span className="text-xs text-ink-500">
+                    (hệ số {b.multiplier.toLocaleString("vi-VN")}×)
+                  </span>
                 </td>
                 <td className="py-1">
                   <div className="flex items-center gap-2">
                     <div
-                      className="h-4 rounded-sm bg-brand-500"
+                      className={`h-4 rounded-sm ${bucketBar(b.multiplier)}`}
                       style={{ width: `${b.percentage}%`, minWidth: b.count ? 8 : 0 }}
                     />
                     <span className="text-xs font-medium text-ink-700">
-                      {b.count} lượt ({b.percentage}%)
+                      {fmt(b.count)} lượt ({fmt(b.percentage)}%)
                     </span>
                   </div>
                 </td>
@@ -247,23 +264,27 @@ export default async function KpiDashboardReportPage({
         <h2 className="mb-3 text-lg font-bold">
           3. Xu hướng ({numDays} ngày gần nhất)
         </h2>
-        <div className="mb-4 grid grid-cols-4 gap-3 text-sm">
-          <Stat label="Số ngày có dữ liệu" value={String(trends.statistics.daysWithData)} />
-          <Stat label="Số ca đã khoá" value={String(trends.statistics.totalShifts)} />
-          <Stat label="Điểm cuối TB" value={num2(trends.statistics.avgScore)} />
+        <div className="mb-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 print:grid-cols-4">
+          <Stat label="Số ngày có dữ liệu" value={fmt(trends.statistics.daysWithData)} />
+          <Stat label="Số ca đã khoá" value={fmt(trends.statistics.totalShifts)} />
+          <Stat label="Điểm cuối trung bình" value={num2(trends.statistics.avgScore)} />
           <Stat
             label="Tổng thưởng"
-            value={vnd(trends.statistics.totalBonusDistributed)}
+            value={
+              trends.statistics.totalShifts === 0
+                ? "—"
+                : vnd(trends.statistics.totalBonusDistributed)
+            }
           />
         </div>
-        <table className="w-full border-collapse text-xs">
+        <table className="w-full border-collapse text-xs tabular-nums">
           <thead>
             <tr className="bg-ink-100">
               <th className="border border-ink-200 px-2 py-1 text-left">Ngày</th>
               <th className="border border-ink-200 px-2 py-1 text-right">Số ca</th>
               <th className="border border-ink-200 px-2 py-1 text-right">Lượt chấm</th>
               <th className="border border-ink-200 px-2 py-1 text-right">Điểm TB</th>
-              <th className="border border-ink-200 px-2 py-1 text-right">MA 3 ngày</th>
+              <th className="border border-ink-200 px-2 py-1 text-right">Trung bình 3 ngày</th>
               <th className="border border-ink-200 px-2 py-1 text-right">% đạt SL</th>
               <th className="border border-ink-200 px-2 py-1 text-right">% lỗi</th>
               <th className="border border-ink-200 px-2 py-1 text-right">Thưởng</th>
@@ -274,10 +295,10 @@ export default async function KpiDashboardReportPage({
               <tr key={d.date}>
                 <td className="border border-ink-200 px-2 py-1">{d.displayDate}</td>
                 <td className="border border-ink-200 px-2 py-1 text-right">
-                  {d.shiftCount}
+                  {fmt(d.shiftCount)}
                 </td>
                 <td className="border border-ink-200 px-2 py-1 text-right">
-                  {d.peopleCount}
+                  {fmt(d.peopleCount)}
                 </td>
                 <td className="border border-ink-200 px-2 py-1 text-right">
                   {num2(d.avgScore)}
@@ -307,7 +328,7 @@ export default async function KpiDashboardReportPage({
 
       <footer className="mt-8 border-t border-ink-200 pt-4 text-xs text-ink-500">
         <p>
-          Báo cáo sinh tự động từ hệ thống Quản lý Công việc &amp; KPI ·{" "}
+          Báo cáo sinh tự động từ hệ thống quản lý công việc &amp; KPI ·{" "}
           {company?.value ?? "GANI FOODY"} · {formatVnDateTime(new Date())}
         </p>
       </footer>
@@ -317,11 +338,9 @@ export default async function KpiDashboardReportPage({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded border border-ink-200 bg-ink-50 p-3">
-      <div className="text-[10px] font-semibold tracking-wide text-ink-500 uppercase">
-        {label}
-      </div>
-      <div className="mt-1 text-xl font-bold text-ink-900">{value}</div>
+    <div className="rounded-md border border-ink-200 bg-white p-3">
+      <div className="text-xs font-medium text-ink-500">{label}</div>
+      <div className="mt-1 text-xl font-bold text-ink-900 tabular-nums">{value}</div>
     </div>
   );
 }
@@ -337,10 +356,18 @@ function vnd(n: number | null | undefined) {
   return s === "—" ? s : `${s} ₫`;
 }
 
-/** Số 2 chữ số thập phân; null (chưa có dữ liệu) → "—". */
+/** Số 2 chữ số thập phân kiểu Việt Nam ("98,50"); null (chưa có dữ liệu) → "—". */
 function num2(n: number | null | undefined) {
   if (n === null || n === undefined || !Number.isFinite(n)) return "—";
-  return n.toFixed(2);
+  return fmtScore(n);
+}
+
+/** Màu cột theo hệ số thưởng: 0× đỏ · dưới 1× vàng · 1× lá nhạt · trên 1× lá đậm */
+function bucketBar(multiplier: number) {
+  if (multiplier <= 0) return "bg-red-600";
+  if (multiplier < 1) return "bg-amber-500";
+  if (multiplier === 1) return "bg-leaf-400";
+  return "bg-leaf-600";
 }
 
 function pct(n: number | null | undefined) {

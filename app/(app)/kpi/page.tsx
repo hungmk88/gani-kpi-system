@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, ChevronRight } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { can } from "@/lib/rbac";
@@ -81,7 +81,7 @@ export default async function KpiHomePage() {
     <>
       <PageHeader
         title="KPI"
-        subtitle="Thang điểm 100 · Cho vượt chỉ tiêu, chặn trần ở 150% · Luồng duyệt khoá tự động ngày 2 – 4 – 5"
+        subtitle="Thang điểm 100 · Cho vượt chỉ tiêu, trần 150% (Kinh doanh 120%) · Luồng duyệt khoá tự động ngày 2 – 4 – 5"
         actions={
           can(user, "kpi.period.manage") ? <OpenPeriodButton /> : undefined
         }
@@ -194,7 +194,7 @@ export default async function KpiHomePage() {
                           <div className="font-semibold text-ink-900">
                             {actual === null ? "—" : fmtScore(r.weightedScore)}
                           </div>
-                          <div className="text-[11px] text-ink-500">điểm</div>
+                          <div className="text-xs text-ink-500">điểm</div>
                         </div>
                       </div>
                       <div className="mt-2 flex items-baseline justify-between gap-2 text-sm">
@@ -226,7 +226,7 @@ export default async function KpiHomePage() {
                     </li>
                   );
                 })}
-                <li className="flex items-center justify-between rounded-lg bg-ink-100/70 px-3.5 py-2.5 text-sm font-semibold">
+                <li className="flex items-center justify-between rounded-md bg-ink-100/70 px-3.5 py-2.5 text-sm font-semibold">
                   <span>Tổng · trọng số {s.totalWeight}%</span>
                   <ScoreBadge score={s.totalScore} state={state} />
                 </li>
@@ -258,7 +258,7 @@ export default async function KpiHomePage() {
                             · {r.kpiDefinition?.unit}
                           </div>
                         </td>
-                        <td className="text-right text-ink-600">
+                        <td className="text-right text-ink-600 tabular-nums">
                           {r.weightPercent}%
                         </td>
                         <td className="text-right text-ink-600">
@@ -311,10 +311,14 @@ export default async function KpiHomePage() {
           )}
 
           {/* ------------- Danh sách kỳ ------------- */}
+          {/* Kỳ đang chạy / còn mở: thẻ đủ ba mốc hạn. Kỳ đã chốt: một dòng gọn
+              (tháng + trạng thái) — lặp lại ba dòng ngày đã qua chỉ là nhiễu. */}
           <section>
             <h2 className="section-title mb-3">Các kỳ đánh giá</h2>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {periods.map((p) => (
+              {periods
+                .filter((p) => p.id === current.id || p.status !== "FINALIZED")
+                .map((p) => (
                 <Link
                   key={p.id}
                   href={`/kpi/${p.id}`}
@@ -339,6 +343,28 @@ export default async function KpiHomePage() {
                 </Link>
               ))}
             </div>
+            {periods.some(
+              (p) => p.id !== current.id && p.status === "FINALIZED"
+            ) && (
+              <ul className="card mt-3 divide-y divide-ink-100">
+                {periods
+                  .filter((p) => p.id !== current.id && p.status === "FINALIZED")
+                  .map((p) => (
+                    <li key={p.id}>
+                      <Link
+                        href={`/kpi/${p.id}`}
+                        className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm transition hover:bg-ink-50"
+                      >
+                        <span className="font-medium text-ink-900">{p.name}</span>
+                        <span className="flex items-center gap-2">
+                          <PeriodStatusBadge status={p.status} />
+                          <ChevronRight size={16} className="text-ink-400" aria-hidden />
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+              </ul>
+            )}
           </section>
         </>
       )}

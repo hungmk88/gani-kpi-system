@@ -24,6 +24,7 @@ import {
   Badge,
   PageHeader,
   ProgressBar,
+  fmtScore,
   formatDate,
   formatDateTime,
 } from "@/components/ui";
@@ -107,7 +108,7 @@ export default async function ShiftDetailPage({
       <div className="mb-4">
         <Link
           href="/production"
-          className="text-sm text-ink-500 hover:text-brand-600"
+          className="text-sm text-ink-500 hover:text-brand-700"
         >
           ← Xưởng sản xuất
         </Link>
@@ -122,8 +123,8 @@ export default async function ShiftDetailPage({
               log.status === "LOCKED"
                 ? "green"
                 : log.status === "QC_APPROVED"
-                  ? "violet"
-                  : "amber"
+                  ? "brand"
+                  : "slate"
             }
           >
             {SHIFT_STATUS_LABEL[log.status]}
@@ -131,8 +132,9 @@ export default async function ShiftDetailPage({
         }
       />
 
-      {/* ---------------- Đường đi 3 bước ---------------- */}
-      <div className="card mb-6 p-4">
+      {/* ---------------- Đường đi 3 bước ----------------
+          Ba thẻ đứng riêng (không lồng trong một thẻ lớn) */}
+      <div className="mb-6">
         <div className="grid gap-3 sm:grid-cols-3">
           <Step
             n="1"
@@ -171,45 +173,66 @@ export default async function ShiftDetailPage({
           <div className="card p-5">
             <h2 className="section-title mb-3">Số liệu ca</h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Metric label="Sản lượng thô" value={`${log.rawOutputKg} kg`} />
+              {/* Ca còn ở bước 1: các ô KCS chưa điền là chữ xám trung tính,
+                  không tô xanh như thể đã đạt. */}
+              <Metric label="Sản lượng thô" value={kg(log.rawOutputKg)} />
               <Metric
                 label="Thành phẩm đạt"
-                value={log.status === "DRAFT" ? "chờ KCS" : `${log.qcPassedKg} kg`}
-                tone="green"
+                value={log.status === "DRAFT" ? "chờ KCS" : kg(log.qcPassedKg)}
+                tone={log.status === "DRAFT" ? "muted" : undefined}
               />
               <Metric
                 label="Hàng làm lại"
-                value={log.status === "DRAFT" ? "—" : `${log.reworkKg} kg`}
-                tone={log.reworkKg > 0 ? "amber" : undefined}
+                value={log.status === "DRAFT" ? "—" : kg(log.reworkKg)}
+                tone={
+                  log.status === "DRAFT"
+                    ? "muted"
+                    : log.reworkKg > 0
+                      ? "amber"
+                      : undefined
+                }
               />
               <Metric
                 label="Phế phẩm"
-                value={log.status === "DRAFT" ? "—" : `${log.scrapKg} kg`}
-                tone={log.scrapKg > 0 ? "red" : undefined}
+                value={log.status === "DRAFT" ? "—" : kg(log.scrapKg)}
+                tone={
+                  log.status === "DRAFT"
+                    ? "muted"
+                    : log.scrapKg > 0
+                      ? "red"
+                      : undefined
+                }
               />
               <Metric
                 label="Nguyên liệu kho cấp"
-                value={`${log.rawMaterialInputKg} kg`}
+                value={kg(log.rawMaterialInputKg)}
               />
               <Metric
                 label="Định mức nguyên liệu"
                 value={
                   log.stdMaterialNormKg > 0
-                    ? `${log.stdMaterialNormKg} kg`
+                    ? kg(log.stdMaterialNormKg)
                     : "chờ BGĐ chốt chỉ tiêu"
                 }
+                tone={log.stdMaterialNormKg > 0 ? undefined : "muted"}
               />
-              <Metric label="Tổng giờ công" value={`${log.totalLaborHours} giờ`} />
+              <Metric label="Tổng giờ công" value={`${num(log.totalLaborHours)} giờ`} />
               <Metric
                 label="Vi phạm HACCP"
-                value={log.status === "DRAFT" ? "—" : `${log.haccpViolationCount}`}
-                tone={log.haccpViolationCount > 0 ? "red" : "green"}
+                value={log.status === "DRAFT" ? "—" : num(log.haccpViolationCount)}
+                tone={
+                  log.status === "DRAFT"
+                    ? "muted"
+                    : log.haccpViolationCount > 0
+                      ? "red"
+                      : undefined
+                }
               />
             </div>
 
             {log.status === "LOCKED" && (
               <div className="mt-4 border-t border-ink-100 pt-4">
-                <h3 className="mb-2 text-xs font-semibold tracking-wide text-ink-500 uppercase">
+                <h3 className="mb-2 text-sm font-semibold text-ink-700">
                   Tỷ lệ hệ thống tính ra
                 </h3>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -233,25 +256,25 @@ export default async function ShiftDetailPage({
                     value={
                       metrics.kgPerLaborHour === null
                         ? "—"
-                        : `${metrics.kgPerLaborHour} kg/giờ công`
+                        : `${num(metrics.kgPerLaborHour)} kg/giờ công`
                     }
                   />
                 </div>
-                <p className="mt-2 text-xs text-ink-500">
-                  Cân đối khối lượng lệch {metrics.massBalanceDiffKg} kg ·
+                <p className="mt-2 text-xs text-ink-500 tabular-nums">
+                  Cân đối khối lượng lệch {kg(metrics.massBalanceDiffKg)} ·
                   Nguyên liệu {metrics.materialOverrunKg > 0 ? "vượt" : "dưới"}{" "}
-                  định mức {Math.abs(metrics.materialOverrunKg)} kg
+                  định mức {kg(Math.abs(metrics.materialOverrunKg))}
                 </p>
               </div>
             )}
 
             {log.draftNote && (
-              <div className="mt-4 rounded-lg border border-ink-200 bg-ink-50/60 px-3 py-2 text-sm text-ink-600">
+              <div className="mt-4 rounded-md bg-ink-50 px-3 py-2 text-sm text-ink-600">
                 <b>Ghi chú của ca:</b> {log.draftNote}
               </div>
             )}
             {log.qcNote && (
-              <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50/60 px-3 py-2 text-sm text-violet-800">
+              <div className="mt-2 rounded-md bg-ink-50 px-3 py-2 text-sm text-ink-700">
                 <b>KCS ghi:</b> {log.qcNote}
               </div>
             )}
@@ -259,11 +282,11 @@ export default async function ShiftDetailPage({
 
           {/* ---------------- Tổn thất quy ra tiền ---------------- */}
           {showMoney && log.status === "LOCKED" && (
-            <div className="card border-amber-200 bg-amber-50/40 p-5">
+            <div className="card p-5">
               <h2 className="section-title mb-1">
                 Tổn thất quy ra tiền
-                <span className="ml-2 rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold text-amber-900">
-                  CHỈ BAN GIÁM ĐỐC XEM
+                <span className="ml-2 rounded bg-ink-100 px-1.5 py-0.5 align-middle text-xs font-medium text-ink-700">
+                  Chỉ Ban Giám đốc xem
                 </span>
               </h2>
               <p className="mb-3 text-xs text-ink-500">
@@ -273,7 +296,7 @@ export default async function ShiftDetailPage({
                 <Metric
                   label="Tổn thất chất lượng"
                   value={money(log.qualityLossVnd)}
-                  tone={log.qualityLossVnd > 0 ? "red" : "green"}
+                  tone={log.qualityLossVnd > 0 ? "red" : undefined}
                 />
                 <Metric
                   label="Đơn giá quy đổi"
@@ -292,8 +315,8 @@ export default async function ShiftDetailPage({
                   <b>Ban Giám đốc đã sửa khác chuẩn:</b>
                   {log.targetOverrideReason && (
                     <div className="mt-1">
-                      Chỉ tiêu (chuẩn SKU {log.sku.targetOutputKg} kg →{" "}
-                      {log.targetOutputKg} kg): {log.targetOverrideReason}
+                      Chỉ tiêu (chuẩn SKU {kg(log.sku.targetOutputKg)} →{" "}
+                      {kg(log.targetOutputKg)}): {log.targetOverrideReason}
                     </div>
                   )}
                   {log.materialOverrideReason && (
@@ -335,17 +358,17 @@ export default async function ShiftDetailPage({
                     </div>
                     <p className="text-sm text-ink-700">{a.auditNote}</p>
                     {a.explanationText && (
-                      <div className="mt-2 rounded border border-ink-200 bg-white px-3 py-2 text-sm">
-                        <div className="text-[11px] font-semibold text-ink-500">
-                          GIẢI TRÌNH — {a.explainedBy?.fullName}
+                      <div className="mt-2 rounded-md bg-white px-3 py-2 text-sm">
+                        <div className="text-xs font-semibold text-ink-500">
+                          Giải trình — {a.explainedBy?.fullName}
                         </div>
                         <div className="text-ink-700">{a.explanationText}</div>
                       </div>
                     )}
                     {a.ceoReviewNote && (
-                      <div className="mt-2 rounded border border-brand-200 bg-brand-50 px-3 py-2 text-sm">
-                        <div className="text-[11px] font-semibold text-brand-700">
-                          Ý KIẾN BAN GIÁM ĐỐC — {a.reviewedBy?.fullName}
+                      <div className="mt-2 rounded-md bg-white px-3 py-2 text-sm">
+                        <div className="text-xs font-semibold text-brand-700">
+                          Ý kiến Ban Giám đốc — {a.reviewedBy?.fullName}
                         </div>
                         <div className="text-ink-700">{a.ceoReviewNote}</div>
                       </div>
@@ -355,7 +378,7 @@ export default async function ShiftDetailPage({
               </div>
               <Link
                 href="/production/audits"
-                className="mt-2 inline-block text-xs text-brand-600 hover:underline"
+                className="mt-2 inline-block text-sm text-brand-700 hover:underline"
               >
                 Mở cổng xử lý cảnh báo →
               </Link>
@@ -388,10 +411,10 @@ export default async function ShiftDetailPage({
                             </Badge>
                           )}
                           <Badge tone="slate">
-                            Cá nhân {r.tier1Score}
+                            Cá nhân {fmtScore(r.tier1Score)}
                           </Badge>
                           <Badge tone="slate">
-                            Xưởng {r.tier2Score}
+                            Xưởng {fmtScore(r.tier2Score)}
                           </Badge>
                           <Badge
                             tone={
@@ -402,14 +425,14 @@ export default async function ShiftDetailPage({
                                   : "red"
                             }
                           >
-                            {r.finalWeightedScore} điểm
+                            {fmtScore(r.finalWeightedScore)} điểm
                           </Badge>
                         </span>
                       </summary>
 
                       {bd && (
                         <div className="mt-3 space-y-3 border-t border-ink-100 pt-3">
-                          <div className="font-mono text-xs text-ink-500">
+                          <div className="text-xs text-ink-500 tabular-nums">
                             {bd.formula}
                           </div>
                           <Breakdown
@@ -477,18 +500,15 @@ export default async function ShiftDetailPage({
             <h3 className="section-title mb-3">
               Người làm ca ({log.participants.length})
             </h3>
-            <ul className="space-y-2">
+            <ul className="divide-y divide-ink-100">
               {log.participants.map((p) => (
-                <li
-                  key={p.id}
-                  className="rounded-lg border border-ink-200 px-3 py-2 text-sm"
-                >
+                <li key={p.id} className="py-2 text-sm first:pt-0 last:pb-0">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium text-ink-800">
                       {p.user.fullName}
                     </span>
-                    <span className="text-xs text-ink-500">
-                      {p.hoursWorked}/{p.scheduledHours} giờ
+                    <span className="text-xs text-ink-500 tabular-nums">
+                      {num(p.hoursWorked)}/{num(p.scheduledHours)} giờ
                     </span>
                   </div>
                   <div className="mt-0.5 text-xs text-ink-500">
@@ -498,9 +518,9 @@ export default async function ShiftDetailPage({
                       : ""}
                   </div>
                   {(p.personalDefectKg > 0 || p.violationCount > 0) && (
-                    <div className="mt-1 text-xs text-amber-700">
+                    <div className="mt-1 text-xs text-amber-800">
                       {p.personalDefectKg > 0 &&
-                        `Lỗi công đoạn ${p.personalDefectKg} kg`}
+                        `Lỗi công đoạn ${kg(p.personalDefectKg)}`}
                       {p.personalDefectKg > 0 && p.violationCount > 0 && " · "}
                       {p.violationCount > 0 && `${p.violationCount} vi phạm`}
                     </div>
@@ -534,22 +554,17 @@ function Step({
 }) {
   return (
     <div
-      className={`rounded-lg border p-3 ${
-        active
-          ? "border-brand-300 bg-brand-50"
-          : done
-            ? "border-emerald-200 bg-emerald-50/50"
-            : "border-ink-200"
-      }`}
+      className={`card p-3 ${active ? "border-brand-500 ring-1 ring-brand-500" : ""}`}
+      aria-current={active ? "step" : undefined}
     >
       <div className="flex items-center gap-2">
         <span
           className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
             done
-              ? "bg-emerald-500 text-white"
+              ? "bg-leaf-600 text-white"
               : active
                 ? "bg-brand-600 text-white"
-                : "bg-ink-200 text-ink-600"
+                : "bg-ink-100 text-ink-600"
           }`}
         >
           {done ? <Check size={13} strokeWidth={3} /> : n}
@@ -571,22 +586,21 @@ function Metric({
 }: {
   label: string;
   value: string;
-  tone?: "green" | "red" | "amber";
+  /** muted = ô chưa có số (chờ bước sau) — chữ xám, không đậm */
+  tone?: "red" | "amber" | "muted";
 }) {
   const color =
-    tone === "green"
-      ? "text-emerald-700"
-      : tone === "red"
-        ? "text-red-700"
-        : tone === "amber"
-          ? "text-amber-700"
-          : "text-ink-900";
+    tone === "red"
+      ? "font-semibold text-red-700"
+      : tone === "amber"
+        ? "font-semibold text-amber-800"
+        : tone === "muted"
+          ? "font-normal text-ink-500"
+          : "font-semibold text-ink-900";
   return (
-    <div className="rounded-lg border border-ink-200 px-3 py-2">
-      <div className="text-[10px] font-semibold tracking-wide text-ink-500 uppercase">
-        {label}
-      </div>
-      <div className={`mt-0.5 font-semibold ${color}`}>{value}</div>
+    <div className="rounded-md bg-ink-50 px-3 py-2">
+      <div className="text-xs text-ink-500">{label}</div>
+      <div className={`mt-0.5 tabular-nums ${color}`}>{value}</div>
     </div>
   );
 }
@@ -612,10 +626,10 @@ function Breakdown({
             <div className="flex items-center justify-between text-xs">
               <span className="text-ink-700">
                 {p.label}{" "}
-                <span className="text-ink-400">({p.weight}%)</span>
+                <span className="text-ink-500">({num(p.weight)}%)</span>
               </span>
-              <span className="font-medium text-ink-900">
-                {p.componentScore}
+              <span className="font-medium text-ink-900 tabular-nums">
+                {fmtScore(p.componentScore)}
               </span>
             </div>
             <div className="mt-1">
@@ -630,7 +644,7 @@ function Breakdown({
                 }
               />
             </div>
-            <div className="mt-0.5 text-[11px] text-ink-500">{p.note}</div>
+            <div className="mt-0.5 text-xs text-ink-500">{p.note}</div>
           </div>
         ))}
       </div>
@@ -638,8 +652,17 @@ function Breakdown({
   );
 }
 
+/** Số kiểu Việt Nam, tối đa 2 chữ số thập phân: 374,5 */
+function num(n: number) {
+  return n.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+}
+
+function kg(n: number) {
+  return `${num(n)} kg`;
+}
+
 function pct(n: number | null) {
-  return n === null ? "—" : `${n}%`;
+  return n === null ? "—" : `${num(n)}%`;
 }
 
 function money(n: number) {

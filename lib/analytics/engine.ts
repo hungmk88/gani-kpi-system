@@ -520,7 +520,8 @@ export function detectAnomaly(
   const direction = reportedValue > med ? "cao hơn" : "thấp hơn";
   const reason = [
     `Số khai ${fmt(reportedValue)} ${direction} hẳn lịch sử ${n} kỳ của người này (trung vị ${fmt(med)}, trung bình ${fmt(round2(mean))}).`,
-    `Lệch ${round1(robustScore)} lần theo thước bền${bothAgree ? ` và ${round1(zScore)} lần theo độ lệch chuẩn` : ""}.`,
+    // Câu chữ cho người đọc là Ban Giám đốc — không dùng thuật ngữ thống kê
+    `Lệch gấp ${vnNum(robustScore)} lần mức dao động thường ngày${bothAgree ? ` (${vnNum(zScore)} lần theo độ lệch chuẩn)` : ""}.`,
     n < ANOMALY_MIN_SAMPLES.CRITICAL
       ? `Mới có ${n} kỳ nên chỉ dừng ở mức nhắc, chưa đủ để kết luận nặng.`
       : "",
@@ -655,4 +656,9 @@ export function median(values: number[]): number {
 
 function fmt(n: number) {
   return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
+}
+
+/** Số 1 chữ số thập phân, dấu phẩy kiểu Việt ("4,2") cho câu chữ hiển thị */
+function vnNum(n: number) {
+  return round1(n).toLocaleString("vi-VN", { maximumFractionDigits: 1 });
 }

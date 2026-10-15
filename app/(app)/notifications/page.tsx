@@ -43,28 +43,43 @@ export default async function NotificationsPage() {
         <div className="space-y-2">
           {items.map((n) => {
             const inner = (
+              // Đã đọc: đổi màu chữ (không dùng opacity — giảm tương phản cả
+              // huy hiệu). Chưa đọc: vạch xanh thương hiệu bên trái, tiêu đề đậm.
               <div
                 className={`card p-4 transition ${
-                  n.isRead ? "opacity-70" : "border-brand-200 bg-brand-50/30"
+                  n.isRead ? "" : "border-l-[3px] border-l-brand-600"
                 } ${n.linkUrl ? "hover:shadow-md" : ""}`}
               >
                 <div className="mb-1 flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-ink-900">{n.title}</span>
+                  <span
+                    className={
+                      n.isRead
+                        ? "font-medium text-ink-600"
+                        : "font-semibold text-ink-900"
+                    }
+                  >
+                    {n.title}
+                  </span>
                   {n.level === "CRITICAL" && <Badge tone="red">Khẩn cấp</Badge>}
                   {n.level === "WARNING" && <Badge tone="amber">Cảnh báo</Badge>}
                   {n.channel === "TELEGRAM" && (
-                    <Badge tone="sky">
+                    <Badge tone={n.sentOk ? "slate" : "red"}>
                       {n.sentOk ? "Đã gửi Telegram" : "Telegram lỗi"}
                     </Badge>
                   )}
                   {!n.isRead && <Badge tone="brand">Mới</Badge>}
                 </div>
-                <div className="text-sm text-ink-600">{n.body}</div>
-                <div className="mt-1.5 text-xs text-ink-400">
+                <div
+                  className={`text-sm ${n.isRead ? "text-ink-500" : "text-ink-700"}`}
+                >
+                  {n.body}
+                </div>
+                <div className="mt-1.5 text-xs text-ink-500">
                   {formatDateTime(n.createdAt)}
+                  {/* Lỗi kỹ thuật thô chỉ để trong title (rê chuột xem) */}
                   {n.sendError && (
-                    <span className="ml-2 text-red-500">
-                      Lỗi gửi: {n.sendError.slice(0, 120)}
+                    <span className="ml-2 text-red-700" title={n.sendError}>
+                      Gửi Telegram lỗi
                     </span>
                   )}
                 </div>

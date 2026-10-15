@@ -1,17 +1,15 @@
 {
-  "name": "GANI FOODY - Quan ly Cong viec & KPI",
+  "name": "GANI FOODY — Quản lý Công việc & KPI",
   "short_name": "GANI KPI",
-  "description": "He thong quan ly cong viec va danh gia KPI noi bo GANI FOODY",
+  "description": "Hệ thống quản lý công việc và đánh giá KPI nội bộ GANI FOODY",
   "start_url": "/dashboard",
   "display": "standalone",
-  "background_color": "#f6f7f9",
-  "theme_color": "#1b6ef5",
-  "orientation": "portrait-primary",
+  "background_color": "#f7f7f4",
+  "theme_color": "#176ca3",
+  "orientation": "any",
   "lang": "vi",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
-    { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
   ]
 }

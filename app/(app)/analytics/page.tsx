@@ -26,6 +26,7 @@ import {
 } from "@/components/ui";
 import BriefingPanel from "./briefing-panel";
 import AnomalyActions from "@/components/anomaly-actions";
+import { plainAnomalyReason } from "@/components/dashboard";
 
 export const dynamic = "force-dynamic";
 
@@ -77,7 +78,7 @@ export default async function AnalyticsPage() {
   return (
     <>
       <PageHeader
-        title="Phân tích &amp; Dự báo"
+        title="Phân tích &amp; dự báo"
         subtitle={
           isCeo
             ? "Toàn công ty. Mọi con số ở đây đều kèm nền dữ liệu của nó — thiếu nền thì hệ thống nói thẳng là chưa đủ căn cứ."
@@ -116,7 +117,7 @@ export default async function AnalyticsPage() {
           <span className="text-xs text-ink-500">
             {accuracy.accuracyPercent === null
               ? "chưa đo được độ chính xác"
-              : `độ chính xác ${accuracy.accuracyPercent}% trên ${accuracy.total} việc đã đóng`}
+              : `độ chính xác ${fmt(accuracy.accuracyPercent)}% trên ${fmt(accuracy.total)} việc đã đóng`}
           </span>
         </div>
 
@@ -124,13 +125,13 @@ export default async function AnalyticsPage() {
           <StatCard
             label="Nhiều khả năng vỡ"
             value={scan.highRisk}
-            tone={scan.highRisk > 0 ? "red" : "green"}
+            tone={scan.highRisk > 0 ? "red" : "slate"}
             hint="dưới 40% khả năng kịp"
           />
           <StatCard
             label="Có nguy cơ"
             value={scan.moderateRisk}
-            tone={scan.moderateRisk > 0 ? "amber" : "green"}
+            tone={scan.moderateRisk > 0 ? "amber" : "slate"}
             hint="40–70% khả năng kịp"
           />
           <StatCard
@@ -141,7 +142,7 @@ export default async function AnalyticsPage() {
           <StatCard
             label="Dự báo nền mỏng"
             value={scan.weakBasis}
-            tone={scan.weakBasis > 0 ? "amber" : "green"}
+            tone={scan.weakBasis > 0 ? "amber" : "slate"}
             hint="chưa đủ lịch sử người phụ trách"
           />
         </div>
@@ -229,7 +230,7 @@ export default async function AnalyticsPage() {
                         {RISK_CATEGORY_LABEL[p.riskCategory]}
                       </Badge>
                       <Badge tone="slate">
-                        {p.completionProbabilityPercent}% kịp
+                        {fmt(p.completionProbabilityPercent)}% kịp
                       </Badge>
                       {p.projectedDelayDays > 0 && (
                         <Badge tone="red">
@@ -241,16 +242,16 @@ export default async function AnalyticsPage() {
 
                   <div className="mb-2 grid gap-2 sm:grid-cols-2">
                     <div>
-                      <div className="mb-1 flex justify-between text-[11px] text-ink-500">
+                      <div className="mb-1 flex justify-between text-xs text-ink-500">
                         <span>Đáng lẽ phải xong</span>
-                        <span>{p.expectedProgressPercent}%</span>
+                        <span className="tabular-nums">{fmt(p.expectedProgressPercent)}%</span>
                       </div>
                       <ProgressBar value={p.expectedProgressPercent} tone="brand" />
                     </div>
                     <div>
-                      <div className="mb-1 flex justify-between text-[11px] text-ink-500">
+                      <div className="mb-1 flex justify-between text-xs text-ink-500">
                         <span>Thực tế</span>
-                        <span>{p.actualProgressPercent}%</span>
+                        <span className="tabular-nums">{fmt(p.actualProgressPercent)}%</span>
                       </div>
                       <ProgressBar
                         value={p.actualProgressPercent}
@@ -269,7 +270,7 @@ export default async function AnalyticsPage() {
                     ))}
                   </ul>
 
-                  <div className="mt-2 text-[11px] text-ink-400">
+                  <div className="mt-2 text-xs text-ink-500">
                     Nền dữ liệu: {CONFIDENCE_LABEL[p.confidence]} ·{" "}
                     {p.sampleSize} việc đã đóng của người phụ trách
                   </div>
@@ -277,14 +278,14 @@ export default async function AnalyticsPage() {
               ))}
             {scan.predictions.filter((p) => p.riskCategory !== "ON_TRACK")
               .length === 0 && (
-              <div className="card border-emerald-200 bg-emerald-50/50 p-6 text-center">
-                <div className="mb-1 flex justify-center text-emerald-600">
-                  <CircleCheck size={28} strokeWidth={1.75} />
+              <div className="card p-6 text-center">
+                <div className="mb-1 flex justify-center text-leaf-600">
+                  <CircleCheck size={28} strokeWidth={1.75} aria-hidden />
                 </div>
-                <div className="font-medium text-emerald-800">
+                <div className="font-medium text-ink-800">
                   Không có việc nào đang bị dự báo trễ
                 </div>
-                <div className="mt-1 text-sm text-emerald-700">
+                <div className="mt-1 text-sm text-ink-500">
                   Cả {scan.scanned} việc tới hạn trong 30 ngày đều đang bám kế hoạch.
                 </div>
               </div>
@@ -294,7 +295,7 @@ export default async function AnalyticsPage() {
 
         {accuracy.total > 0 && (
           <div className="card mt-3 p-4">
-            <div className="mb-2 text-xs font-semibold tracking-wide text-ink-500 uppercase">
+            <div className="mb-2 text-sm font-semibold text-ink-800">
               Bộ dự báo tự chấm mình
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -320,19 +321,19 @@ export default async function AnalyticsPage() {
           <StatCard
             label="Đang quá tải"
             value={capacity.overloaded}
-            tone={capacity.overloaded > 0 ? "red" : "green"}
+            tone={capacity.overloaded > 0 ? "red" : "slate"}
             hint="trên 115% giờ công chuẩn"
           />
           <StatCard
             label="Còn dư sức"
             value={capacity.underutilized}
-            tone={capacity.underutilized > 0 ? "sky" : "green"}
+            tone="slate"
             hint="dưới 60%"
           />
           <StatCard
             label="Cặp nên san việc"
             value={capacity.suggestions.length}
-            tone={capacity.suggestions.length > 0 ? "amber" : "green"}
+            tone={capacity.suggestions.length > 0 ? "amber" : "slate"}
             hint="trong cùng phòng ban"
           />
           <StatCard
@@ -351,9 +352,10 @@ export default async function AnalyticsPage() {
               {capacity.suggestions.map((s, i) => (
                 <li key={i}>
                   Phòng <b>{s.departmentName}</b>: chuyển khoảng{" "}
-                  <b>{s.suggestedHours} giờ</b> từ {s.from.fullName} (
-                  {s.from.utilizationPercent}%) sang {s.to.fullName} (
-                  {s.to.utilizationPercent}%) — chênh {s.gapPercent} điểm phần trăm.
+                  <b>{fmt(s.suggestedHours)} giờ</b> từ {s.from.fullName} (
+                  {fmt(s.from.utilizationPercent)}%) sang {s.to.fullName} (
+                  {fmt(s.to.utilizationPercent)}%) — chênh {fmt(s.gapPercent)} điểm
+                  phần trăm.
                 </li>
               ))}
             </ul>
@@ -386,40 +388,34 @@ export default async function AnalyticsPage() {
                     {r.assignedTasksCount}
                   </td>
                   <td data-label="Giờ ước tính" className="text-right text-ink-700">
-                    {r.totalEstimatedHours}
+                    {fmt(r.totalEstimatedHours)}
                     {r.overdueHours > 0 && (
-                      <div className="text-[11px] text-red-600">
-                        {r.overdueHours} giờ đã quá hạn
+                      <div className="text-xs text-red-700">
+                        {fmt(r.overdueHours)} giờ đã quá hạn
                       </div>
                     )}
                   </td>
                   <td data-label="Mức tải">
-                    <div className="mb-1 text-xs text-ink-600">
-                      {r.utilizationPercent}%
+                    <div className="mb-1 text-xs text-ink-600 tabular-nums">
+                      {fmt(r.utilizationPercent)}%
                     </div>
-                    <ProgressBar
-                      value={Math.min(100, r.utilizationPercent)}
-                      tone={
-                        r.workloadStatus === "OVERLOADED"
-                          ? "red"
-                          : r.workloadStatus === "UNDERUTILIZED"
-                            ? "amber"
-                            : "green"
-                      }
+                    <LoadBar
+                      value={r.utilizationPercent}
+                      status={r.workloadStatus}
                     />
                   </td>
                   <td data-label="Tình trạng">
-                    <Badge
-                      tone={
-                        r.workloadStatus === "OVERLOADED"
-                          ? "red"
-                          : r.workloadStatus === "UNDERUTILIZED"
-                            ? "sky"
-                            : "green"
-                      }
-                    >
-                      {WORKLOAD_LABEL[r.workloadStatus]}
-                    </Badge>
+                    {/* Chỉ "Quá tải" là ngoại lệ (huy hiệu đỏ). Vừa sức: chữ
+                        màu lá. Còn dư sức: chữ trung tính — không phải báo động. */}
+                    {r.workloadStatus === "OVERLOADED" ? (
+                      <Badge tone="red">{WORKLOAD_LABEL[r.workloadStatus]}</Badge>
+                    ) : r.workloadStatus === "UNDERUTILIZED" ? (
+                      <span className="text-xs text-ink-600">
+                        {WORKLOAD_LABEL[r.workloadStatus]}
+                      </span>
+                    ) : (
+                      <Badge tone="green">{WORKLOAD_LABEL[r.workloadStatus]}</Badge>
+                    )}
                   </td>
                   <td data-label="" className="max-w-xs text-xs text-ink-500">
                     {r.note}
@@ -445,14 +441,14 @@ export default async function AnalyticsPage() {
         </p>
 
         {anomalies.length === 0 ? (
-          <div className="card border-emerald-200 bg-emerald-50/50 p-6 text-center">
-            <div className="mb-1 flex justify-center text-emerald-600">
-              <CircleCheck size={28} strokeWidth={1.75} />
+          <div className="card p-6 text-center">
+            <div className="mb-1 flex justify-center text-leaf-600">
+              <CircleCheck size={28} strokeWidth={1.75} aria-hidden />
             </div>
-            <div className="font-medium text-emerald-800">
+            <div className="font-medium text-ink-800">
               Không có khai báo nào lệch khỏi nếp
             </div>
-            <div className="mt-1 text-sm text-emerald-700">
+            <div className="mt-1 text-sm text-ink-500">
               Những dòng chưa đủ 4 kỳ lịch sử thì hệ thống chưa đánh giá, không
               tính vào đây.
             </div>
@@ -507,12 +503,16 @@ export default async function AnalyticsPage() {
                 </div>
 
                 <div className="space-y-3 p-4">
-                  <p className="text-sm text-ink-700">{a.reason}</p>
+                  <p className="text-sm text-ink-700">{plainAnomalyReason(a.reason)}</p>
 
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <Mini label="Khai kỳ này" value={fmt(a.reportedValue)} tone="amber" />
                     <Mini label="Trung vị lịch sử" value={fmt(a.historicalMedian)} />
-                    <Mini label="Lệch (thước bền)" value={`${a.robustScore}×`} tone="red" />
+                    <Mini
+                      label="Mức lệch so với nếp cũ"
+                      value={`gấp ${fmt(a.robustScore)} lần`}
+                      tone="red"
+                    />
                     <Mini
                       label="Nền dữ liệu"
                       value={`${a.sampleSize} kỳ`}
@@ -521,8 +521,8 @@ export default async function AnalyticsPage() {
                   </div>
 
                   {a.explanationText && (
-                    <div className="rounded-lg border border-ink-200 bg-ink-50/60 px-3 py-2">
-                      <div className="text-[11px] font-semibold tracking-wide text-ink-500 uppercase">
+                    <div className="rounded-md bg-ink-50 px-3 py-2">
+                      <div className="text-xs font-medium text-ink-500">
                         Giải trình — {a.explainedBy?.fullName} ·{" "}
                         {formatDateTime(a.explainedAt)}
                       </div>
@@ -559,22 +559,49 @@ function Mini({
 }) {
   const color =
     tone === "green"
-      ? "text-emerald-700"
+      ? "text-leaf-700"
       : tone === "red"
         ? "text-red-700"
         : tone === "amber"
-          ? "text-amber-700"
+          ? "text-amber-800"
           : "text-ink-900";
+  // Ô số nằm trong thẻ: nền ink-50, không viền — tránh thẻ lồng thẻ
   return (
-    <div className="rounded-lg border border-ink-200 px-3 py-2">
-      <div className="text-[10px] font-semibold tracking-wide text-ink-500 uppercase">
-        {label}
-      </div>
-      <div className={`mt-0.5 font-semibold ${color}`}>{value}</div>
+    <div className="rounded-md bg-ink-50 px-3 py-2">
+      <div className="text-xs text-ink-500">{label}</div>
+      <div className={`mt-0.5 font-semibold tabular-nums ${color}`}>{value}</div>
     </div>
   );
 }
 
-function fmt(n: number) {
+/**
+ * Thanh mức tải — cùng màu với cột Tình trạng: quá tải đỏ, vừa sức xanh lá,
+ * còn dư sức trung tính (ProgressBar chung không có tông trung tính).
+ */
+function LoadBar({ value, status }: { value: number; status: string }) {
+  const color =
+    status === "OVERLOADED"
+      ? "bg-red-500"
+      : status === "UNDERUTILIZED"
+        ? "bg-ink-400"
+        : "bg-leaf-500";
+  return (
+    <div
+      role="progressbar"
+      aria-valuenow={Math.round(value)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      className="h-1.5 w-full overflow-hidden rounded-full bg-ink-100"
+    >
+      <div
+        className={`h-full rounded-full ${color}`}
+        style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+      />
+    </div>
+  );
+}
+
+function fmt(n: number | null) {
+  if (n === null) return "—";
   return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(n);
 }

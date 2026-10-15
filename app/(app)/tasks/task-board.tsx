@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Wand2, TriangleAlert } from "lucide-react";
+import { Wand2, TriangleAlert, X } from "lucide-react";
 import {
   KANBAN_COLUMNS,
   TASK_PRIORITIES,
@@ -158,7 +158,7 @@ export default function TaskBoard({
           </select>
         )}
 
-        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-ink-200 px-3 py-2 text-sm text-ink-600">
+        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-600">
           <input
             type="checkbox"
             checked={onlyRisk}
@@ -167,27 +167,32 @@ export default function TaskBoard({
           Chỉ việc có nguy cơ
         </label>
 
-        <div className="ml-auto flex overflow-hidden rounded-lg border border-ink-200">
-          <button
-            onClick={() => setView("board")}
-            className={`px-3 py-2 text-sm font-medium ${
-              view === "board"
-                ? "bg-brand-600 text-white"
-                : "bg-white text-ink-600"
-            }`}
-          >
-            Bảng
-          </button>
-          <button
-            onClick={() => setView("list")}
-            className={`px-3 py-2 text-sm font-medium ${
-              view === "list"
-                ? "bg-brand-600 text-white"
-                : "bg-white text-ink-600"
-            }`}
-          >
-            Danh sách
-          </button>
+        {/* Công tắc hai chế độ xem: dạng viên thuốc gọn, aria-pressed */}
+        <div
+          role="group"
+          aria-label="Chế độ xem"
+          className="ml-auto inline-flex rounded-md border border-ink-300 p-0.5"
+        >
+          {(
+            [
+              ["board", "Bảng"],
+              ["list", "Danh sách"],
+            ] as const
+          ).map(([v, label]) => (
+            <button
+              key={v}
+              type="button"
+              aria-pressed={view === v}
+              onClick={() => setView(v)}
+              className={`rounded px-3 py-1.5 text-sm font-medium transition ${
+                view === v
+                  ? "bg-ink-900 text-white"
+                  : "text-ink-600 hover:text-ink-900"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -199,15 +204,15 @@ export default function TaskBoard({
         {(activeFilter === "overdue" || activeFilter === "mine") && (
           <button
             onClick={() => setParam("filter", null)}
-            className="inline-flex items-center gap-1 rounded-full border border-brand-200 bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-700"
+            className="inline-flex items-center gap-1 rounded-md bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-700 hover:bg-ink-200"
           >
-            Đang lọc: {activeFilter === "overdue" ? "Trễ hạn" : "Việc của tôi"}
-            <span aria-hidden>×</span>
+            Đang lọc: {activeFilter === "overdue" ? "trễ hạn" : "việc của tôi"}
+            <X size={14} aria-hidden />
             <span className="sr-only">Bỏ lọc</span>
           </button>
         )}
         {totalCount > tasks.length && (
-          <span className="text-amber-700">
+          <span className="text-amber-800">
             · Đang hiển thị {tasks.length}/{totalCount} việc — lọc thêm để thấy hết
           </span>
         )}
@@ -251,7 +256,7 @@ export default function TaskBoard({
                   {g.key === "done" && !showAllDone && g.items.length > DONE_PREVIEW && (
                     <button
                       onClick={() => setShowAllDone(true)}
-                      className="w-full rounded-lg border border-dashed border-ink-300 py-2 text-xs font-medium text-ink-600"
+                      className="w-full rounded-md border border-dashed border-ink-300 py-2 text-xs font-medium text-ink-600"
                     >
                       Xem thêm {g.items.length - DONE_PREVIEW} việc đã xong
                     </button>
@@ -291,7 +296,7 @@ export default function TaskBoard({
                       </span>
                     </div>
                     <div
-                      className={`space-y-2 rounded-xl p-2 ${
+                      className={`space-y-2 rounded-[10px] p-2 ${
                         alarm ? "bg-red-50" : "bg-ink-100/50"
                       }`}
                     >
@@ -301,7 +306,7 @@ export default function TaskBoard({
                       {col === "DONE" && !showAllDone && items.length > DONE_PREVIEW && (
                         <button
                           onClick={() => setShowAllDone(true)}
-                          className="w-full rounded-lg border border-dashed border-ink-300 py-2 text-xs font-medium text-ink-600 hover:bg-white"
+                          className="w-full rounded-md border border-dashed border-ink-300 py-2 text-xs font-medium text-ink-600 hover:bg-white"
                         >
                           Xem thêm {items.length - DONE_PREVIEW} việc đã xong
                         </button>
@@ -352,7 +357,7 @@ export default function TaskBoard({
                   <td data-label="Phòng ban" className="text-ink-600">{t.departmentName}</td>
                   <td data-label="Người phụ trách" className="text-ink-600">
                     {t.assigneeName ?? (
-                      <span className="text-amber-600">Chưa giao</span>
+                      <span className="text-amber-800">Chưa giao</span>
                     )}
                   </td>
                   <td data-label="Hạn chót">
@@ -397,8 +402,8 @@ function TaskCard({ t }: { t: TaskRow }) {
   return (
     <Link
       href={`/tasks/${t.id}`}
-      className={`block rounded-lg border bg-white p-3 shadow-sm transition hover:shadow-md ${
-        late ? "border-red-200 border-l-[3px] border-l-red-500" : "border-ink-200/70"
+      className={`block rounded-[10px] border bg-white p-3 transition hover:shadow-md ${
+        late ? "border-red-200 border-l-[3px] border-l-red-500" : "border-ink-200"
       }`}
     >
       <div className="mb-2 line-clamp-2 text-sm font-medium text-ink-900">
@@ -419,7 +424,7 @@ function TaskCard({ t }: { t: TaskRow }) {
       <div className="mb-2 flex flex-wrap items-center gap-1 text-xs text-ink-500">
         {t.assigneeName ?? (
           <span className="inline-flex items-center gap-1 text-amber-700">
-            <TriangleAlert size={11} strokeWidth={2.5} /> Chưa giao
+            <TriangleAlert size={12} strokeWidth={2.5} /> Chưa giao
           </span>
         )}{" "}
         · <DueDate date={t.dueDate} done={!OPEN_FOR_LATE.includes(t.status)} />

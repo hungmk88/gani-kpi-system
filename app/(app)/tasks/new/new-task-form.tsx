@@ -138,31 +138,36 @@ export default function NewTaskForm({
   return (
     <div className="max-w-2xl">
       {/* Chọn kiểu: giao trong phòng hay nhờ phòng khác */}
-      <div className="mb-5 flex overflow-hidden rounded-xl border border-ink-200">
-        <button
-          type="button"
-          onClick={() => setMode("task")}
-          className={`flex-1 px-4 py-3 text-sm font-medium ${
-            mode === "task" ? "bg-brand-600 text-white" : "bg-white text-ink-600"
-          }`}
-        >
-          Giao việc trong phòng
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("request")}
-          className={`flex-1 px-4 py-3 text-sm font-medium ${
-            mode === "request"
-              ? "bg-brand-600 text-white"
-              : "bg-white text-ink-600"
-          }`}
-        >
-          Nhờ phòng ban khác
-        </button>
+      <div
+        role="tablist"
+        aria-label="Kiểu giao việc"
+        className="mb-5 flex gap-5 overflow-x-auto border-b border-ink-200"
+      >
+        {(
+          [
+            ["task", "Giao việc trong phòng"],
+            ["request", "Nhờ phòng ban khác"],
+          ] as const
+        ).map(([m, label]) => (
+          <button
+            key={m}
+            type="button"
+            role="tab"
+            aria-selected={mode === m}
+            onClick={() => setMode(m)}
+            className={`-mb-px border-b-2 px-1 py-2.5 text-sm font-medium whitespace-nowrap ${
+              mode === m
+                ? "border-brand-600 text-brand-700"
+                : "border-transparent text-ink-500 hover:text-ink-800"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {mode === "request" && (
-        <div className="mb-5 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+        <div className="card mb-5 p-4 text-sm text-ink-700">
           <b>Vì sao phải đi đường này?</b> Ban Giám đốc đã chốt: không ai được
           giao việc thẳng cho nhân sự phòng ban khác. Yêu cầu của bạn sẽ tới
           trưởng phòng bên đó, họ nhận rồi tự phân công người làm.

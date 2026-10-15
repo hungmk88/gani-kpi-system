@@ -20,12 +20,12 @@ export default async function KpiDashboardPage() {
       <PageHeader
         title={
           <span className="flex items-center gap-2">
-            <BarChart3 size={22} strokeWidth={2} /> Dashboard KPI
+            <BarChart3 size={22} strokeWidth={2} /> Bảng KPI sản xuất
           </span>
         }
         subtitle="Điểm KPI ca sản xuất đã khoá số (2 tầng) — cùng nguồn với KPI tháng và thưởng ca"
         actions={
-          <Badge tone="blue">
+          <Badge tone="brand">
             Phòng SX
           </Badge>
         }

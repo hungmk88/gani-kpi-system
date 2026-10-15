@@ -21,10 +21,18 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h1 className="text-xl font-bold text-ink-900 sm:text-2xl">{title}</h1>
-        {subtitle && <p className="mt-1 text-sm text-ink-500">{subtitle}</p>}
+    <div className="mb-4 flex flex-wrap items-start justify-between gap-3 sm:mb-6">
+      <div className="min-w-0">
+        <h1 className="text-xl font-bold tracking-tight text-ink-900 sm:text-2xl">
+          {title}
+        </h1>
+        {/* Điện thoại: mô tả tối đa 2 dòng — màn hình đầu tiên dành cho tín
+            hiệu và nút bấm, không phải cho lời giải thích. */}
+        {subtitle && (
+          <p className="mt-1 line-clamp-2 max-w-3xl text-sm text-ink-500 sm:line-clamp-none">
+            {subtitle}
+          </p>
+        )}
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
     </div>
@@ -51,78 +59,39 @@ export function EmptyState({
 
 /* ------------------------------------------------------------------ số liệu */
 
+/**
+ * Tông màu huy hiệu — hệ thiết kế GANI: chỉ NGOẠI LỆ (đỏ, vàng) mới có nền
+ * màu. Trạng thái bình thường (đạt, đang chạy, thông tin) chỉ là chữ màu kèm
+ * chấm tròn — cả cột "Đang dùng" xanh lá nền màu là nhiễu, không phải tín hiệu.
+ * Không viền ở mọi tông.
+ */
 const TONE: Record<string, string> = {
-  brand: "bg-brand-50 text-brand-700 border-brand-200",
-  green: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  amber: "bg-amber-50 text-amber-700 border-amber-200",
-  red: "bg-red-50 text-red-700 border-red-200",
-  sky: "bg-sky-50 text-sky-700 border-sky-200",
-  slate: "bg-ink-100 text-ink-700 border-ink-200",
-  violet: "bg-violet-50 text-violet-700 border-violet-200",
+  red: "bg-red-50 text-red-700",
+  amber: "bg-amber-50 text-amber-800",
+  brand: "bg-transparent px-0 text-brand-700",
+  sky: "bg-transparent px-0 text-brand-700",
+  violet: "bg-transparent px-0 text-brand-700",
+  green: "bg-transparent px-0 text-leaf-700",
+  emerald: "bg-transparent px-0 text-leaf-700",
+  slate: "bg-ink-100 text-ink-700",
 };
 
-/**
- * Nền cho StatCard khi tô cả tấm thẻ (prop `surface`).
- *
- * "gani-blue"/"gani-green" lấy đúng từ logo GANI B2B (`logo GANI.png`), không
- * phải màu chung chung của Tailwind — đo trực tiếp từ điểm ảnh: chữ "GANI"
- * `#1E89CA`, lá `#3BA548`. Ba sắc độ mỗi màu tính bằng HSL giữ nguyên tông
- * (hue), chỉ đổi độ sáng (lightness): nền 87%, viền 60%, chữ 30% — chữ trên
- * nền đạt tỉ lệ tương phản 5,3–5,6:1, qua chuẩn AA cho cả chữ nhỏ (yêu cầu
- * 4,5:1).
- *
- * Bốn màu ý nghĩa (đỏ/vàng/xanh/tím) dùng đúng thang Tailwind ở mức 100/300/800
- * — cùng hue với `TONE` phía trên (chỉ đậm hơn vì tô cả thẻ chứ không phải một
- * chip nhỏ), Tailwind đã tự đảm bảo tỉ lệ tương phản đạt AA ở tổ hợp này.
- */
-const SURFACE: Record<
-  string,
-  { bg: string; border: string; label: string; hint: string }
-> = {
-  "gani-blue": {
-    bg: "bg-[#C5E4F6]",
-    border: "border-[#4DABE5]",
-    label: "text-[#145A85]",
-    hint: "border-white/60 bg-white/55 text-[#145A85]",
-  },
-  "gani-green": {
-    bg: "bg-[#CEEED2]",
-    border: "border-[#69C975]",
-    label: "text-[#26692E]",
-    hint: "border-white/60 bg-white/55 text-[#26692E]",
-  },
-  red: {
-    bg: "bg-red-100",
-    border: "border-red-300",
-    label: "text-red-800",
-    hint: "border-white/60 bg-white/55 text-red-800",
-  },
-  amber: {
-    bg: "bg-amber-100",
-    border: "border-amber-300",
-    label: "text-amber-800",
-    hint: "border-white/60 bg-white/55 text-amber-800",
-  },
-  green: {
-    bg: "bg-emerald-100",
-    border: "border-emerald-300",
-    label: "text-emerald-800",
-    hint: "border-white/60 bg-white/55 text-emerald-800",
-  },
-  violet: {
-    bg: "bg-violet-100",
-    border: "border-violet-300",
-    label: "text-violet-800",
-    hint: "border-white/60 bg-white/55 text-violet-800",
-  },
+/** Chấm tròn đứng trước chữ ở các tông không có nền */
+const DOT: Record<string, string | undefined> = {
+  brand: "bg-brand-500",
+  sky: "bg-brand-500",
+  violet: "bg-brand-500",
+  green: "bg-leaf-500",
+  emerald: "bg-leaf-500",
 };
 
 /**
  * Cột mini vẽ xu hướng vài kỳ gần nhất.
  *
  * Cố ý không có trục và không có số: nó trả lời "đang lên hay đang xuống",
- * không trả lời "bao nhiêu". Ai cần con số thì bấm vào xem trang KPI.
+ * không trả lời "bao nhiêu". Kỳ điểm 0 (chưa chấm) bị bỏ — vẽ vào là thành
+ * một vạch tụt giả. Thang co theo khoảng thấp–cao để 96 và 100 còn nhìn ra
+ * khác nhau (thang từ 0 thì năm cột cao bằng nhau).
  */
 export function Sparkline({
   values,
@@ -135,25 +104,28 @@ export function Sparkline({
   if (real.length < 2) return null;
 
   const max = Math.max(...real);
+  const min = Math.min(...real);
+  const span = max - min;
   const lastColor = {
     brand: "bg-brand-500",
-    green: "bg-emerald-500",
+    green: "bg-leaf-500",
     amber: "bg-amber-500",
     red: "bg-red-500",
   }[highlightLast];
 
   return (
     <div
-      className="mt-2 flex h-5 items-end gap-0.5"
+      role="img"
+      className="mt-2 flex h-6 items-end gap-0.5"
       aria-label={`Xu hướng ${real.length} kỳ gần nhất`}
     >
-      {values.map((v, i) => (
+      {real.map((v, i) => (
         <div
           key={i}
           className={`flex-1 rounded-sm ${
-            i === values.length - 1 ? lastColor : "bg-ink-200"
+            i === real.length - 1 ? lastColor : "bg-ink-200"
           }`}
-          style={{ height: `${max > 0 ? Math.max(8, (v / max) * 100) : 8}%` }}
+          style={{ height: `${span > 0 ? 25 + ((v - min) / span) * 75 : 60}%` }}
         />
       ))}
     </div>
@@ -202,64 +174,87 @@ export function StatCard({
   if (delta !== undefined && delta !== null) {
     if (delta === 0) {
       deltaNode = (
-        <div className={`mt-2 inline-block rounded-md border px-1.5 py-0.5 text-xs ${TONE.slate}`}>
-          không đổi {deltaSuffix}
-        </div>
+        <div className="mt-2 text-xs text-ink-500">không đổi {deltaSuffix}</div>
       );
     } else {
       const isGood = deltaGoodWhen === "up" ? delta > 0 : delta < 0;
       deltaNode = (
         <div
-          className={`mt-2 inline-block rounded-md border px-1.5 py-0.5 text-xs ${
-            TONE[isGood ? "green" : "red"]
+          className={`mt-2 text-xs font-medium ${
+            isGood ? "text-leaf-700" : "text-red-700"
           }`}
         >
-          {delta > 0 ? "↑" : "↓"} {Math.abs(delta)} {deltaSuffix}
+          {delta > 0 ? "↑" : "↓"}{" "}
+          {Math.abs(delta).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}{" "}
+          <span className="font-normal text-ink-500">{deltaSuffix}</span>
         </div>
       );
     }
   }
 
+  // Thẻ chỉ "lên tiếng" khi là ngoại lệ: surface đỏ/vàng → vạch màu bên trái
+  // + nhãn màu. Mọi trường hợp khác là thẻ trắng — không tô nền cả tấm thẻ
+  // (trước đây thẻ xanh lá "0" cũng nổi bật ngang thẻ đỏ "3 việc trễ").
+  const alarm =
+    surface === "red" ? "red" : surface === "amber" ? "amber" : null;
   const valueColor =
-    valueTone === "red"
-      ? "text-red-600"
-      : valueTone === "amber"
-        ? "text-amber-700"
+    valueTone === "red" || alarm === "red"
+      ? "text-red-700"
+      : valueTone === "amber" || alarm === "amber"
+        ? "text-amber-800"
         : "text-ink-900";
-
-  // Không mix .card (lớp component, bg-white cố định) với utility bg-* đè
-  // lên — thứ tự trong stylesheet không đảm bảo utility thắng. Khi tô màu
-  // thì dựng nguyên bộ class rời, không dựa vào .card nữa.
-  const surfaceClass = surface
-    ? `${SURFACE[surface].bg} ${SURFACE[surface].border} rounded-xl border shadow-sm`
-    : "card";
+  const hintColor =
+    tone === "red"
+      ? "text-red-700"
+      : tone === "amber"
+        ? "text-amber-800"
+        : "text-ink-500";
 
   const inner = (
-    <div className={`${surfaceClass} h-full p-4 transition hover:shadow-md`}>
+    <div
+      className={`card h-full p-4 ${
+        alarm === "red"
+          ? "border-l-[3px] border-l-red-600"
+          : alarm === "amber"
+            ? "border-l-[3px] border-l-amber-500"
+            : ""
+      } ${href ? "transition hover:border-ink-300 hover:shadow-md" : ""}`}
+    >
       <div
-        className={`text-xs font-semibold tracking-wide uppercase ${
-          surface ? SURFACE[surface].label : "text-ink-500"
+        className={`text-[13px] font-medium ${
+          alarm === "red"
+            ? "text-red-700"
+            : alarm === "amber"
+              ? "text-amber-800"
+              : "text-ink-500"
         }`}
       >
         {label}
       </div>
-      <div className="mt-2 flex items-baseline gap-2">
-        <span className={`text-2xl font-bold ${valueColor}`}>{value}</span>
+      <div className="mt-1.5 flex items-baseline gap-2">
+        <span
+          className={`stat-value text-[28px] leading-tight font-bold tracking-tight ${valueColor}`}
+        >
+          {value}
+        </span>
       </div>
       {spark && <Sparkline values={spark} highlightLast={sparkTone} />}
       {deltaNode}
       {!deltaNode && hint && (
-        <div
-          className={`mt-2 inline-block rounded-md border px-1.5 py-0.5 text-xs ${
-            surface ? SURFACE[surface].hint : TONE[tone]
-          }`}
-        >
-          {hint}
-        </div>
+        <div className={`mt-2 text-xs ${hintColor}`}>{hint}</div>
       )}
     </div>
   );
-  return href ? <Link href={href}>{inner}</Link> : inner;
+  return href ? (
+    <Link
+      href={href}
+      className="block rounded-[10px] outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+    >
+      {inner}
+    </Link>
+  ) : (
+    inner
+  );
 }
 
 export function ProgressBar({
@@ -271,12 +266,18 @@ export function ProgressBar({
 }) {
   const color = {
     brand: "bg-brand-500",
-    green: "bg-emerald-500",
+    green: "bg-leaf-500",
     amber: "bg-amber-500",
     red: "bg-red-500",
   }[tone];
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-ink-100">
+    <div
+      role="progressbar"
+      aria-valuenow={Math.round(value)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      className="h-1.5 w-full overflow-hidden rounded-full bg-ink-100"
+    >
       <div
         className={`h-full rounded-full ${color}`}
         style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
@@ -294,8 +295,14 @@ export function Badge({
   children: React.ReactNode;
   tone?: keyof typeof TONE;
 }) {
+  const dot = DOT[tone];
   return (
-    <span className={`badge border ${TONE[tone]}`}>{children}</span>
+    <span className={`badge border-transparent ${TONE[tone] ?? TONE.slate}`}>
+      {dot && (
+        <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+      )}
+      {children}
+    </span>
   );
 }
 

@@ -37,7 +37,7 @@ export default async function RawMaterialsPage() {
       <div className="mb-4">
         <Link
           href="/production/skus"
-          className="text-sm text-ink-500 hover:text-brand-600"
+          className="text-sm text-ink-500 hover:text-brand-700"
         >
           ← Danh mục sản phẩm & chuẩn
         </Link>

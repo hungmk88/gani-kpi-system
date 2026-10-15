@@ -50,7 +50,7 @@ export default function ReportsError({
             Thử lại
           </button>
           <Link href="/dashboard" className="btn-ghost">
-            Về trang chính
+            Về trang chủ
           </Link>
         </div>
       </div>

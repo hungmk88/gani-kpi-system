@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CircleCheck, Download } from "lucide-react";
 
 type ImportResult = {
   accepted: boolean;
@@ -72,8 +73,8 @@ export default function UserImport() {
           </p>
         </div>
         <div className="flex gap-2">
-          <a href="/api/admin/users/template" className="btn btn-sm">
-            Tải file mẫu
+          <a href="/api/admin/users/template" className="btn-ghost btn-sm">
+            <Download size={16} aria-hidden /> Tải file mẫu
           </a>
           <button
             className="btn-primary btn-sm"
@@ -94,21 +95,25 @@ export default function UserImport() {
       />
 
       {error && (
-        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div
+          role="alert"
+          className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
           {error}
         </div>
       )}
 
       {result && result.accepted && (
-        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-          <div className="text-sm font-medium text-emerald-800">
-            Đã tạo {result.created} tài khoản.
+        <div role="status" className="mt-3 rounded-md bg-ink-50 p-3">
+          <div className="flex items-center gap-1.5 text-sm font-medium text-leaf-700">
+            <CircleCheck size={16} strokeWidth={2} aria-hidden />
+            Đã tạo {result.created.toLocaleString("vi-VN")} tài khoản.
           </div>
-          <p className="mt-1 text-xs text-emerald-700">
+          <p className="mt-1 text-xs text-ink-600">
             Tất cả đều bị bắt tự đổi mật khẩu ở lần đăng nhập đầu tiên — mật khẩu
             tạm trong file coi như ai cũng biết.
           </p>
-          <ul className="mt-2 space-y-0.5 text-xs text-emerald-800">
+          <ul className="mt-2 space-y-0.5 text-xs text-ink-700">
             {result.createdUsers.map((u) => (
               <li key={u.email}>
                 · {u.fullName} — {u.email}
@@ -119,9 +124,9 @@ export default function UserImport() {
       )}
 
       {result && !result.accepted && (
-        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+        <div role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
           <div className="text-sm font-medium text-red-800">
-            File bị từ chối — {result.errors.length} chỗ sai, chưa tài khoản nào
+            File bị từ chối — {result.errors.length.toLocaleString("vi-VN")} chỗ sai, chưa tài khoản nào
             được tạo.
           </div>
           <ul className="mt-2 max-h-64 space-y-0.5 overflow-y-auto text-xs text-red-700">

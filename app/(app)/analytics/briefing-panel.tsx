@@ -83,11 +83,11 @@ export default function BriefingPanel({
       <div className="border-b border-ink-100 p-5">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <div className="text-xs font-semibold tracking-wide text-ink-500 uppercase">
+            <div className="text-[13px] font-medium text-ink-500">
               Sức khoẻ vận hành
             </div>
             <div className="mt-1 flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-ink-900">
+              <span className="text-4xl font-bold text-ink-900 tabular-nums">
                 {health.score}
               </span>
               <span className="text-lg text-ink-400">/ 100</span>
@@ -118,9 +118,9 @@ export default function BriefingPanel({
         <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
           {health.parts.map((p) => (
             <div key={p.key}>
-              <div className="mb-1 flex items-center justify-between text-[11px]">
+              <div className="mb-1 flex items-center justify-between text-xs">
                 <span className="text-ink-600">{p.label}</span>
-                <span className="font-medium text-ink-800">{p.score}</span>
+                <span className="font-medium text-ink-800 tabular-nums">{p.score}</span>
               </div>
               <ProgressBar
                 value={p.score}
@@ -128,15 +128,15 @@ export default function BriefingPanel({
                   p.score >= 85 ? "green" : p.score >= 60 ? "amber" : "red"
                 }
               />
-              <div className="mt-1 text-[10px] text-ink-400">{p.note}</div>
+              <div className="mt-1 text-xs text-ink-500">{p.note}</div>
             </div>
           ))}
         </div>
 
         <p className="mt-3 text-xs text-ink-500">
           Điểm này do <b>hệ thống tính bằng công thức cố định</b> trên dữ liệu
-          thật, không phải AI đoán. Trọng số từng phần ghi ở{" "}
-          <code>lib/analytics/constants.ts</code>.
+          thật, không phải AI đoán. Trọng số từng phần do Ban Giám đốc cấu
+          hình.
         </p>
       </div>
 
@@ -159,19 +159,23 @@ export default function BriefingPanel({
               <Badge tone="amber">Dự báo chưa được kiểm chứng</Badge>
             ) : (
               <Badge tone="slate">
-                Dự báo đúng {accuracy.accuracyPercent}% trên {accuracy.total} việc
+                Dự báo đúng{" "}
+                {accuracy.accuracyPercent?.toLocaleString("vi-VN", {
+                  maximumFractionDigits: 1,
+                })}
+                % trên {accuracy.total.toLocaleString("vi-VN")} việc
               </Badge>
             )}
           </div>
 
           {data.engineError && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
               {data.engineError}
             </div>
           )}
 
-          <div className="rounded-lg border border-ink-200 bg-ink-50/60 px-4 py-3">
-            <div className="mb-1 text-[11px] font-semibold tracking-wide text-ink-500 uppercase">
+          <div className="rounded-md bg-ink-50 px-4 py-3">
+            <div className="mb-1 text-sm font-semibold text-ink-800">
               Tóm tắt
             </div>
             <p className="text-sm text-ink-800">{data.executiveSummary}</p>
@@ -179,17 +183,15 @@ export default function BriefingPanel({
 
           {data.keyRisks.length > 0 && (
             <div>
-              <div className="mb-2 text-[11px] font-semibold tracking-wide text-ink-500 uppercase">
+              <div className="mb-2 text-sm font-semibold text-ink-800">
                 Rủi ro chính
               </div>
               <div className="space-y-1.5">
                 {data.keyRisks.map((r, i) => (
                   <div
                     key={i}
-                    className={`rounded-lg border px-3 py-2 text-sm ${
-                      r.riskLevel === "CRITICAL"
-                        ? "border-red-200 bg-red-50/60"
-                        : "border-amber-200 bg-amber-50/60"
+                    className={`rounded-md px-3 py-2 text-sm ${
+                      r.riskLevel === "CRITICAL" ? "bg-red-50" : "bg-amber-50"
                     }`}
                   >
                     <span className="font-medium text-ink-900">{r.area}</span>
@@ -202,7 +204,7 @@ export default function BriefingPanel({
 
           {data.workloadWarnings.length > 0 && (
             <div>
-              <div className="mb-2 text-[11px] font-semibold tracking-wide text-ink-500 uppercase">
+              <div className="mb-2 text-sm font-semibold text-ink-800">
                 Tải nhân sự
               </div>
               <ul className="list-inside list-disc space-y-1 text-sm text-ink-700">
@@ -214,7 +216,7 @@ export default function BriefingPanel({
           )}
 
           <div>
-            <div className="mb-2 text-[11px] font-semibold tracking-wide text-ink-500 uppercase">
+            <div className="mb-2 text-sm font-semibold text-ink-800">
               Việc nên làm tuần này
             </div>
             <ol className="list-inside list-decimal space-y-1.5 text-sm text-ink-700">
@@ -224,7 +226,7 @@ export default function BriefingPanel({
             </ol>
           </div>
 
-          <div className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-[11px] text-ink-500">
+          <div className="border-t border-ink-100 pt-3 text-xs text-ink-500">
             {data.dataBasis}
             <br />
             Phần diễn giải và khuyến nghị là gợi ý — quyết định vẫn là của Ban

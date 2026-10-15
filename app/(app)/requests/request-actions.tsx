@@ -89,7 +89,7 @@ export default function RequestActions({
             ))}
           </select>
           <button
-            className="btn-success btn-sm inline-flex items-center gap-1.5"
+            className="btn-primary btn-sm inline-flex items-center gap-1.5"
             disabled={busy}
             onClick={() => send("ACCEPT")}
           >

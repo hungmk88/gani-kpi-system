@@ -281,11 +281,11 @@ export default function TargetEditor({
           <div key={g.employeeId} className="card p-4">
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <span className="font-medium text-ink-800">{g.employeeName}</span>
-              <span className="rounded-full bg-ink-100 px-2 py-0.5 text-xs text-ink-500">
+              <span className="text-xs text-ink-500">
                 {g.role === "MANAGER" ? "Trưởng phòng" : "Nhân viên"}
               </span>
               {ownLocked && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-800">
+                <span className="inline-flex items-center gap-1 text-xs text-ink-600">
                   <Lock size={12} strokeWidth={2} /> Ban Giám đốc đặt chỉ tiêu
                   này
                 </span>
@@ -294,7 +294,7 @@ export default function TargetEditor({
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-xs uppercase tracking-wide text-ink-500">
+                  <tr className="text-left text-[13px] font-semibold text-ink-600">
                     <th className="py-1 pr-4">Chỉ tiêu</th>
                     <th className="py-1 pr-4">Trọng số</th>
                     <th className="py-1">Mục tiêu</th>
@@ -315,7 +315,7 @@ export default function TargetEditor({
                     return (
                       <tr key={r.resultId} className="border-t border-ink-100">
                         <td className="py-2 pr-4 text-ink-800">{r.kpiName}</td>
-                        <td className="py-2 pr-4 text-ink-600">
+                        <td className="py-2 pr-4 text-ink-600 tabular-nums">
                           {r.weightPercent}%
                         </td>
                         <td className="py-2">
@@ -391,7 +391,7 @@ export default function TargetEditor({
                 )}
               </span>
             ) : savedCount !== null ? (
-              <span className="inline-flex items-center gap-1.5 text-emerald-700">
+              <span className="inline-flex items-center gap-1.5 text-leaf-700">
                 <CheckCircle2 size={15} strokeWidth={2} /> Đã lưu {savedCount}{" "}
                 mục tiêu.
               </span>
@@ -399,7 +399,7 @@ export default function TargetEditor({
               <span className="text-ink-500">Không có thay đổi.</span>
             )}
             {!busy && dirtyCount > 0 && savedCount !== null && (
-              <span className="ml-2 text-emerald-700">
+              <span className="ml-2 text-leaf-700">
                 (đã lưu {savedCount} dòng)
               </span>
             )}
@@ -407,13 +407,13 @@ export default function TargetEditor({
           <button
             onClick={save}
             disabled={busy || dirtyCount === 0 || invalidCount > 0}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+            className="btn-primary"
           >
             {busy ? (
               "Đang lưu..."
             ) : (
               <>
-                <Save size={15} strokeWidth={2} /> Lưu mục tiêu
+                <Save size={16} strokeWidth={2} /> Lưu mục tiêu
               </>
             )}
           </button>

@@ -108,9 +108,11 @@ export default async function KpiPeriodPage({
             {can(user, "kpi.target.assign") && (
               <Link
                 href={`/kpi/${period.id}/targets`}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100"
+                className="btn-ghost btn-sm"
               >
-                <Target size={15} strokeWidth={2} /> Đặt mục tiêu
+                <Target size={16} strokeWidth={2} />{" "}
+                {/* Kỳ đã chốt thì mục tiêu chỉ còn để xem */}
+                {period.status === "FINALIZED" ? "Xem mục tiêu" : "Đặt mục tiêu"}
               </Link>
             )}
             <PeriodStatusBadge status={period.status} />
@@ -120,7 +122,7 @@ export default async function KpiPeriodPage({
 
       {/* ---------- Đường thời gian 2-4-5 ---------- */}
       <div className="card mb-6 p-4">
-        <div className="mb-3 text-xs font-semibold tracking-wide text-ink-500 uppercase">
+        <div className="mb-3 text-sm font-semibold text-ink-800">
           Lịch chốt kỳ
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
@@ -147,8 +149,8 @@ export default async function KpiPeriodPage({
           />
         </div>
         {period.status === "FINALIZED" && (
-          <div className="mt-3 flex items-start gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-            <Lock size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
+          <div className="mt-3 flex items-start gap-1.5 rounded-md bg-ink-50 px-3 py-2 text-sm text-ink-700">
+            <Lock size={16} strokeWidth={2} className="mt-0.5 shrink-0 text-ink-500" />
             Kỳ này đã chốt và khoá vĩnh viễn. Chỉ Ban Giám đốc mới sửa được,
             và mỗi lần sửa đều để lại dấu vết không xoá được trong nhật ký hệ
             thống.
@@ -183,20 +185,18 @@ function Phase({
   done: boolean;
 }) {
   return (
+    // Ô bên trong thẻ: nền ink-50, không viền (tránh thẻ lồng thẻ). Bước
+    // đang mở chỉ được đánh dấu bằng vạch xanh thương hiệu bên trái.
     <div
-      className={`rounded-lg border p-3 ${
-        active
-          ? "border-brand-300 bg-brand-50"
-          : done
-            ? "border-emerald-200 bg-emerald-50/50"
-            : "border-ink-200 bg-white"
+      className={`rounded-md border-l-[3px] bg-ink-50 p-3 ${
+        active ? "border-brand-600" : "border-transparent"
       }`}
     >
       <div className="flex items-center gap-2">
         <span
           className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
             done
-              ? "bg-emerald-500 text-white"
+              ? "bg-leaf-600 text-white"
               : active
                 ? "bg-brand-600 text-white"
                 : "bg-ink-200 text-ink-600"

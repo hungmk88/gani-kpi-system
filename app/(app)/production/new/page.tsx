@@ -44,7 +44,7 @@ export default async function NewShiftPage() {
       <div className="mb-4">
         <Link
           href="/production"
-          className="text-sm text-ink-500 hover:text-brand-600"
+          className="text-sm text-ink-500 hover:text-brand-700"
         >
           ← Xưởng sản xuất
         </Link>

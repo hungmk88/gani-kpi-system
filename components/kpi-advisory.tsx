@@ -63,45 +63,45 @@ export default function KpiAdvisoryPanel({
 
   if (!open) {
     return (
-      <button
-        className="mt-1.5 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100"
-        onClick={ask}
-      >
-        <Search size={13} strokeWidth={2} /> Xin phân tích tham khảo
+      <button className="btn btn-sm mt-1.5 w-full" onClick={ask}>
+        <Search size={14} strokeWidth={2} aria-hidden /> Xin phân tích tham khảo
       </button>
     );
   }
 
+  const pct = (n: number) =>
+    `${n.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%`;
+
+  // Khung phân tích: một khối viền mảnh, các phần bên trong chỉ cách nhau bằng
+  // khoảng trắng và nhãn viết thường câu — không lồng hộp trong hộp.
   return (
-    <div className="mt-1.5 rounded-lg border border-violet-200 bg-violet-50/60 p-2.5 text-xs">
+    <div className="mt-1.5 rounded-md border border-ink-200 bg-white p-2.5 text-xs">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="font-semibold text-violet-900">
-          Phân tích tham khảo
-        </span>
+        <span className="font-semibold text-ink-800">Phân tích tham khảo</span>
         <button
-          className="text-violet-500 hover:text-violet-800"
+          className="text-brand-700 hover:underline"
           onClick={() => setOpen(false)}
         >
           Đóng
         </button>
       </div>
 
-      {busy && <div className="text-violet-700">Đang phân tích...</div>}
+      {busy && <div className="text-ink-500">Đang phân tích...</div>}
 
       {error && (
-        <div className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-red-700">
+        <div className="rounded-md bg-red-50 px-2 py-1.5 text-red-700">
           {error}
         </div>
       )}
 
       {data && (
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="rounded border border-violet-300 bg-white px-1.5 py-0.5 font-semibold text-violet-800">
-              Đề xuất {data.suggestedScore}%
+        <div className="space-y-2.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="font-semibold text-ink-900 tabular-nums">
+              Đề xuất {pct(data.suggestedScore)}
             </span>
             <ConfidencePill value={data.confidencePercent} />
-            <span className="rounded border border-ink-200 bg-white px-1.5 py-0.5 text-ink-500">
+            <span className="text-ink-500">
               {data.engine === "GEMINI"
                 ? `Gemini · ${data.modelName}`
                 : "Luật cứng"}
@@ -109,16 +109,16 @@ export default function KpiAdvisoryPanel({
           </div>
 
           {data.engineError && (
-            <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
+            <div className="rounded-md bg-amber-50 px-2 py-1 text-amber-800">
               {data.engineError}
             </div>
           )}
 
-          <Block label="SỐ LIỆU THẬT" tone="ink">
+          <Block label="Số liệu thật" tone="ink">
             {data.factSummary}
           </Block>
 
-          <Block label="PHẦN MÁY SUY ĐOÁN — CÓ THỂ SAI" tone="violet">
+          <Block label="Phần máy suy đoán — có thể sai" tone="violet">
             {data.aiInference}
           </Block>
 
@@ -132,21 +132,21 @@ export default function KpiAdvisoryPanel({
             <ListBlock label="Cần lưu ý" items={data.risks} tone="red" />
           )}
 
-          <Block label="GỢI Ý CHO NGƯỜI DUYỆT" tone="ink">
+          <Block label="Gợi ý cho người duyệt" tone="ink">
             {data.recommendation}
           </Block>
 
-          <div className="rounded border border-ink-200 bg-white px-2 py-1.5 text-[11px] text-ink-500">
+          <div className="border-t border-ink-100 pt-2 text-xs text-ink-500">
             Đây chỉ là phân tích tham khảo. Điểm chính thức do trưởng phòng và
             Ban Giám đốc quyết định — máy không ghi gì vào bảng điểm.
           </div>
 
           {onUseScore && (
             <button
-              className="w-full rounded-lg border border-violet-300 bg-white px-2 py-1.5 font-medium text-violet-700 hover:bg-violet-100"
+              className="btn-ghost btn-sm w-full"
               onClick={() => onUseScore(data.suggestedScore)}
             >
-              Điền {data.suggestedScore}% vào ô số chốt
+              Điền {pct(data.suggestedScore)} vào ô số chốt
             </button>
           )}
         </div>
@@ -156,15 +156,16 @@ export default function KpiAdvisoryPanel({
 }
 
 function ConfidencePill({ value }: { value: number }) {
+  // Tự tin cao là trạng thái bình thường → chữ màu lá, không nền
   const tone =
     value >= 75
-      ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+      ? "text-leaf-700"
       : value >= 50
-        ? "border-amber-300 bg-amber-50 text-amber-700"
-        : "border-red-300 bg-red-50 text-red-700";
+        ? "rounded-md bg-amber-50 px-1.5 py-0.5 text-amber-800"
+        : "rounded-md bg-red-50 px-1.5 py-0.5 text-red-700";
   return (
-    <span className={`rounded border px-1.5 py-0.5 ${tone}`}>
-      Tự tin {value}%
+    <span className={tone}>
+      Tự tin {value.toLocaleString("vi-VN")}%
     </span>
   );
 }
@@ -179,16 +180,10 @@ function Block({
   children: React.ReactNode;
 }) {
   return (
-    <div
-      className={`rounded border px-2 py-1.5 ${
-        tone === "violet"
-          ? "border-violet-200 bg-white"
-          : "border-ink-200 bg-white"
-      }`}
-    >
+    <div>
       <div
-        className={`mb-0.5 text-[10px] font-bold tracking-wide ${
-          tone === "violet" ? "text-violet-600" : "text-ink-500"
+        className={`mb-0.5 text-xs font-semibold ${
+          tone === "violet" ? "text-brand-700" : "text-ink-600"
         }`}
       >
         {label}
@@ -208,15 +203,13 @@ function ListBlock({
   tone: "emerald" | "amber" | "red";
 }) {
   const cls = {
-    emerald: "text-emerald-700",
-    amber: "text-amber-700",
+    emerald: "text-leaf-700",
+    amber: "text-amber-800",
     red: "text-red-700",
   }[tone];
   return (
-    <div className="rounded border border-ink-200 bg-white px-2 py-1.5">
-      <div className={`mb-0.5 text-[10px] font-bold tracking-wide ${cls}`}>
-        {label.toUpperCase()}
-      </div>
+    <div>
+      <div className={`mb-0.5 text-xs font-semibold ${cls}`}>{label}</div>
       <ul className="list-inside list-disc space-y-0.5 text-ink-700">
         {items.map((s, i) => (
           <li key={i}>{s}</li>

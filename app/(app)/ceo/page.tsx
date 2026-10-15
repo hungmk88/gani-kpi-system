@@ -1,7 +1,7 @@
 import { formatVnDateTime, vnDate, vnParts } from "@/lib/vn-time";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { CircleCheck } from "lucide-react";
+import { CircleCheck, ChevronRight } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { round2, scoreStateOf, type ScoreState } from "@/lib/kpi";
@@ -201,35 +201,35 @@ export default async function CeoDashboard() {
       />
 
       {/* --------------- Chỉ số sinh tồn --------------- */}
+      {/* Chỉ thẻ có ngoại lệ (> 0) mới mang vạch màu; bằng 0 là thẻ trắng. */}
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Cảnh báo cần xử lý"
           value={exceptionCount}
-          tone={exceptionCount > 0 ? "red" : "green"}
-          surface={exceptionCount > 0 ? "red" : "green"}
+          tone={exceptionCount > 0 ? "red" : "slate"}
+          surface={exceptionCount > 0 ? "red" : undefined}
           hint={exceptionCount > 0 ? "đang chờ can thiệp" : "không có ngoại lệ"}
         />
         <StatCard
           label="Việc trễ hạn"
           value={overdueTasks}
-          tone={overdueTasks > 0 ? "red" : "green"}
-          surface={overdueTasks > 0 ? "red" : "green"}
+          tone={overdueTasks > 0 ? "red" : "slate"}
+          surface={overdueTasks > 0 ? "red" : undefined}
           hint={`trên tổng ${openTasks} việc đang mở`}
           href="/tasks?filter=overdue"
         />
         <StatCard
           label="Việc chưa có người nhận"
           value={unassigned}
-          tone={unassigned > 0 ? "amber" : "green"}
-          surface={unassigned > 0 ? "amber" : "green"}
+          tone={unassigned > 0 ? "amber" : "slate"}
+          surface={unassigned > 0 ? "amber" : undefined}
           hint="cần phân công"
           href="/tasks"
         />
         <StatCard
           label="KPI chờ bạn chốt"
           value={pendingCeo}
-          tone={pendingCeo > 0 ? "violet" : "green"}
-          surface={pendingCeo > 0 ? "violet" : "green"}
+          tone="slate"
           hint={period?.name ?? "chưa mở kỳ"}
           href={period ? `/kpi/${period.id}` : "/kpi"}
         />
@@ -248,7 +248,7 @@ export default async function CeoDashboard() {
             </div>
           </div>
           <Link href={`/kpi/${period.id}`} className="btn-primary btn-sm">
-            Mở bảng duyệt KPI →
+            Mở bảng duyệt KPI <ChevronRight size={16} aria-hidden />
           </Link>
         </div>
       )}
@@ -260,14 +260,14 @@ export default async function CeoDashboard() {
         </h2>
 
         {exceptionCount === 0 ? (
-          <div className="card border-emerald-200 bg-emerald-50/50 p-6 text-center">
-            <div className="mb-1 flex justify-center text-emerald-600">
-              <CircleCheck size={28} strokeWidth={1.75} />
+          <div className="card p-6 text-center">
+            <div className="mb-1 flex justify-center text-leaf-600">
+              <CircleCheck size={28} strokeWidth={1.75} aria-hidden />
             </div>
-            <div className="font-medium text-emerald-800">
+            <div className="font-medium text-ink-800">
               Không có mắt xích nào báo động
             </div>
-            <div className="mt-1 text-sm text-emerald-700">
+            <div className="mt-1 text-sm text-ink-500">
               Không có việc báo động đỏ, không có việc tắc quá {BLOCKED_ALERT_HOURS}{" "}
               giờ, không có dòng KPI lệch số liệu.
             </div>
@@ -291,7 +291,10 @@ export default async function CeoDashboard() {
                       </div>
                       <div className="mt-0.5 text-xs text-ink-500">
                         {t.department.name} ·{" "}
-                        {t.assignee?.fullName ?? "CHƯA GIAO"} ·{" "}
+                        {t.assignee?.fullName ?? (
+                          <span className="text-amber-800">chưa giao</span>
+                        )}{" "}
+                        ·{" "}
                         <DueDate date={t.dueDate} /> · {t.riskReason}
                       </div>
                     </div>
@@ -318,7 +321,10 @@ export default async function CeoDashboard() {
                       </div>
                       <div className="mt-0.5 text-xs text-ink-500">
                         {t.department.name} ·{" "}
-                        {t.assignee?.fullName ?? "CHƯA GIAO"} · tắc từ{" "}
+                        {t.assignee?.fullName ?? (
+                          <span className="text-amber-800">chưa giao</span>
+                        )}{" "}
+                        · tắc từ{" "}
                         {t.blockedSince
                           ? formatVnDateTime(t.blockedSince)
                           : "—"}
@@ -360,7 +366,7 @@ export default async function CeoDashboard() {
                             .join(" · ")}
                         </div>
                       </div>
-                      <Badge tone="red">Lệch {r.variancePercent}%</Badge>
+                      <Badge tone="red">Lệch {fmt(r.variancePercent)}%</Badge>
                     </Link>
                   );
                 })}
@@ -388,7 +394,7 @@ export default async function CeoDashboard() {
                         {fmt(r.actualSelf)}
                       </div>
                     </div>
-                    <Badge tone="red">Lệch {r.mismatchPercent}%</Badge>
+                    <Badge tone="red">Lệch {fmt(r.mismatchPercent)}%</Badge>
                   </Link>
                 ))}
               </ExceptionBlock>
@@ -426,7 +432,7 @@ export default async function CeoDashboard() {
                       <span
                         className={
                           d.tasksLate > 0
-                            ? "font-semibold text-red-600"
+                            ? "font-semibold text-red-700"
                             : "text-ink-600"
                         }
                       >

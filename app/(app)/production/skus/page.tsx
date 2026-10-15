@@ -39,7 +39,7 @@ export default async function SkusPage() {
       <div className="mb-4">
         <Link
           href="/production"
-          className="text-sm text-ink-500 hover:text-brand-600"
+          className="text-sm text-ink-500 hover:text-brand-700"
         >
           ← Xưởng sản xuất
         </Link>
@@ -49,7 +49,7 @@ export default async function SkusPage() {
         title="Danh mục sản phẩm & chuẩn"
         subtitle="Chuẩn của mỗi mã phải đặt TRƯỚC khi chạy ca. Đây là thước đo để chấm điểm — Ban Giám đốc đặt chỉ tiêu khác chuẩn lúc khoá số thì bắt buộc ghi lý do."
         actions={
-          <Link href="/production/raw-materials" className="btn-ghost btn-sm inline-flex items-center gap-1.5">
+          <Link href="/production/raw-materials" className="btn-ghost btn-sm">
             <Package size={14} strokeWidth={2} /> Kho NVL
           </Link>
         }

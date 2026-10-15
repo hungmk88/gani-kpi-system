@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { TriangleAlert, CalendarCheck } from "lucide-react";
+import { TriangleAlert, CalendarCheck, Check } from "lucide-react";
 import { addDays, parseVnDate, vnDateKey } from "@/lib/vn-time";
 
 type Quota = {
@@ -76,12 +76,12 @@ export default function LeaveRequestForm() {
   return (
     <div className="card space-y-3 p-4">
       {quota && (
-        <div className="space-y-1 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-700">
+        <div className="space-y-1 rounded-md bg-ink-50 px-3 py-2 text-sm text-ink-700 tabular-nums">
           <div className="flex items-center gap-1.5">
-            <CalendarCheck size={15} strokeWidth={2} />
+            <CalendarCheck size={16} strokeWidth={2} className="text-ink-500" aria-hidden />
             Số ngày phép còn lại trong năm: <b>{quota.remaining}/{quota.total}</b>
           </div>
-          <div className="pl-[21px] text-xs text-brand-600">
+          <div className="pl-[22px] text-xs text-ink-500">
             {quota.half.label}: <b>{quota.half.remaining}/{quota.half.cap}</b> — tối đa 6 ngày mỗi nửa năm
           </div>
         </div>
@@ -92,7 +92,8 @@ export default function LeaveRequestForm() {
         </div>
       )}
       {ok && (
-        <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+        <div className="flex items-center gap-2 text-sm text-ink-700">
+          <Check size={16} strokeWidth={2.5} className="shrink-0 text-leaf-600" aria-hidden />
           Đã gửi đơn — chờ người có thẩm quyền duyệt.
         </div>
       )}

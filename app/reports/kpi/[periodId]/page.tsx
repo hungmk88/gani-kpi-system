@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { kpiScopeWhere } from "@/lib/rbac";
 import { classifyScore, round2, summarizeResults } from "@/lib/kpi";
 import { KPI_SCORE_CAP } from "@/lib/constants";
+import { fmtScore } from "@/components/ui";
 import PrintButton from "./print-button";
 
 export const dynamic = "force-dynamic";
@@ -109,13 +110,17 @@ export default async function KpiReportPage({
   const capped = results.filter((r) => r.isCapped);
   const notFinalized = results.filter((r) => r.status !== "FINALIZED");
 
+  // Màu cột theo ý nghĩa: tốt → lá xanh, đạt → xanh lam (trung tính),
+  // cần cải thiện → vàng, không đạt → đỏ. Trước đây cả 5 cột cùng xanh lam.
   const buckets = [
-    { label: "Xuất sắc (≥120)", n: allEmployees.filter((e) => e.totalScore >= 120).length },
-    { label: "Tốt (100–119)", n: allEmployees.filter((e) => e.totalScore >= 100 && e.totalScore < 120).length },
-    { label: "Đạt (85–99)", n: allEmployees.filter((e) => e.totalScore >= 85 && e.totalScore < 100).length },
-    { label: "Cần cải thiện (70–84)", n: allEmployees.filter((e) => e.totalScore >= 70 && e.totalScore < 85).length },
-    { label: "Không đạt (<70)", n: allEmployees.filter((e) => e.totalScore < 70).length },
+    { label: "Xuất sắc (≥120)", bar: "bg-leaf-600", n: allEmployees.filter((e) => e.totalScore >= 120).length },
+    { label: "Tốt (100–119)", bar: "bg-leaf-500", n: allEmployees.filter((e) => e.totalScore >= 100 && e.totalScore < 120).length },
+    { label: "Đạt (85–99)", bar: "bg-brand-500", n: allEmployees.filter((e) => e.totalScore >= 85 && e.totalScore < 100).length },
+    { label: "Cần cải thiện (70–84)", bar: "bg-amber-500", n: allEmployees.filter((e) => e.totalScore >= 70 && e.totalScore < 85).length },
+    { label: "Không đạt (<70)", bar: "bg-red-600", n: allEmployees.filter((e) => e.totalScore < 70).length },
   ];
+  // Danh sách chạm trần chỉ in 15 dòng đầu — phần còn lại báo số lượng
+  const CAPPED_LIMIT = 15;
   const maxBucket = Math.max(1, ...buckets.map((b) => b.n));
 
   // Kỳ chưa chốt: điểm chỉ là tạm tính, KHÔNG xếp loại — in ra "Không đạt"
@@ -141,7 +146,7 @@ export default async function KpiReportPage({
 
       {/* ---------------- trang bìa ---------------- */}
       <header className="mb-8 border-b-4 border-brand-600 pb-5">
-        <div className="text-xs font-semibold tracking-widest text-brand-700 uppercase">
+        <div className="text-sm font-semibold text-brand-700">
           {company?.value ?? "GANI FOODY"} · Báo cáo điều hành
         </div>
         <h1 className="mt-2 text-3xl font-bold">
@@ -162,8 +167,8 @@ export default async function KpiReportPage({
           <span>Người xuất: {user.fullName}</span>
         </div>
         {period.status !== "FINALIZED" && (
-          <div className="mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Kỳ này chưa chốt xong — còn {notFinalized.length} dòng KPI chưa
+          <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Kỳ này chưa chốt xong — còn {fmt(notFinalized.length)} dòng KPI chưa
             khoá. Số liệu trong báo cáo có thể còn thay đổi.
           </div>
         )}
@@ -173,17 +178,17 @@ export default async function KpiReportPage({
       <section className="mb-8">
         <h2 className="mb-3 text-lg font-bold">1. Tổng quan</h2>
 
-        <div className="mb-5 grid grid-cols-4 gap-3">
-          <Stat label="Nhân sự được chấm" value={String(allEmployees.length)} />
-          <Stat label="Điểm trung bình" value={companyAvg.toFixed(2)} />
+        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4 print:grid-cols-4">
+          <Stat label="Nhân sự được chấm" value={fmt(allEmployees.length)} />
+          <Stat label="Điểm trung bình" value={fmtScore(companyAvg)} />
           <Stat
             label="Dòng lệch số liệu"
-            value={String(mismatches.length)}
+            value={fmt(mismatches.length)}
             warn={mismatches.length > 0}
           />
           <Stat
             label={`Chạm trần ${KPI_SCORE_CAP}%`}
-            value={String(capped.length)}
+            value={fmt(capped.length)}
           />
         </div>
 
@@ -203,11 +208,11 @@ export default async function KpiReportPage({
                 <td className="py-1">
                   <div className="flex items-center gap-2">
                     <div
-                      className="h-4 rounded-sm bg-brand-500"
+                      className={`h-4 rounded-sm ${b.bar}`}
                       style={{ width: `${(b.n / maxBucket) * 100}%`, minWidth: b.n ? 8 : 0 }}
                     />
-                    <span className="text-xs font-medium text-ink-700">
-                      {b.n}
+                    <span className="text-xs font-medium text-ink-700 tabular-nums">
+                      {fmt(b.n)}
                     </span>
                   </div>
                 </td>
@@ -223,7 +228,14 @@ export default async function KpiReportPage({
         <h2 className="mb-3 text-lg font-bold">
           {isFinal ? "2. Xếp hạng phòng ban" : "2. Điểm tạm tính theo phòng ban"}
         </h2>
-        <table className="w-full border-collapse text-sm">
+        <table className="w-full table-fixed border-collapse text-sm tabular-nums">
+          <colgroup>
+            <col className="w-10" />
+            <col />
+            <col className="w-24" />
+            <col className="w-36" />
+            <col className="w-36" />
+          </colgroup>
           <thead>
             <tr className="bg-ink-100">
               <th className="border border-ink-200 px-2 py-1.5 text-left">#</th>
@@ -249,10 +261,10 @@ export default async function KpiReportPage({
                   {d.name}
                 </td>
                 <td className="border border-ink-200 px-2 py-1.5 text-right">
-                  {d.employees.length}
+                  {fmt(d.employees.length)}
                 </td>
                 <td className="border border-ink-200 px-2 py-1.5 text-right font-semibold">
-                  {d.avgScore.toFixed(2)}
+                  {fmtScore(d.avgScore)}
                 </td>
                 <td className="border border-ink-200 px-2 py-1.5">
                   {rankLabel(d.avgScore)}
@@ -271,9 +283,16 @@ export default async function KpiReportPage({
           {mismatches.length > 0 && (
             <div className="mb-4">
               <h3 className="mb-2 text-sm font-semibold text-red-700">
-                Lệch số liệu trên 5% ({mismatches.length} dòng)
+                Lệch số liệu trên 5% ({fmt(mismatches.length)} dòng)
               </h3>
-              <table className="w-full border-collapse text-xs">
+              <table className="w-full table-fixed border-collapse text-xs tabular-nums">
+                <colgroup>
+                  <col className="w-[28%]" />
+                  <col />
+                  <col className="w-24" />
+                  <col className="w-24" />
+                  <col className="w-20" />
+                </colgroup>
                 <thead>
                   <tr className="bg-red-50">
                     <th className="border border-ink-200 px-2 py-1 text-left">
@@ -309,7 +328,7 @@ export default async function KpiReportPage({
                         {fmt(r.actualSelf)}
                       </td>
                       <td className="border border-ink-200 px-2 py-1 text-right font-semibold text-red-700">
-                        {r.mismatchPercent}%
+                        {fmt(r.mismatchPercent)}%
                       </td>
                     </tr>
                   ))}
@@ -321,14 +340,14 @@ export default async function KpiReportPage({
           {capped.length > 0 && (
             <div>
               <h3 className="mb-2 text-sm font-semibold text-ink-700">
-                Vượt trần {KPI_SCORE_CAP}% ({capped.length} dòng)
+                Vượt trần {KPI_SCORE_CAP}% ({fmt(capped.length)} dòng)
               </h3>
               <p className="mb-2 text-xs text-ink-600">
                 Vượt trần nhiều kỳ liên tiếp thường là dấu hiệu chỉ tiêu giao
                 đang đặt thấp hơn năng lực thật.
               </p>
               <ul className="list-inside list-disc text-xs text-ink-700">
-                {capped.slice(0, 15).map((r) => (
+                {capped.slice(0, CAPPED_LIMIT).map((r) => (
                   <li key={r.id}>
                     {r.employee.fullName} — {r.kpiDefinition?.name ?? "—"} (giao{" "}
                     {fmt(r.targetValue)}, thực tế{" "}
@@ -336,6 +355,11 @@ export default async function KpiReportPage({
                   </li>
                 ))}
               </ul>
+              {capped.length > CAPPED_LIMIT && (
+                <p className="mt-1 text-xs text-ink-500">
+                  … và {fmt(capped.length - CAPPED_LIMIT)} dòng khác
+                </p>
+              )}
             </div>
           )}
         </section>
@@ -353,7 +377,7 @@ export default async function KpiReportPage({
             <h3 className="mb-2 border-b border-ink-200 pb-1 text-base font-semibold">
               {d.name}
               <span className="ml-2 text-sm font-normal text-ink-500">
-                trung bình {d.avgScore.toFixed(2)} điểm
+                trung bình {fmtScore(d.avgScore)} điểm
               </span>
             </h3>
 
@@ -368,12 +392,22 @@ export default async function KpiReportPage({
                       </span>
                     )}
                   </span>
-                  <span className="text-sm font-bold">
-                    {e.totalScore.toFixed(2)} điểm ·{" "}
+                  <span className="text-sm font-bold tabular-nums">
+                    {fmtScore(e.totalScore)} điểm ·{" "}
                     {rankLabel(e.totalScore)}
                   </span>
                 </div>
-                <table className="w-full border-collapse text-xs">
+                {/* table-fixed + cùng một bộ độ rộng cột: các bảng của mọi
+                    nhân sự/phòng ban thẳng cột với nhau, không xô lệch. */}
+                <table className="w-full table-fixed border-collapse text-xs tabular-nums">
+                  <colgroup>
+                    <col />
+                    <col className="w-16" />
+                    <col className="w-24" />
+                    <col className="w-24" />
+                    <col className="w-28" />
+                    <col className="w-16" />
+                  </colgroup>
                   <thead>
                     <tr className="bg-ink-100">
                       <th className="border border-ink-200 px-2 py-1 text-left">
@@ -411,7 +445,7 @@ export default async function KpiReportPage({
                           </span>
                         </td>
                         <td className="border border-ink-200 px-2 py-1 text-right">
-                          {r.weightPercent}%
+                          {fmt(r.weightPercent)}%
                         </td>
                         <td className="border border-ink-200 px-2 py-1 text-right">
                           {fmt(r.targetValue)}
@@ -420,10 +454,15 @@ export default async function KpiReportPage({
                           {fmt(r.actualFinal ?? r.actualSelf ?? r.actualSystem)}
                         </td>
                         <td className="border border-ink-200 px-2 py-1 text-right">
-                          {r.achievementPercent}%{r.isCapped && " ⌈"}
+                          {r.isCapped && (
+                            <span className="mr-1 rounded bg-ink-100 px-1 text-xs font-medium text-ink-700">
+                              Trần
+                            </span>
+                          )}
+                          {fmt(r.achievementPercent)}%
                         </td>
                         <td className="border border-ink-200 px-2 py-1 text-right font-semibold">
-                          {r.weightedScore.toFixed(2)}
+                          {fmtScore(r.weightedScore)}
                         </td>
                       </tr>
                     ))}
@@ -432,14 +471,14 @@ export default async function KpiReportPage({
                         Tổng cộng
                       </td>
                       <td className="border border-ink-200 px-2 py-1 text-right">
-                        {e.totalWeight}%
+                        {fmt(e.totalWeight)}%
                       </td>
                       <td
                         className="border border-ink-200 px-2 py-1"
                         colSpan={3}
                       />
                       <td className="border border-ink-200 px-2 py-1 text-right">
-                        {e.totalScore.toFixed(2)}
+                        {fmtScore(e.totalScore)}
                       </td>
                     </tr>
                   </tbody>
@@ -452,11 +491,11 @@ export default async function KpiReportPage({
 
       <footer className="mt-8 border-t border-ink-200 pt-4 text-xs text-ink-500">
         <p>
-          Ký hiệu ⌈ là dòng đã chạm trần {KPI_SCORE_CAP}%. Dòng nền đỏ là dòng có
+          Nhãn “Trần” là dòng đã chạm trần {KPI_SCORE_CAP}%. Dòng nền đỏ là dòng có
           số nhân viên khai lệch quá 5% so với số hệ thống.
         </p>
         <p className="mt-1">
-          Báo cáo sinh tự động từ hệ thống Quản lý Công việc &amp; KPI ·{" "}
+          Báo cáo sinh tự động từ hệ thống quản lý công việc &amp; KPI ·{" "}
           {company?.value ?? "GANI FOODY"} · {formatVnDateTime(new Date())}
         </p>
       </footer>
@@ -475,15 +514,15 @@ function Stat({
 }) {
   return (
     <div
-      className={`rounded border p-3 ${
-        warn ? "border-red-300 bg-red-50" : "border-ink-200 bg-ink-50"
+      className={`rounded-md border p-3 ${
+        warn ? "border-red-300 bg-red-50" : "border-ink-200 bg-white"
       }`}
     >
-      <div className="text-[10px] font-semibold tracking-wide text-ink-500 uppercase">
+      <div className={`text-xs font-medium ${warn ? "text-red-700" : "text-ink-500"}`}>
         {label}
       </div>
       <div
-        className={`mt-1 text-xl font-bold ${warn ? "text-red-700" : "text-ink-900"}`}
+        className={`mt-1 text-xl font-bold tabular-nums ${warn ? "text-red-700" : "text-ink-900"}`}
       >
         {value}
       </div>
