@@ -10,7 +10,7 @@ import { writeAudit } from "./audit";
 import { notify } from "./notify";
 import { ceoApprove } from "./services/kpi-service";
 import { getClosingPeriod, getDeadlinePeriod } from "./services/period-service";
-import { classifyScore, summarizeResults } from "./kpi";
+import { classifyScoreFor, scoreStateOf, summarizeResults } from "./kpi";
 import { ROLE_LABEL, TASK_STATUS_LABEL, type Role } from "./constants";
 import { formatVnDate, formatVnDateTime, vnDayRange } from "./vn-time";
 import type { SessionUser } from "./auth";
@@ -634,7 +634,7 @@ async function handleCommand(
     }
 
     const s = summarizeResults(rows);
-    const cls = classifyScore(s.totalScore);
+    const cls = classifyScoreFor(s.totalScore, scoreStateOf(period.status, rows));
     const draft = rows.filter((r) => r.status === "DRAFT").length;
 
     const lines = [

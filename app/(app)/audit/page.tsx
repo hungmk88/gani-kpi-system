@@ -93,7 +93,7 @@ export default async function AuditPage({
       </div>
 
       <div className="table-wrap">
-        <table className="tbl min-w-[900px]">
+        <table className="tbl tbl-stack sm:min-w-[900px]">
           <thead>
             <tr>
               <th className="w-40">Thời điểm</th>
@@ -111,10 +111,10 @@ export default async function AuditPage({
                 <td className="text-xs whitespace-nowrap text-ink-500">
                   {formatDateTime(l.createdAt)}
                 </td>
-                <td className="text-ink-700">
+                <td data-label="Người thực hiện" className="text-ink-700">
                   {l.user?.fullName ?? l.userEmail ?? "Hệ thống"}
                 </td>
-                <td>
+                <td data-label="Hành động">
                   {HIGH_RISK.has(l.action) ? (
                     <Badge tone="red">
                       {ACTION_LABEL[l.action] ?? l.action}
@@ -125,17 +125,17 @@ export default async function AuditPage({
                     </span>
                   )}
                 </td>
-                <td className="font-mono text-xs text-ink-500">
+                <td data-label="Đối tượng" className="font-mono text-xs text-ink-500">
                   {l.entityName}
                   <div className="text-[10px]">{l.entityId.slice(0, 8)}</div>
                 </td>
-                <td className="max-w-sm">
+                <td data-label="Thay đổi" className="max-w-sm">
                   <Diff before={l.beforePayload} after={l.afterPayload} />
                 </td>
-                <td className="max-w-xs text-xs text-ink-600">
+                <td data-label="Lý do" className="max-w-xs text-xs text-ink-600">
                   {l.reason ?? "—"}
                 </td>
-                <td className="font-mono text-xs text-ink-400">
+                <td data-label="IP" className="font-mono text-xs text-ink-400">
                   {l.ipAddress ?? "—"}
                 </td>
               </tr>

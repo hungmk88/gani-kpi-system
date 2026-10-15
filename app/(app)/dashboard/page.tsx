@@ -13,10 +13,10 @@ import {
   TaskGroupHeading,
 } from "@/components/dashboard";
 import {
-  Badge,
   EmptyState,
   PageHeader,
   ProgressBar,
+  ScoreBadge,
   StatCard,
 } from "@/components/ui";
 import { ROLE_LABEL } from "@/lib/constants";
@@ -67,9 +67,6 @@ export default async function DashboardPage() {
       {/* 1 ── Nhịp kỳ KPI. Quản trị không có KPI nên không thấy khối này. */}
       {d.gate && <PeriodGateTrack gate={d.gate} />}
 
-      {/* 1b ── Nhịp xưởng hôm nay, chỉ Admin/BGĐ — họ không ở xưởng hằng ngày */}
-      {d.production && <ProductionStatRow summary={d.production} />}
-
       {/* 2 ── Việc đang chờ chính người này */}
       <h2 className="section-title mb-2">
         Chờ bạn xử lý — xếp theo cái đóng trước
@@ -77,7 +74,7 @@ export default async function DashboardPage() {
       <ActionQueue items={d.queue} />
 
       {/* 3 ── Số liệu, mỗi con số kèm mốc so sánh */}
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-3">
+      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-3 [&>*:last-child:nth-child(odd)]:col-span-2 lg:[&>*:last-child:nth-child(odd)]:col-span-1">
         <StatCard
           label="Việc đang mở"
           value={d.stats.open.value}
@@ -101,7 +98,9 @@ export default async function DashboardPage() {
         {d.stats.kpiScore ? (
           <StatCard
             label={kpiScoreLabel}
-            value={d.stats.kpiScore.value.toFixed(1)}
+            value={d.stats.kpiScore.value.toLocaleString("vi-VN", {
+              maximumFractionDigits: 1,
+            })}
             spark={d.stats.trend}
             sparkTone={
               d.stats.kpiScore.delta !== null && d.stats.kpiScore.delta < 0
@@ -110,7 +109,7 @@ export default async function DashboardPage() {
             }
             delta={d.stats.kpiScore.delta}
             deltaGoodWhen="up"
-            deltaSuffix="so với kỳ trước"
+            deltaSuffix={`· ${d.stats.kpiScore.periodName} đã chốt`}
             href="/kpi"
           />
         ) : (
@@ -123,7 +122,10 @@ export default async function DashboardPage() {
         )}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      {/* grid-cols-1 + min-w-0: thiếu hai thứ này thì trên điện thoại cột lưới
+          tự giãn theo dòng tên việc dài (truncate = nowrap) và cả trang tràn
+          ngang ra ngoài màn hình. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 [&>*]:min-w-0">
         {/* 4 ── Việc: quá hạn và hôm nay là hai nhóm riêng */}
         <div className="lg:col-span-2">
           <div className="mb-3 flex items-center justify-between">
@@ -219,10 +221,10 @@ export default async function DashboardPage() {
                 ) : (
                   <>
                     <div className="mb-3 flex items-center justify-between gap-2">
-                      <Badge tone={d.myKpi.classTone}>
-                        {d.myKpi.totalScore.toFixed(2)} điểm ·{" "}
-                        {d.myKpi.classLabel}
-                      </Badge>
+                      <ScoreBadge
+                        score={d.myKpi.totalScore}
+                        state={d.myKpi.scoreState}
+                      />
                       <span className="text-xs text-ink-500">
                         {d.myKpi.draftCount > 0
                           ? `còn ${d.myKpi.draftCount} chưa khai`
@@ -299,6 +301,14 @@ export default async function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Nhịp xưởng hôm nay, chỉ Admin/BGĐ. Đặt SAU hàng chờ và việc trễ:
+          số liệu nền không được chiếm chỗ của ngoại lệ. */}
+      {d.production && (
+        <div className="mt-6">
+          <ProductionStatRow summary={d.production} />
+        </div>
+      )}
 
       {/* Nhân viên giải trình ngay tại chỗ — trang Phân tích không mở cho họ. */}
       <SelfAnomalyPanel items={d.myOpenAnomalies} />

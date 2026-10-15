@@ -36,7 +36,14 @@ export default async function AnalyticsPage() {
   const isCeo = user.role === "CEO";
   const departmentId = isCeo ? null : (user.departmentId ?? "__none__");
 
-  const [scan, capacity, accuracy, snapshot, anomalies] = await Promise.all([
+  const now = new Date();
+  const overdueWhere = {
+    status: { in: ["TO_DO", "IN_PROGRESS", "BLOCKED", "REVIEW", "BACKLOG"] },
+    dueDate: { lt: now },
+    ...(departmentId ? { departmentId } : {}),
+  };
+  const [scan, capacity, accuracy, snapshot, anomalies, overdue, overdueCount] =
+    await Promise.all([
     runPredictiveScan({ departmentId, persist: false }),
     getCapacityReports(departmentId),
     getPredictionAccuracy(),
@@ -57,6 +64,14 @@ export default async function AnalyticsPage() {
       orderBy: [{ severity: "desc" }, { robustScore: "desc" }],
       take: 20,
     }),
+    // Việc ĐÃ trễ không còn là chuyện dự báo — tách nhóm riêng, cũ nhất trước
+    prisma.task.findMany({
+      where: overdueWhere,
+      include: { assignee: { select: { fullName: true } } },
+      orderBy: { dueDate: "asc" },
+      take: 10,
+    }),
+    prisma.task.count({ where: overdueWhere }),
   ]);
 
   return (
@@ -130,6 +145,47 @@ export default async function AnalyticsPage() {
             hint="chưa đủ lịch sử người phụ trách"
           />
         </div>
+
+        {overdueCount > 0 && (
+          <div className="card mb-4 border-red-200 p-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="font-semibold text-red-700">
+                Đã trễ hạn ({overdueCount}) — không còn là dự báo
+              </div>
+              <Link
+                href="/tasks?filter=overdue"
+                className="text-xs font-medium text-brand-600 hover:underline"
+              >
+                Xem tất cả →
+              </Link>
+            </div>
+            <ul className="divide-y divide-ink-100">
+              {overdue.map((t) => {
+                const days = Math.max(
+                  1,
+                  Math.floor((now.getTime() - new Date(t.dueDate).getTime()) / 86_400_000)
+                );
+                return (
+                  <li key={t.id} className="flex items-center justify-between gap-3 py-2">
+                    <Link
+                      href={`/tasks/${t.id}`}
+                      className="min-w-0 text-sm text-ink-800 hover:text-brand-700"
+                    >
+                      <span className="block truncate font-medium">{t.title}</span>
+                      <span className="text-xs text-ink-500">
+                        {t.code} · {t.assignee?.fullName ?? "chưa giao"} · tiến độ{" "}
+                        {t.progress}%
+                      </span>
+                    </Link>
+                    <span className="shrink-0 text-xs font-semibold text-red-700">
+                      trễ {days} ngày
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
 
         {scan.predictions.length === 0 ? (
           <div className="card p-6 text-center text-ink-500">
@@ -309,7 +365,7 @@ export default async function AnalyticsPage() {
         )}
 
         <div className="table-wrap">
-          <table className="tbl">
+          <table className="tbl tbl-stack">
             <thead>
               <tr>
                 <th>Nhân sự</th>
@@ -325,11 +381,11 @@ export default async function AnalyticsPage() {
               {capacity.reports.map((r) => (
                 <tr key={r.userId}>
                   <td className="font-medium text-ink-800">{r.fullName}</td>
-                  <td className="text-ink-600">{r.departmentName ?? "—"}</td>
-                  <td className="text-right text-ink-600">
+                  <td data-label="Phòng ban" className="text-ink-600">{r.departmentName ?? "—"}</td>
+                  <td data-label="Việc đang mở" className="text-right text-ink-600">
                     {r.assignedTasksCount}
                   </td>
-                  <td className="text-right text-ink-700">
+                  <td data-label="Giờ ước tính" className="text-right text-ink-700">
                     {r.totalEstimatedHours}
                     {r.overdueHours > 0 && (
                       <div className="text-[11px] text-red-600">
@@ -337,7 +393,7 @@ export default async function AnalyticsPage() {
                       </div>
                     )}
                   </td>
-                  <td>
+                  <td data-label="Mức tải">
                     <div className="mb-1 text-xs text-ink-600">
                       {r.utilizationPercent}%
                     </div>
@@ -352,7 +408,7 @@ export default async function AnalyticsPage() {
                       }
                     />
                   </td>
-                  <td>
+                  <td data-label="Tình trạng">
                     <Badge
                       tone={
                         r.workloadStatus === "OVERLOADED"
@@ -365,7 +421,7 @@ export default async function AnalyticsPage() {
                       {WORKLOAD_LABEL[r.workloadStatus]}
                     </Badge>
                   </td>
-                  <td className="max-w-xs text-[11px] text-ink-500">
+                  <td data-label="" className="max-w-xs text-xs text-ink-500">
                     {r.note}
                   </td>
                 </tr>

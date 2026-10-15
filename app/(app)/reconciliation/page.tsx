@@ -137,7 +137,7 @@ export default async function ReconciliationPage() {
         <section>
           <h2 className="section-title mb-3">Lịch sử đã chốt</h2>
           <div className="table-wrap">
-            <table className="tbl">
+            <table className="tbl tbl-stack">
               <thead>
                 <tr>
                   <th>Nhân sự</th>
@@ -153,21 +153,21 @@ export default async function ReconciliationPage() {
                 {resolved.map((r) => (
                   <tr key={r.id}>
                     <td className="text-ink-800">{r.employee.fullName}</td>
-                    <td className="text-ink-700">{r.kpiDefinition.name}</td>
-                    <td className="text-ink-600">{r.period.name}</td>
-                    <td className="text-right font-medium text-ink-900">
+                    <td data-label="Chỉ tiêu" className="text-ink-700">{r.kpiDefinition.name}</td>
+                    <td data-label="Kỳ" className="text-ink-600">{r.period.name}</td>
+                    <td data-label="Số đã chốt" className="text-right font-medium text-ink-900">
                       {fmt(r.resolvedValue)}
                     </td>
-                    <td>
+                    <td data-label="Theo nguồn">
                       <Badge tone="slate">{r.resolvedSource}</Badge>
                     </td>
-                    <td className="text-ink-600">
+                    <td data-label="Người chốt" className="text-ink-600">
                       {r.resolvedBy?.fullName ?? "—"}
                       <div className="text-xs text-ink-400">
                         {formatDateTime(r.resolvedAt)}
                       </div>
                     </td>
-                    <td className="max-w-xs text-xs text-ink-600">
+                    <td data-label="Lý do" className="max-w-xs text-xs text-ink-600">
                       {r.resolveReason}
                     </td>
                   </tr>

@@ -8,6 +8,9 @@ import AiQuickTask from "./ai-quick-task";
 
 export const dynamic = "force-dynamic";
 
+const TASK_LIMIT = 300;
+const DONE_VISIBLE_DAYS = 14;
+
 export default async function TasksPage({
   searchParams,
 }: {
@@ -16,7 +19,22 @@ export default async function TasksPage({
   const user = (await requireSession())!;
   const sp = await searchParams;
 
-  const where: Record<string, unknown> = { ...taskScopeWhere(user) };
+  // Việc đã huỷ không thuộc bảng làm việc; việc xong chỉ giữ 14 ngày gần
+  // nhất — nếu không cột "Hoàn thành" phình vô hạn và chiếm hết hạn mức 300.
+  const doneSince = new Date(Date.now() - DONE_VISIBLE_DAYS * 86_400_000);
+  const where: Record<string, unknown> = {
+    ...taskScopeWhere(user),
+    AND: [
+      { status: { not: "CANCELLED" } },
+      {
+        OR: [
+          { status: { not: "DONE" } },
+          { completedAt: { gte: doneSince } },
+          { completedAt: null, updatedAt: { gte: doneSince } },
+        ],
+      },
+    ],
+  };
   if (sp.filter === "overdue") {
     where.dueDate = { lt: new Date() };
     where.status = { notIn: ["DONE", "CANCELLED"] };
@@ -28,13 +46,14 @@ export default async function TasksPage({
   const canCreate = can(user, "task.assign.department");
   const isCeo = user.role === "CEO";
 
-  const [tasks, departments, assignable] = await Promise.all([
+  const [tasks, totalCount, departments, assignable] = await Promise.all([
     prisma.task.findMany({
       where,
       include: { assignee: true, department: true },
       orderBy: [{ riskScore: "desc" }, { dueDate: "asc" }],
-      take: 300,
+      take: TASK_LIMIT,
     }),
+    prisma.task.count({ where }),
     prisma.department.findMany({ orderBy: { name: "asc" } }),
     canCreate
       ? prisma.user.findMany({
@@ -114,6 +133,8 @@ export default async function TasksPage({
         departments={departments.map((d) => ({ id: d.id, name: d.name }))}
         role={user.role}
         showDeptFilter={user.role === "CEO" || user.role === "ADMIN"}
+        totalCount={totalCount}
+        doneVisibleDays={DONE_VISIBLE_DAYS}
       />
     </>
   );

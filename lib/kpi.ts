@@ -193,6 +193,55 @@ export function summarizeResults(
   return { totalWeight, totalScore, count: results.length };
 }
 
+/**
+ * Tổng điểm đang ở giai đoạn nào — để KHÔNG xếp loại "Không đạt" cho một kỳ
+ * chưa ai chấm (quản trị ngoại lệ: chưa tới hạn thì im lặng, không báo động).
+ *
+ * - UNSCORED: chưa có dòng nào qua bước tự khai → chưa có gì để chấm.
+ * - PROVISIONAL: đã có số nhưng kỳ chưa chốt → điểm tạm tính, chưa xếp loại.
+ * - FINAL: kỳ đã chốt (hoặc mọi dòng đã khoá) → xếp loại chính thức.
+ */
+export type ScoreState = "UNSCORED" | "PROVISIONAL" | "FINAL";
+
+export function scoreStateOf(
+  periodStatus: string | null | undefined,
+  rows: { status: string }[]
+): ScoreState {
+  if (rows.length === 0) return "UNSCORED";
+  if (periodStatus === "FINALIZED" || rows.every((r) => r.status === "FINALIZED")) {
+    return "FINAL";
+  }
+  if (rows.every((r) => r.status === "DRAFT")) return "UNSCORED";
+  return "PROVISIONAL";
+}
+
+/**
+ * Dòng KPI có cần hiện / tính "chưa khai" không. Chỉ tiêu đã ngưng dùng mà
+ * trọng số 0 thì không tính điểm, không cần khai — đưa vào chỉ đội số "chưa
+ * khai" lên. Dùng chung để trang chủ, trang KPI và bảng làm việc đếm như nhau.
+ */
+export function isCountedKpiRow(r: {
+  weightPercent: number | null;
+  kpiDefinition?: { isActive: boolean } | null;
+}) {
+  return r.kpiDefinition?.isActive !== false || (r.weightPercent ?? 0) > 0;
+}
+
+/** Gộp trạng thái của nhiều nhóm (vd cả phòng): chỉ FINAL khi mọi nhóm FINAL. */
+export function combineScoreStates(states: ScoreState[]): ScoreState {
+  if (states.length === 0) return "UNSCORED";
+  if (states.every((s) => s === "FINAL")) return "FINAL";
+  if (states.every((s) => s === "UNSCORED")) return "UNSCORED";
+  return "PROVISIONAL";
+}
+
+/** Nhãn + tông màu cho tổng điểm, có tính tới việc kỳ đã chấm hay chưa. */
+export function classifyScoreFor(score: number, state: ScoreState) {
+  if (state === "UNSCORED") return { label: "Chưa chấm", tone: "slate" as const };
+  if (state === "PROVISIONAL") return { label: "Tạm tính", tone: "slate" as const };
+  return classifyScore(score);
+}
+
 /** Xếp loại theo tổng điểm (thang 100). */
 export function classifyScore(score: number) {
   if (score >= 120) return { label: "Xuất sắc", tone: "emerald" as const };

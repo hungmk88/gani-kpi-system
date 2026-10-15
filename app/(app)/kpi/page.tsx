@@ -3,7 +3,13 @@ import { CalendarDays } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { can } from "@/lib/rbac";
-import { classifyScore, summarizeResults } from "@/lib/kpi";
+import {
+  classifyScoreFor,
+  isCountedKpiRow,
+  scoreStateOf,
+  summarizeResults,
+} from "@/lib/kpi";
+import { getDeadlinePeriod } from "@/lib/services/period-service";
 import {
   EmptyState,
   PageHeader,
@@ -11,6 +17,7 @@ import {
   ProgressBar,
   ScoreBadge,
   StatCard,
+  fmtScore,
   formatDate,
 } from "@/components/ui";
 import OpenPeriodButton from "./open-period-button";
@@ -25,17 +32,27 @@ export default async function KpiHomePage() {
     take: 12,
   });
 
-  const current = periods[0];
+  // "Kỳ đang chạy" = kỳ đang tới hạn (ngày 1–5 vẫn là kỳ tháng trước đang
+  // chốt), không phải kỳ mới nhất — kỳ mới nhất có thể đã chốt xong.
+  const deadlinePeriod = await getDeadlinePeriod();
+  const current =
+    (deadlinePeriod && periods.find((p) => p.id === deadlinePeriod.id)) ??
+    periods[0];
 
-  const myResults = current
+  const allMine = current
     ? await prisma.kpiResult.findMany({
         where: { periodId: current.id, employeeId: user.id },
         include: { kpiDefinition: true },
         orderBy: { weightPercent: "desc" },
       })
     : [];
+  // Chỉ tiêu đã ngưng dùng mà trọng số 0 thì không tính vào điểm, không cần
+  // khai — liệt kê ra chỉ làm tăng "chưa khai" giả.
+  const myResults = allMine.filter(isCountedKpiRow);
   const s = summarizeResults(myResults);
-  const cls = classifyScore(s.totalScore);
+  const state = scoreStateOf(current?.status, myResults);
+  const cls = classifyScoreFor(s.totalScore, state);
+  const draftCount = myResults.filter((r) => r.status === "DRAFT").length;
   // Ban Giám đốc và quản trị thường không được gán chỉ tiêu nào — khi đó
   // hiển thị dấu gạch chứ không hiện "0 điểm · Không đạt" gây hiểu nhầm.
   const hasOwnKpi = myResults.length > 0;
@@ -56,7 +73,7 @@ export default async function KpiHomePage() {
         where: { periodId: current.id, status: "MANAGER_REVIEWED" },
       });
     } else {
-      pending = myResults.filter((r) => r.status === "DRAFT").length;
+      pending = draftCount;
     }
   }
 
@@ -97,9 +114,19 @@ export default async function KpiHomePage() {
             {user.role !== "ADMIN" && (
               <StatCard
                 label="Điểm KPI của tôi"
-                value={hasOwnKpi ? s.totalScore.toFixed(1) : "—"}
+                value={
+                  hasOwnKpi && state !== "UNSCORED" ? fmtScore(s.totalScore) : "—"
+                }
                 tone={hasOwnKpi ? cls.tone : "slate"}
-                hint={hasOwnKpi ? cls.label : "chưa được gán chỉ tiêu"}
+                hint={
+                  !hasOwnKpi
+                    ? "chưa được gán chỉ tiêu"
+                    : state === "UNSCORED"
+                      ? `chưa chấm · ${myResults.length - draftCount}/${myResults.length} đã khai`
+                      : state === "PROVISIONAL"
+                        ? "tạm tính · kỳ chưa chốt"
+                        : cls.label
+                }
               />
             )}
             <StatCard
@@ -144,7 +171,68 @@ export default async function KpiHomePage() {
                   Mở bảng làm việc →
                 </Link>
               </div>
-              <div className="table-wrap">
+              {/* Điện thoại: mỗi chỉ tiêu một thẻ — bảng 6 cột trên 390px thì
+                  cột Thực tế / Mức đạt / Điểm không bao giờ hiện ra. */}
+              <ul className="space-y-2 sm:hidden">
+                {myResults.map((r) => {
+                  const actual = r.actualFinal ?? r.actualSelf ?? r.actualSystem;
+                  return (
+                    <li key={r.id} className="card p-3.5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium text-ink-800">
+                            {r.kpiDefinition?.name ?? "—"}
+                          </div>
+                          <div className="text-xs text-ink-500">
+                            Trọng số {r.weightPercent ?? 0}% ·{" "}
+                            {r.kpiDefinition?.isHigherBetter
+                              ? "càng cao càng tốt"
+                              : "càng thấp càng tốt"}
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <div className="font-semibold text-ink-900">
+                            {actual === null ? "—" : fmtScore(r.weightedScore)}
+                          </div>
+                          <div className="text-[11px] text-ink-500">điểm</div>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-baseline justify-between gap-2 text-sm">
+                        <span className="text-ink-600">
+                          Giao {fmt(r.targetValue)} → Thực tế{" "}
+                          <b className="text-ink-900">{fmt(actual)}</b>{" "}
+                          {r.kpiDefinition?.unit}
+                        </span>
+                        <span className="shrink-0 text-xs text-ink-600">
+                          {actual === null
+                            ? "chưa khai"
+                            : `${pct(r.achievementPercent)}${r.isCapped ? " · trần" : ""}`}
+                        </span>
+                      </div>
+                      {actual !== null && (
+                        <div className="mt-1.5">
+                          <ProgressBar
+                            value={(r.achievementPercent / 150) * 100}
+                            tone={
+                              r.achievementPercent >= 100
+                                ? "green"
+                                : r.achievementPercent >= 80
+                                  ? "amber"
+                                  : "red"
+                            }
+                          />
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+                <li className="flex items-center justify-between rounded-lg bg-ink-100/70 px-3.5 py-2.5 text-sm font-semibold">
+                  <span>Tổng · trọng số {s.totalWeight}%</span>
+                  <ScoreBadge score={s.totalScore} state={state} />
+                </li>
+              </ul>
+
+              <div className="table-wrap hidden sm:block">
                 <table className="tbl">
                   <thead>
                     <tr>
@@ -180,9 +268,13 @@ export default async function KpiHomePage() {
                           {fmt(r.actualFinal ?? r.actualSelf ?? r.actualSystem)}
                         </td>
                         <td>
+                          {(r.actualFinal ?? r.actualSelf ?? r.actualSystem) === null ? (
+                            <span className="text-xs text-ink-500">chưa khai</span>
+                          ) : (
+                          <>
                           <div className="mb-1 text-xs text-ink-600">
-                            {r.achievementPercent}%
-                            {r.isCapped && " (chạm trần 150%)"}
+                            {pct(r.achievementPercent)}
+                            {r.isCapped && " (chạm trần)"}
                           </div>
                           <ProgressBar
                             value={(r.achievementPercent / 150) * 100}
@@ -194,9 +286,13 @@ export default async function KpiHomePage() {
                                   : "red"
                             }
                           />
+                          </>
+                          )}
                         </td>
                         <td className="text-right font-semibold text-ink-900">
-                          {r.weightedScore.toFixed(2)}
+                          {(r.actualFinal ?? r.actualSelf ?? r.actualSystem) === null
+                            ? "—"
+                            : fmtScore(r.weightedScore)}
                         </td>
                       </tr>
                     ))}
@@ -205,7 +301,7 @@ export default async function KpiHomePage() {
                       <td className="text-right">{s.totalWeight}%</td>
                       <td colSpan={3}></td>
                       <td className="text-right">
-                        <ScoreBadge score={s.totalScore} />
+                        <ScoreBadge score={s.totalScore} state={state} />
                       </td>
                     </tr>
                   </tbody>
@@ -248,6 +344,10 @@ export default async function KpiHomePage() {
       )}
     </>
   );
+}
+
+function pct(n: number) {
+  return `${n.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%`;
 }
 
 function fmt(n: number | null | undefined) {

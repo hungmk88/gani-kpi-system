@@ -89,10 +89,12 @@ export async function runPredictiveScan(opts: {
   const now = opts.now ?? new Date();
   const horizon = new Date(now.getTime() + PREDICTION_HORIZON_DAYS * DAY);
 
+  // Chỉ dự báo việc CHƯA tới hạn. Việc đã quá hạn thì đã trễ rồi — dự báo
+  // "65% kịp" cho nó là báo sai; trang Phân tích liệt kê riêng nhóm đã trễ.
   const tasks = await prisma.task.findMany({
     where: {
       status: { in: OPEN_STATUSES },
-      dueDate: { lte: horizon },
+      dueDate: { gte: now, lte: horizon },
       ...(opts.departmentId ? { departmentId: opts.departmentId } : {}),
     },
     include: {
@@ -329,10 +331,12 @@ export async function getPredictionAccuracy(): Promise<AccuracyReport> {
 /* ==================================================================== */
 
 export async function getCapacityReports(departmentId?: string | null) {
+  // Ban Giám đốc và quản trị không nhận việc theo luồng thường — không đưa
+  // vào bảng tải (nếu không sẽ thành "còn dư sức" để gợi ý dồn việc sang).
   const users = await prisma.user.findMany({
     where: {
       isActive: true,
-      role: { not: "ADMIN" },
+      role: { in: ["EMPLOYEE", "MANAGER"] },
       ...(departmentId ? { departmentId } : { departmentId: { not: null } }),
     },
     include: {
@@ -356,9 +360,15 @@ export async function getCapacityReports(departmentId?: string | null) {
     )
   );
 
-  // Gợi ý san việc chỉ trong cùng phòng ban — luật cấm giao vượt cấp vẫn giữ
+  // Gợi ý san việc chỉ trong cùng phòng ban VÀ cùng cấp (nhân viên ↔ nhân
+  // viên): luật cấm giao vượt cấp — không gợi ý đẩy việc của nhân viên sang
+  // trưởng phòng hay ngược lại.
+  const employeeIds = new Set(
+    users.filter((u) => u.role === "EMPLOYEE").map((u) => u.id)
+  );
   const byDept = new Map<string, CapacityReport[]>();
   for (const r of reports) {
+    if (!employeeIds.has(r.userId)) continue;
     const k = r.departmentName ?? "—";
     byDept.set(k, [...(byDept.get(k) ?? []), r]);
   }

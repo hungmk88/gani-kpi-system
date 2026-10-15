@@ -116,8 +116,28 @@ export function ProductionStatRow({ summary }: { summary: ProductionSummary }) {
     maximumFractionDigits: 1,
   }).format(summary.outputTonnes);
 
+  // Xưởng chưa chạy gì: một dòng trung tính, không dựng hai thẻ to tướng
+  // "0 người / 0 tấn" chiếm chỗ của ngoại lệ.
+  if (summary.workforceToday === 0 && summary.outputTonnes === 0) {
+    return (
+      <Link
+        href="/production"
+        className="card flex items-center justify-between gap-3 px-4 py-3 text-sm text-ink-600 transition hover:shadow-md"
+      >
+        <span>
+          <span className="font-medium text-ink-800">Xưởng hôm nay:</span>{" "}
+          chưa có ca nào ghi nhận
+          {summary.pendingQcShifts > 0
+            ? ` · ${summary.pendingQcShifts} ca chờ KCS xác nhận`
+            : ""}
+        </span>
+        <span className="shrink-0 text-xs font-medium text-brand-600">Mở →</span>
+      </Link>
+    );
+  }
+
   return (
-    <div className="mb-4 grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-2 gap-3">
       <StatCard
         label="Nhân lực hôm nay"
         value={`${summary.workforceToday} người`}
@@ -193,10 +213,10 @@ export function ActionQueue({ items }: { items: ActionItem[] }) {
         <Link
           key={it.id}
           href={it.href}
-          className={`flex items-center gap-3 rounded-r-lg border border-l-[3px] border-ink-200/70 bg-white p-3 shadow-sm transition hover:shadow-md ${edge[it.tone]}`}
+          className={`flex items-center gap-3 rounded-lg border border-l-[3px] border-ink-200/70 bg-white p-3 shadow-sm transition hover:shadow-md ${edge[it.tone]}`}
         >
           <span
-            className={`w-14 shrink-0 font-mono text-[11px] leading-tight font-bold ${when[it.tone]}`}
+            className={`w-16 shrink-0 text-xs leading-tight font-semibold ${when[it.tone]}`}
           >
             {it.when}
           </span>

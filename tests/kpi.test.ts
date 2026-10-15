@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyScoreFor,
+  combineScoreStates,
+  scoreStateOf,
   calculateKpiScore,
   computeDeadlines,
   detectMismatch,
@@ -67,5 +70,41 @@ describe("ngưỡng lệch ±5% — một công thức cho cả hệ thống", (
     expect(detectMismatch(100, 106).hasMismatch).toBe(true);
     expect(detectMismatch(100, 106).mismatchPercent).toBe(6);
     expect(detectMismatch(null, 5).hasMismatch).toBe(false);
+  });
+});
+
+describe("scoreStateOf / classifyScoreFor — không xếp loại khi kỳ chưa chấm", () => {
+  it("chưa ai khai → UNSCORED, nhãn 'Chưa chấm', không phải 'Không đạt'", () => {
+    const rows = [{ status: "DRAFT" }, { status: "DRAFT" }];
+    expect(scoreStateOf("OPEN", rows)).toBe("UNSCORED");
+    expect(classifyScoreFor(0, "UNSCORED").label).toBe("Chưa chấm");
+    expect(classifyScoreFor(0, "UNSCORED").tone).toBe("slate");
+  });
+
+  it("đã có dòng qua bước khai nhưng kỳ chưa chốt → PROVISIONAL, chưa xếp loại", () => {
+    const rows = [{ status: "SELF_REVIEWED" }, { status: "DRAFT" }];
+    expect(scoreStateOf("OPEN", rows)).toBe("PROVISIONAL");
+    expect(classifyScoreFor(42, "PROVISIONAL").label).toBe("Tạm tính");
+  });
+
+  it("kỳ đã chốt → FINAL, xếp loại như cũ", () => {
+    const rows = [{ status: "FINALIZED" }];
+    expect(scoreStateOf("FINALIZED", rows)).toBe("FINAL");
+    expect(classifyScoreFor(50, "FINAL").label).toBe("Không đạt");
+    expect(classifyScoreFor(105, "FINAL").label).toBe("Tốt");
+  });
+
+  it("mọi dòng đã khoá dù kỳ chưa đóng hẳn → FINAL", () => {
+    expect(scoreStateOf("MANAGER_LOCKED", [{ status: "FINALIZED" }])).toBe("FINAL");
+  });
+
+  it("không có dòng nào → UNSCORED", () => {
+    expect(scoreStateOf("FINALIZED", [])).toBe("UNSCORED");
+  });
+
+  it("gộp nhiều nhóm: chỉ FINAL khi tất cả FINAL", () => {
+    expect(combineScoreStates(["FINAL", "FINAL"])).toBe("FINAL");
+    expect(combineScoreStates(["FINAL", "UNSCORED"])).toBe("PROVISIONAL");
+    expect(combineScoreStates(["UNSCORED", "UNSCORED"])).toBe("UNSCORED");
   });
 });
