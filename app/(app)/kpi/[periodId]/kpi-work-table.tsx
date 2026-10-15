@@ -70,6 +70,7 @@ type Group = {
   employeeId: string;
   employeeName: string;
   employeeEmail: string;
+  employeeCode: string | null;
   employeeRole: string;
   jobTitle: string;
   departmentName: string;
@@ -443,7 +444,7 @@ export default function KpiWorkTable({
             <input
               type="search"
               className="input pl-9"
-              placeholder="Tìm theo tên, email, phòng ban…"
+              placeholder="Tìm theo tên, mã NV, email, phòng ban…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -536,6 +537,7 @@ export default function KpiWorkTable({
                     )}
                   </div>
                   <div className="mt-0.5 text-xs text-ink-500">
+                    {g.employeeCode && <span className="font-mono">{g.employeeCode} · </span>}
                     {g.jobTitle || "—"} · {g.departmentName} · {g.rows.length}{" "}
                     chỉ tiêu · trọng số {fmtNum(g.summary.totalWeight)}%
                   </div>

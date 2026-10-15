@@ -44,6 +44,10 @@ model User {
   email          String    @unique
   passwordHash   String
   fullName       String
+  // Mã nhân viên theo hồ sơ nhân sự (vd "NV0012") — không bắt buộc, nhưng đã
+  // có thì không trùng. Lưu chữ in hoa (lib/employee-code.ts) để "nv0012" và
+  // "NV0012" không thành hai người.
+  employeeCode   String?   @unique
   jobTitle       String?
   role           String    @default("EMPLOYEE") // EMPLOYEE | MANAGER | CEO | ADMIN
   // OFFICIAL | PROBATION | SEASONAL — thử việc/thời vụ được chấm KPI xưởng

@@ -66,6 +66,7 @@ export default async function KpiReportPage({
   type EmpRow = {
     id: string;
     name: string;
+    code: string | null;
     jobTitle: string;
     rows: typeof results;
     totalScore: number;
@@ -84,6 +85,7 @@ export default async function KpiReportPage({
       dept.employees.set(r.employeeId, {
         id: r.employeeId,
         name: r.employee.fullName,
+        code: r.employee.employeeCode,
         jobTitle: r.employee.jobTitle ?? "",
         rows: [],
         totalScore: 0,
@@ -401,6 +403,11 @@ export default async function KpiReportPage({
                 <div className="mb-1 flex items-baseline justify-between">
                   <span className="text-sm font-medium">
                     {e.name}
+                    {e.code && (
+                      <span className="ml-2 font-mono text-xs font-normal text-ink-500">
+                        {e.code}
+                      </span>
+                    )}
                     {e.jobTitle && (
                       <span className="ml-2 text-xs font-normal text-ink-500">
                         {e.jobTitle}

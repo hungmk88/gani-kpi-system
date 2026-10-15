@@ -20,6 +20,7 @@ type PreviewRow = {
   departmentName: string | null;
   jobTitle: string | null;
   productionRole: string | null;
+  employeeCode: string | null;
   status: "ok" | "error" | "exists";
   issues: RowIssue[];
 };
@@ -277,6 +278,11 @@ export default function UserImport() {
                           <td data-label="Họ tên · email">
                             <div className="font-medium text-ink-800">
                               {r.fullName || "—"}
+                              {r.employeeCode && (
+                                <span className="ml-1.5 font-mono text-xs font-normal text-ink-500">
+                                  {r.employeeCode}
+                                </span>
+                              )}
                             </div>
                             <div className="text-xs break-all text-ink-500">
                               {r.email || "—"}

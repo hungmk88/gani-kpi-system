@@ -7,7 +7,11 @@ import { checkPasswordStrength } from "@/lib/password";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { ERR, ROLE_LABEL, ROLES } from "@/lib/constants";
 import { EMPLOYMENT_TYPES, PRODUCTION_ROLES } from "@/lib/production/constants";
-import { alertCeos } from "@/lib/services/user-security";
+import {
+  alertCeos,
+  isEmployeeCodeConflict,
+  resolveEmployeeCode,
+} from "@/lib/services/user-security";
 
 /** Vai trò có quyền duyệt KPI — đổi mật khẩu/vai trò của họ phải báo Ban Giám đốc. */
 const SENSITIVE_ROLES = new Set<string>(["MANAGER", "CEO"]);
@@ -15,6 +19,8 @@ const SENSITIVE_ROLES = new Set<string>(["MANAGER", "CEO"]);
 const schema = z.object({
   fullName: z.string().min(2).max(255).optional(),
   jobTitle: z.string().max(255).nullable().optional(),
+  // "" hoặc null = gỡ mã
+  employeeCode: z.string().max(100).nullable().optional(),
   role: z.enum(ROLES).optional(),
   employmentType: z.enum(EMPLOYMENT_TYPES).optional(),
   departmentId: z.string().nullable().optional(),
@@ -194,6 +200,9 @@ export async function PATCH(
     ] as const) {
       if (body[k] !== undefined) data[k] = body[k];
     }
+    if (body.employeeCode !== undefined) {
+      data.employeeCode = await resolveEmployeeCode(body.employeeCode, id);
+    }
     if (body.newPassword) {
       const check = checkPasswordStrength(body.newPassword, {
         fullName: target.fullName,
@@ -217,7 +226,12 @@ export async function PATCH(
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      const u = await tx.user.update({ where: { id }, data });
+      const u = await tx.user.update({ where: { id }, data }).catch((e) => {
+        if (isEmployeeCodeConflict(e)) {
+          throw new BusinessError(ERR.VALIDATION_FAILED, `Mã NV ${String(data.employeeCode)} vừa được dùng cho tài khoản khác.`, 409);
+        }
+        throw e;
+      });
       if (body.newPassword) {
         // Mã nối Telegram đang chờ (lấy trước lúc đặt lại) cũng huỷ luôn.
         await tx.telegramLink.deleteMany({ where: { userId: id, usedAt: null } });
@@ -231,6 +245,7 @@ export async function PATCH(
       entityName: "users",
       entityId: id,
       before: {
+        employeeCode: target.employeeCode,
         role: target.role,
         employmentType: target.employmentType,
         departmentId: target.departmentId,
@@ -239,6 +254,7 @@ export async function PATCH(
         telegramChatId: target.telegramChatId,
       },
       after: {
+        employeeCode: updated.employeeCode,
         role: updated.role,
         employmentType: updated.employmentType,
         departmentId: updated.departmentId,

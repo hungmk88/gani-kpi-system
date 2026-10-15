@@ -7,7 +7,11 @@ import { checkPasswordStrength } from "@/lib/password";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { ERR, ROLES } from "@/lib/constants";
 import { PRODUCTION_ROLES } from "@/lib/production/constants";
-import { alertCeos } from "@/lib/services/user-security";
+import {
+  alertCeos,
+  isEmployeeCodeConflict,
+  resolveEmployeeCode,
+} from "@/lib/services/user-security";
 
 // Thông báo lỗi tiếng Việt cho từng trường — màn quản trị hiện nguyên văn,
 // không còn "Dữ liệu gửi lên không hợp lệ" chung chung.
@@ -18,6 +22,7 @@ const schema = z.object({
     .min(2, "Họ tên tối thiểu 2 ký tự.")
     .max(255, "Họ tên quá dài."),
   jobTitle: z.string().max(255, "Chức danh quá dài.").optional(),
+  employeeCode: z.string().max(100).nullable().optional(),
   role: z.enum(ROLES, { message: "Vai trò không hợp lệ." }),
   departmentId: z.string().nullable().optional(),
   // Vai trò trong xưởng (KCS, tổ trưởng…) — tách riêng khỏi vai trò tổ chức.
@@ -94,10 +99,13 @@ export async function POST(req: Request) {
       );
     }
 
+    const employeeCode = await resolveEmployeeCode(body.employeeCode);
+
     const user = await prisma.user.create({
       data: {
         email,
         fullName: body.fullName,
+        employeeCode,
         jobTitle: body.jobTitle ?? null,
         role: body.role,
         departmentId: body.departmentId ?? null,
@@ -109,6 +117,11 @@ export async function POST(req: Request) {
         // là bị chặn ở trang đổi mật khẩu, chưa xem được gì cho tới khi tự đặt.
         mustChangePassword: true,
       },
+    }).catch((e) => {
+      if (isEmployeeCodeConflict(e)) {
+        throw new BusinessError(ERR.VALIDATION_FAILED, `Mã NV ${employeeCode} vừa được dùng cho tài khoản khác.`, 409);
+      }
+      throw e;
     });
 
     await writeAudit({
@@ -118,6 +131,7 @@ export async function POST(req: Request) {
       entityId: user.id,
       after: {
         email,
+        employeeCode,
         role: body.role,
         departmentId: body.departmentId,
         productionRole: body.productionRole ?? null,

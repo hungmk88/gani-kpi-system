@@ -53,6 +53,7 @@ async function exportKpi(req: Request): Promise<Response> {
   const rows: ExportRow[] = results.map((r) => ({
     department: r.employee.department?.name ?? "—",
     employee: r.employee.fullName,
+    employeeCode: r.employee.employeeCode ?? "",
     jobTitle: r.employee.jobTitle ?? "",
     kpiName: r.kpiDefinition?.name ?? "—",
     unit: r.kpiDefinition?.unit ?? "—",

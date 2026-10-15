@@ -19,6 +19,8 @@ export type ExceptionGroup = {
   employeeId: string;
   employeeName: string;
   employeeEmail: string;
+  /** Mã NV (null = chưa có) */
+  employeeCode?: string | null;
   employeeRole: string;
   jobTitle: string;
   departmentName: string;
@@ -140,18 +142,18 @@ export function foldVn(s: string) {
     .trim();
 }
 
-/**
- * Tìm theo tên, email (phần trước @ là mã đăng nhập của nhân sự — hệ thống
- * chưa có trường mã NV riêng), chức danh, phòng ban.
- */
+/** Tìm theo tên, mã NV, email, chức danh, phòng ban (không phân biệt dấu). */
 export function matchesSearch(
-  g: Pick<ExceptionGroup, "employeeName" | "employeeEmail" | "jobTitle" | "departmentName">,
+  g: Pick<
+    ExceptionGroup,
+    "employeeName" | "employeeEmail" | "employeeCode" | "jobTitle" | "departmentName"
+  >,
   query: string
 ) {
   const q = foldVn(query);
   if (!q) return true;
   return foldVn(
-    `${g.employeeName} ${g.employeeEmail} ${g.jobTitle} ${g.departmentName}`
+    `${g.employeeName} ${g.employeeCode ?? ""} ${g.employeeEmail} ${g.jobTitle} ${g.departmentName}`
   ).includes(q);
 }
 
