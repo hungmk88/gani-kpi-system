@@ -3,13 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-const DEMO = [
-  { label: "Ban Giám đốc", email: "ceo@ganifoody.vn" },
-  { label: "Trưởng phòng Kinh doanh", email: "tp.sales@ganifoody.vn" },
-  { label: "Nhân viên Kinh doanh", email: "nv.sales1@ganifoody.vn" },
-  { label: "Quản trị hệ thống", email: "admin@ganifoody.vn" },
-];
-
 export default function LoginForm() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -87,31 +80,11 @@ export default function LoginForm() {
         </button>
       </form>
 
-      <div className="mt-8 rounded-xl border border-ink-200 bg-ink-50/60 p-4">
-        <div className="mb-2 text-xs font-semibold tracking-wide text-ink-500 uppercase">
-          Tài khoản dùng thử
-        </div>
-        <div className="space-y-1">
-          {DEMO.map((d) => (
-            <button
-              key={d.email}
-              type="button"
-              onClick={() => {
-                setEmail(d.email);
-                setPassword("Gani@2026");
-              }}
-              className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm hover:bg-white"
-            >
-              <span className="text-ink-700">{d.label}</span>
-              <span className="font-mono text-xs text-ink-400">{d.email}</span>
-            </button>
-          ))}
-        </div>
-        <div className="mt-2 text-xs text-ink-500">
-          Mật khẩu chung: <span className="font-mono">Gani@2026</span> — bấm vào
-          một dòng để điền nhanh.
-        </div>
-      </div>
+      {/* KHÔNG in sẵn tài khoản / mật khẩu mẫu ở đây: trang đăng nhập là công
+          khai, ai mở cũng thấy. Tài khoản do quản trị cấp, mật khẩu tự đặt. */}
+      <p className="mt-6 text-center text-xs text-ink-500">
+        Chưa có tài khoản hoặc quên mật khẩu? Liên hệ quản trị hệ thống.
+      </p>
     </>
   );
 }
