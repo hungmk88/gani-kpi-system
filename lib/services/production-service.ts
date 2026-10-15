@@ -973,7 +973,7 @@ export async function reviewAudit(
         where: { id: r.id },
         data: {
           isBonusLocked: false,
-          finalBonusVnd: round2(BASE_BONUS_PER_SHIFT_VND * r.bonusMultiplier),
+          finalBonusVnd: Math.round(BASE_BONUS_PER_SHIFT_VND * r.bonusMultiplier),
         },
       });
       await notify({

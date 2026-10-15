@@ -133,7 +133,8 @@ export function computeQualityLoss(
   return {
     extraLossKg: round2(extraLossKg),
     totalLossKg: round2(totalLossKg),
-    qualityLossVnd: round2(totalLossKg * unitPriceVnd),
+    // Tiền lưu số nguyên VND (cột Int) — làm tròn đến đồng
+    qualityLossVnd: Math.round(totalLossKg * unitPriceVnd),
   };
 }
 
@@ -466,7 +467,7 @@ export function computeFinalScore(
     tier2Score: tier2.score,
     finalWeightedScore: final,
     bonusMultiplier: multiplier,
-    finalBonusVnd: round2(BASE_BONUS_PER_SHIFT_VND * multiplier),
+    finalBonusVnd: Math.round(BASE_BONUS_PER_SHIFT_VND * multiplier),
     breakdown: {
       tier1,
       tier2,

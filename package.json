@@ -27,7 +27,8 @@
     "test:tz": "TZ=UTC vitest run && TZ=Asia/Ho_Chi_Minh vitest run",
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate deploy",
-    "fix:dates": "node scripts/fix-dates.mjs"
+    "fix:dates": "node scripts/fix-dates.mjs",
+    "db:validate-checks": "node scripts/validate-db-checks.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",

@@ -24,7 +24,12 @@ const schema = z.object({
     .min(0)
     .max(100, "Tỷ lệ hao hụt định mức không thể vượt 100%."),
   stdKgPerLaborHour: z.number().min(0).default(0),
-  unitPriceVnd: z.number().min(0),
+  // Đơn giá lưu số nguyên VND (cột Int, tối đa ~2,1 tỷ)
+  unitPriceVnd: z
+    .number()
+    .int("Đơn giá phải là số đồng nguyên.")
+    .min(0)
+    .max(2_000_000_000),
   rawMaterialId: z.string().nullable().optional(),
 });
 

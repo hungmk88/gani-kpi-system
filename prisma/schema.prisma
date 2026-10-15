@@ -438,7 +438,7 @@ model BonusConfig {
   achievementMin  Float       // Minimum %
   achievementMax  Float       // Maximum %
   bonusMultiplier Float       // 1.5x, 1.0x, 0.75x
-  baseSalary      Float       // 233.000 đ
+  baseSalary      Int         // 233.000 đ (số nguyên VND)
   description     String?
   isActive        Boolean     @default(true)
   createdAt       DateTime    @default(now())
@@ -476,7 +476,7 @@ model PeriodKpiSummary {
   totalScore        Float       @default(0)  // Tổng điểm có trọng số
   achievementPercent Float      @default(0)  // Trung bình achievement
   bonusMultiplier   Float       @default(0)  // 1.5x / 1.0x / 0.75x / 0
-  bonusAmount       Float       @default(0)  // Tiền thưởng tính ra
+  bonusAmount       Int         @default(0)  // Tiền thưởng tính ra (VND)
   
   status            String      @default("DRAFT")  // DRAFT | FINALIZED
   createdAt         DateTime    @default(now())
@@ -712,7 +712,7 @@ model ProductSku {
   targetOutputKg      Float    @default(500) // kg/ca - trần 500kg HCM01
   stdMaterialLossRate Float    @default(8) // % hao hụt định mức — số tạm, chưa có định mức thật
   stdKgPerLaborHour   Float    @default(0)
-  unitPriceVnd        Float    @default(0)
+  unitPriceVnd        Int      @default(0)
   isActive            Boolean  @default(true)
   createdAt           DateTime @default(now())
 
@@ -802,7 +802,7 @@ model ProductionShiftLog {
   // --- 3. BAN GIAM DOC KHOA SO (buoc LOCKED) ---
   targetOutputKg    Float     @default(0)
   stdMaterialNormKg Float     @default(0) // he thong tu tinh, khong ai go tay
-  qualityLossVnd    Float     @default(0) // CHI CEO va GIAM DOC SX duoc xem
+  qualityLossVnd    Int       @default(0) // CHI CEO va GIAM DOC SX duoc xem
   targetOverrideReason String? // bat buoc khi BGD dat target khac chuan SKU
   materialOverrideReason String? // bat buoc khi BGD sua NVL khac so kho khai
   ceoNote           String?
@@ -896,7 +896,7 @@ model DailyKpiResult {
 
   bonusMultiplier Float   @default(1.0)
   isBonusLocked   Boolean @default(false)
-  finalBonusVnd   Float   @default(0)
+  finalBonusVnd   Int     @default(0)
 
   createdAt DateTime @default(now())
 
@@ -1121,8 +1121,8 @@ model ShiftKpiScore {
   // ============ TOTAL & BONUS ============
   totalScore              Float   @default(0)      // Tổng weighted scores (0-100)
   bonusMultiplier         Float   @default(0)      // 1.5x / 1.0x / 0.75x / 0
-  baseSalary              Float   @default(233000) // Lương nền
-  bonusAmount             Float   @default(0)      // VND
+  baseSalary              Int     @default(233000) // Lương nền (VND)
+  bonusAmount             Int     @default(0)      // VND
 
   // ============ BREAKDOWN (JSON) ============
   // JSON để hiển thị chi tiết: kpi name, achievement%, score, etc.
