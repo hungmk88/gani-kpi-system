@@ -72,6 +72,30 @@ export function canSeeMoney(
   return u.role === "CEO" || u.productionRole === "PRODUCTION_DIRECTOR";
 }
 
+/**
+ * Gỡ các trường chỉ Ban Giám đốc / Giám đốc SX được xem (tiền và lý do sửa
+ * chỉ tiêu) khỏi một ca trước khi trả ra ngoài. Dùng cho MỌI chỗ trả ca sản
+ * xuất ra API, để không có đường nào lọt đơn giá hay tổn thất quy ra tiền.
+ */
+export function redactShiftForViewer<
+  T extends {
+    qualityLossVnd?: number;
+    targetOverrideReason?: string | null;
+    materialOverrideReason?: string | null;
+    sku?: { unitPriceVnd?: number } | null;
+  },
+>(shift: T, viewer: SessionUser & { productionRole?: string | null }): T {
+  if (canSeeMoney(viewer)) return shift;
+  const { qualityLossVnd: _q, targetOverrideReason: _t, materialOverrideReason: _m, ...rest } =
+    shift;
+  const out = { ...rest } as T;
+  if (shift.sku) {
+    const { unitPriceVnd: _p, ...sku } = shift.sku;
+    (out as { sku?: unknown }).sku = sku;
+  }
+  return out;
+}
+
 /** Nạp thêm vai trò trong xưởng cho phiên đăng nhập. */
 export async function withProductionRole(user: SessionUser) {
   const row = await prisma.user.findUnique({

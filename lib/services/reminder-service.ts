@@ -148,15 +148,32 @@ export async function runDeadlineReminders(now = new Date()) {
 
           /* Gửi thẳng nút duyệt cho những dòng đang lệch số — đây là mấy dòng
              Ban Giám đốc cần nhìn tận mắt chứ không nên duyệt hàng loạt. */
-          const risky = await prisma.kpiResult.findMany({
-            where: {
-              periodId: p.id,
-              status: { not: "FINALIZED" },
-              hasMismatch: true,
-            },
-            take: 5,
-            orderBy: { mismatchPercent: "desc" },
-          });
+          // Chỉ dòng ĐÃ qua trưởng phòng (bấm "Duyệt & khoá" mới chốt được),
+          // và bỏ dòng còn treo đối soát MISMATCH — dòng đó ceoApprove từ chối,
+          // phải chốt số ở trang Đối soát trước. Mỗi dòng tối đa một tin mỗi
+          // ngày VN: sendKpiApprovalRequest tự chặn gửi lặp.
+          const [candidates, openMismatches] = await Promise.all([
+            prisma.kpiResult.findMany({
+              where: {
+                periodId: p.id,
+                status: "MANAGER_REVIEWED",
+                hasMismatch: true,
+              },
+              take: 50,
+              orderBy: { mismatchPercent: "desc" },
+              select: { id: true, employeeId: true, kpiDefinitionId: true },
+            }),
+            prisma.reconciliation.findMany({
+              where: { periodId: p.id, status: "MISMATCH" },
+              select: { employeeId: true, kpiDefinitionId: true },
+            }),
+          ]);
+          const blocked = new Set(
+            openMismatches.map((m) => `${m.employeeId}|${m.kpiDefinitionId}`)
+          );
+          const risky = candidates
+            .filter((r) => !blocked.has(`${r.employeeId}|${r.kpiDefinitionId}`))
+            .slice(0, 5);
           for (const r of risky) {
             const res = await sendKpiApprovalRequest(r.id);
             approvalRequests += res.sent;

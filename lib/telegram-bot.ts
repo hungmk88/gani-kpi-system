@@ -9,6 +9,7 @@ import {
 import { writeAudit } from "./audit";
 import { notify } from "./notify";
 import { ceoApprove } from "./services/kpi-service";
+import { getClosingPeriod, getDeadlinePeriod } from "./services/period-service";
 import { classifyScore, summarizeResults } from "./kpi";
 import { ROLE_LABEL, TASK_STATUS_LABEL, type Role } from "./constants";
 import { formatVnDate, formatVnDateTime, vnDayRange } from "./vn-time";
@@ -43,13 +44,27 @@ import type { SessionUser } from "./auth";
 
 /* ------------------------------------------------------------ NHẬN DIỆN */
 
-async function resolveActor(telegramUserId: number | string) {
+/** Lời nhắn khi tài khoản đã nối nhưng đang bị bắt đổi mật khẩu. */
+const MUST_CHANGE_PASSWORD_MSG =
+  "🔒 Tài khoản của bạn cần đăng nhập web đổi mật khẩu trước, sau đó mới dùng được bot.";
+
+type ActorLookup =
+  | { ok: true; actor: SessionUser }
+  | { ok: false; reason: "NOT_LINKED" | "MUST_CHANGE_PASSWORD" };
+
+/**
+ * Nhận diện người gõ/bấm. Tài khoản đang bị bắt đổi mật khẩu (mới tạo, hoặc
+ * vừa được quản trị đặt lại — tức quản trị đang biết mật khẩu) KHÔNG được dùng
+ * bot: web cũng chặn họ ở trang đổi mật khẩu, bot không được là cửa sau.
+ */
+async function lookupActor(telegramUserId: number | string): Promise<ActorLookup> {
   const chatId = String(telegramUserId);
   const user = await prisma.user.findFirst({
     where: { telegramChatId: chatId, isActive: true },
     include: { department: true },
   });
-  if (!user) return null;
+  if (!user) return { ok: false, reason: "NOT_LINKED" };
+  if (user.mustChangePassword) return { ok: false, reason: "MUST_CHANGE_PASSWORD" };
   const session: SessionUser = {
     id: user.id,
     email: user.email,
@@ -58,14 +73,22 @@ async function resolveActor(telegramUserId: number | string) {
     departmentId: user.departmentId,
     departmentName: user.department?.name ?? null,
   };
-  return session;
+  return { ok: true, actor: session };
 }
 
 /* -------------------------------------------------- GỬI YÊU CẦU DUYỆT */
 
+/** Mốc nhật ký đánh dấu đã gửi yêu cầu duyệt cho một dòng KPI. */
+const APPROVAL_SENT_ACTION = "KPI_APPROVAL_REQUEST_SENT";
+
 /**
  * Gửi yêu cầu duyệt KPI kèm nút bấm.
  * Chỉ gửi cho tài khoản Ban Giám đốc đã nối Telegram.
+ *
+ * Chống spam: bộ máy nền chạy nhiều lượt mỗi ngày — mỗi dòng chỉ gửi tối đa
+ * MỘT lần mỗi ngày (ngày VN), đánh dấu bằng nhật ký `KPI_APPROVAL_REQUEST_SENT`.
+ * Chỉ gửi dòng đã qua trưởng phòng (MANAGER_REVIEWED) — dòng khác bấm "Duyệt &
+ * khoá" cũng không chốt được, gửi ra chỉ tổ làm Ban Giám đốc bấm hụt.
  */
 export async function sendKpiApprovalRequest(kpiResultId: string) {
   if (!telegramEnabled()) {
@@ -83,6 +106,19 @@ export async function sendKpiApprovalRequest(kpiResultId: string) {
   if (!row) return { sent: 0, reason: "NOT_FOUND" };
   if (!row.kpiDefinition) return { sent: 0, reason: "NO_KPI_DEFINITION" };
   if (row.status === "FINALIZED") return { sent: 0, reason: "ALREADY_LOCKED" };
+  if (row.status !== "MANAGER_REVIEWED") {
+    return { sent: 0, reason: "NOT_MANAGER_REVIEWED" };
+  }
+
+  const sentToday = await prisma.auditLog.findFirst({
+    where: {
+      action: APPROVAL_SENT_ACTION,
+      entityId: row.id,
+      createdAt: vnDayRange(),
+    },
+    select: { id: true },
+  });
+  if (sentToday) return { sent: 0, reason: "ALREADY_SENT_TODAY" };
 
   const ceos = await prisma.user.findMany({
     where: { role: "CEO", isActive: true, telegramChatId: { not: null } },
@@ -132,6 +168,16 @@ export async function sendKpiApprovalRequest(kpiResultId: string) {
     const res = await sendMessage(ceo.telegramChatId!, lines.join("\n"), keyboard);
     if (res.ok) sent++;
   }
+  // Ghi mốc kể cả khi gửi hỏng: Telegram lỗi thì lượt sau cũng hỏng y vậy,
+  // không thử lại 12 lần/ngày. Ngày mai gửi lại.
+  await writeAudit({
+    actor: null,
+    action: APPROVAL_SENT_ACTION,
+    entityName: "kpi_results",
+    entityId: row.id,
+    after: { sent, ceos: ceos.length },
+    userAgent: "telegram-bot",
+  });
   return { sent };
 }
 
@@ -152,6 +198,9 @@ type TgUpdate = {
     message?: { chat: TgChat; message_id: number; text?: string };
   };
 };
+
+/** Trạng thái được phép "báo xong" (→ REVIEW) từ nút bấm Telegram. */
+const REVIEWABLE_FROM: readonly string[] = ["TO_DO", "IN_PROGRESS", "BLOCKED"];
 
 /** Chỉ nhận lệnh/nút bấm trong chat riêng giữa người dùng và bot. */
 function isPrivateChat(chat: TgChat | undefined) {
@@ -188,13 +237,16 @@ async function handleCallback(
     return { handled: true, denied: true };
   }
 
-  const actor = await resolveActor(cb.from.id);
-  if (!actor) {
+  const lookup = await lookupActor(cb.from.id);
+  if (!lookup.ok) {
     await answer(
-      "Tài khoản Telegram này chưa được nối với hệ thống. Gõ /start để biết cách nối."
+      lookup.reason === "MUST_CHANGE_PASSWORD"
+        ? MUST_CHANGE_PASSWORD_MSG
+        : "Tài khoản Telegram này chưa được nối với hệ thống. Gõ /start để biết cách nối."
     );
     return { handled: true, denied: true };
   }
+  const actor = lookup.actor;
 
   const [action, targetId] = (cb.data ?? "").split(":");
   if (!action || !targetId) {
@@ -246,7 +298,8 @@ async function handleCallback(
     if (result.finalized === 0) {
       const reason =
         result.skipped.find((x) => x.id === targetId)?.reason ??
-        "Dòng này chưa qua bước trưởng phòng duyệt";
+        result.skipped[0]?.reason ??
+        "Dòng này chưa đủ điều kiện chốt";
       await answer(`⚠️ Chưa chốt được: ${reason}.`);
       return { handled: true, approved: false };
     }
@@ -339,14 +392,41 @@ async function handleCallback(
       await answer("Không tìm thấy công việc này.");
       return { handled: true };
     }
-    if (task.assigneeId !== actor.id) {
+    // Cùng luật với web (app/api/tasks/[id]/route.ts): người làm, người giao
+    // việc, trưởng phòng của phòng sở hữu việc, hoặc Ban Giám đốc.
+    const isManagerOfTask =
+      actor.role === "CEO" ||
+      task.creatorId === actor.id ||
+      (actor.role === "MANAGER" && task.departmentId === actor.departmentId);
+    if (task.assigneeId !== actor.id && !isManagerOfTask) {
       await answer("Đây không phải việc của bạn.");
       return { handled: true, denied: true };
     }
-    await prisma.task.update({
-      where: { id: targetId },
-      data: { status: "REVIEW", progress: Math.max(task.progress, 90) },
+    // Chỉ việc đang làm dở mới "báo xong" được. Việc đã nghiệm thu / đã huỷ
+    // không bao giờ bị mở lại từ một nút bấm cũ trong Telegram.
+    if (!REVIEWABLE_FROM.includes(task.status)) {
+      await answer(
+        task.status === "REVIEW"
+          ? "Việc này đã báo xong trước đó, đang chờ nghiệm thu."
+          : `Việc đang ở trạng thái "${TASK_STATUS_LABEL[task.status] ?? task.status}" — không báo xong được nữa.`
+      );
+      await editOriginal(cb, `Trạng thái hiện tại: ${TASK_STATUS_LABEL[task.status] ?? task.status}`);
+      return { handled: true };
+    }
+    // Cập nhật có điều kiện: hai lượt bấm sát nhau, hoặc trưởng phòng vừa
+    // nghiệm thu/huỷ trên web giữa chừng -> chỉ một bên thắng, không đè.
+    const moved = await prisma.task.updateMany({
+      where: { id: targetId, status: { in: [...REVIEWABLE_FROM] } },
+      data: {
+        status: "REVIEW",
+        progress: Math.max(task.progress, 90),
+        blockedSince: null,
+      },
     });
+    if (moved.count === 0) {
+      await answer("Việc vừa được người khác cập nhật. Mở hệ thống để xem trạng thái mới.");
+      return { handled: true };
+    }
     await prisma.taskComment.create({
       data: {
         taskId: targetId,
@@ -426,8 +506,11 @@ async function handleCommand(
       await sendMessage(chatId, res.message);
       return { handled: true, linked: res.ok };
     }
-    const existing = await resolveActor(fromId);
-    if (existing) {
+    const lookup = await lookupActor(fromId);
+    const existing = lookup.ok ? lookup.actor : null;
+    if (!lookup.ok && lookup.reason === "MUST_CHANGE_PASSWORD") {
+      await sendMessage(chatId, MUST_CHANGE_PASSWORD_MSG);
+    } else if (existing) {
       await sendMessage(
         chatId,
         [
@@ -455,14 +538,17 @@ async function handleCommand(
     return { handled: true };
   }
 
-  const actor = await resolveActor(fromId);
-  if (!actor) {
+  const lookup = await lookupActor(fromId);
+  if (!lookup.ok) {
     await sendMessage(
       chatId,
-      "Tài khoản này chưa được nối với hệ thống. Gõ /start để xem cách nối."
+      lookup.reason === "MUST_CHANGE_PASSWORD"
+        ? MUST_CHANGE_PASSWORD_MSG
+        : "Tài khoản này chưa được nối với hệ thống. Gõ /start để xem cách nối."
     );
     return { handled: true, denied: true };
   }
+  const actor = lookup.actor;
 
   /* --- /trogiup --- */
   if (cmd === "/trogiup" || cmd === "/help") {
@@ -528,9 +614,8 @@ async function handleCommand(
 
   /* --- /kpi --- */
   if (cmd === "/kpi") {
-    const period = await prisma.kpiPeriod.findFirst({
-      orderBy: [{ year: "desc" }, { month: "desc" }],
-    });
+    // Ngày 1-5: kỳ tháng trước (đang tự khai/duyệt) — giống bảng điều hành web.
+    const period = await getDeadlinePeriod();
     if (!period) {
       await sendMessage(chatId, "Chưa có kỳ KPI nào được mở.");
       return { handled: true };
@@ -630,9 +715,9 @@ async function handleCommand(
       await sendMessage(chatId, "Lệnh này dành cho trưởng phòng và Ban Giám đốc.");
       return { handled: true, denied: true };
     }
-    const period = await prisma.kpiPeriod.findFirst({
-      orderBy: [{ year: "desc" }, { month: "desc" }],
-    });
+    // Hàng chờ duyệt nằm ở kỳ ĐANG CHỐT (kỳ tháng trước chưa chốt xong), không
+    // phải kỳ mới mở của tháng này.
+    const period = await getClosingPeriod();
     if (!period) {
       await sendMessage(chatId, "Chưa có kỳ KPI nào được mở.");
       return { handled: true };

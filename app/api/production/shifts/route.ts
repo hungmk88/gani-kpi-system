@@ -6,6 +6,7 @@ import { clientMeta } from "@/lib/audit";
 import {
   submitShiftDraft,
   withProductionRole,
+  redactShiftForViewer,
 } from "@/lib/services/production-service";
 import { PRODUCTION_STAGES, SHIFT_TYPES } from "@/lib/production/constants";
 import { BusinessError } from "@/lib/rbac";
@@ -83,7 +84,10 @@ export async function GET(req: Request) {
       take: 100,
     });
 
-    return ok({ shifts, count: shifts.length });
+    return ok({
+      shifts: shifts.map((s) => redactShiftForViewer(s, user)),
+      count: shifts.length,
+    });
   });
 }
 
@@ -106,6 +110,6 @@ export async function POST(req: Request) {
       clientMeta(req)
     );
 
-    return ok({ shift: log }, 201);
+    return ok({ shift: redactShiftForViewer(log, user) }, 201);
   });
 }

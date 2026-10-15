@@ -137,8 +137,10 @@ export async function submitSelfReview(
 
   const before = { actualSelf: r.actualSelf, selfNote: r.selfNote, status: r.status };
 
-  await prisma.kpiResult.update({
-    where: { id: resultId },
+  // Ghi có điều kiện: trưởng phòng vừa duyệt đúng lúc này thì lượt khai này
+  // thua, không kéo dòng lùi về SELF_REVIEWED.
+  const claimed = await prisma.kpiResult.updateMany({
+    where: { id: resultId, status: { in: ["DRAFT", "SELF_REVIEWED"] } },
     data: {
       actualSelf: input.actualSelf,
       selfNote: input.selfNote ?? null,
@@ -147,6 +149,13 @@ export async function submitSelfReview(
       selfSubmittedAt: new Date(),
     },
   });
+  if (claimed.count !== 1) {
+    throw new BusinessError(
+      ERR.SLA_LOCKED,
+      "Dòng KPI vừa được trưởng phòng duyệt — tải lại trang để xem số mới.",
+      409
+    );
+  }
 
   const updated = await recalcResult(resultId);
 
@@ -244,8 +253,8 @@ export async function managerReview(
     status: r.status,
   };
 
-  await prisma.kpiResult.update({
-    where: { id: resultId },
+  const claimed = await prisma.kpiResult.updateMany({
+    where: { id: resultId, status: { not: "FINALIZED" } },
     data: {
       actualFinal: input.actualFinal,
       managerNote: input.managerNote ?? null,
@@ -253,6 +262,13 @@ export async function managerReview(
       managerReviewedAt: new Date(),
     },
   });
+  if (claimed.count !== 1) {
+    throw new BusinessError(
+      ERR.KPI_FINALIZED,
+      "Dòng KPI vừa được Ban Giám đốc chốt — không sửa được nữa.",
+      409
+    );
+  }
 
   const updated = await recalcResult(resultId);
 
@@ -313,6 +329,10 @@ export async function ceoApprove(
   const finalized: string[] = [];
   const skipped: { id: string; reason: string }[] = [];
 
+  // Ô còn lệch số chưa ai chốt thì không được khoá: khoá lúc này là ngầm chọn
+  // số nhân viên tự khai — đúng điều bộ đối soát cấm.
+  const openMismatch = await openMismatchKeys(results.map((r) => r.periodId));
+
   for (const r of results) {
     if (r.status === "FINALIZED") continue;
     // Đúng thứ tự 3 cấp: chỉ chốt dòng đã qua trưởng phòng (duyệt tay hoặc
@@ -321,14 +341,22 @@ export async function ceoApprove(
       skipped.push({ id: r.id, reason: "Chưa qua bước trưởng phòng duyệt" });
       continue;
     }
+    if (openMismatch.has(mismatchKey(r))) {
+      skipped.push({
+        id: r.id,
+        reason: "Còn lệch số chưa chốt — chốt ở trang Đối soát trước",
+      });
+      continue;
+    }
 
     // Chưa có số chốt thì lấy số nhân viên khai / số hệ thống. Không có số
     // nào thì để TRỐNG (chấm 0 điểm) — tuyệt đối không quy về 0, vì với chỉ
     // tiêu "càng thấp càng tốt" số 0 là điểm tối đa.
     const actualFinal = r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null;
 
-    await prisma.kpiResult.update({
-      where: { id: r.id },
+    // Khoá có điều kiện: duyệt trên web và Telegram cùng lúc thì chỉ một lượt thắng
+    const claimed = await prisma.kpiResult.updateMany({
+      where: { id: r.id, status: "MANAGER_REVIEWED" },
       data: {
         actualFinal,
         ceoNote: input.ceoNote ?? null,
@@ -336,6 +364,10 @@ export async function ceoApprove(
         finalizedAt: new Date(),
       },
     });
+    if (claimed.count !== 1) {
+      skipped.push({ id: r.id, reason: "Đã được chốt ở lượt khác" });
+      continue;
+    }
     const updated = await recalcResult(r.id);
 
     await prisma.kpiReview.create({
@@ -524,24 +556,29 @@ export async function runKpiLockCycle(now = new Date()) {
     if (!fresh) continue;
 
     // Chặng 2: quá 23:59 ngày 4 -> khoá trưởng phòng, đẩy lên hàng chờ CEO
-    if (
+    const managerDue =
       (fresh.status === "SELF_LOCKED" || fresh.status === "OPEN") &&
-      now > new Date(fresh.managerReviewDeadline)
-    ) {
-      const pending = await prisma.kpiResult.findMany({
-        where: { periodId: p.id, status: { in: ["DRAFT", "SELF_REVIEWED"] } },
-      });
-      for (const r of pending) {
-        await prisma.kpiResult.update({
-          where: { id: r.id },
-          data: {
-            // Không có số nào thì để trống (0 điểm), không quy về 0
-            actualFinal: r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null,
-            status: "MANAGER_REVIEWED",
-            managerReviewedAt: now,
-          },
-        });
-        await recalcResult(r.id);
+      now > new Date(fresh.managerReviewDeadline);
+
+    // Kỳ đã khoá trưởng phòng mà vẫn còn dòng ở bước trước (vd nạp Excel tạo
+    // muộn) -> đẩy nốt lên, nếu không CEO không chốt được và kỳ kẹt mãi.
+    if (fresh.status === "MANAGER_LOCKED") {
+      const late = await escalatePendingRows(p.id, now);
+      if (late.moved > 0) {
+        report.push(
+          `[${p.name}] ${late.moved} dòng còn sót ở bước trước đã đẩy lên hàng chờ Ban Giám đốc` +
+            (late.mismatched ? ` (${late.mismatched} dòng còn lệch số, chờ chốt đối soát).` : ".")
+        );
+      }
+    }
+
+    if (managerDue) {
+      const { moved, mismatched } = await escalatePendingRows(p.id, now);
+      const pending = { length: moved };
+      if (mismatched > 0) {
+        report.push(
+          `[${p.name}] ${mismatched} dòng còn lệch số chưa chốt — đẩy lên Ban Giám đốc nhưng KHÔNG tự chọn số, chờ chốt ở trang Đối soát.`
+        );
       }
       await prisma.kpiPeriod.update({
         where: { id: p.id },
@@ -563,3 +600,56 @@ export async function runKpiLockCycle(now = new Date()) {
 }
 
 export { KPI_SCORE_CAP };
+
+
+/* ------------------------------------------------- lệch số & đẩy dòng */
+
+function mismatchKey(r: { periodId: string; employeeId: string; kpiDefinitionId: string | null }) {
+  return `${r.periodId}:${r.employeeId}:${r.kpiDefinitionId ?? ""}`;
+}
+
+/** Các ô (kỳ, người, chỉ tiêu) đang lệch số mà chưa ai chốt. */
+async function openMismatchKeys(periodIds: string[]) {
+  const ids = [...new Set(periodIds)];
+  if (ids.length === 0) return new Set<string>();
+  const rows = await prisma.reconciliation.findMany({
+    where: { periodId: { in: ids }, status: "MISMATCH" },
+    select: { periodId: true, employeeId: true, kpiDefinitionId: true },
+  });
+  return new Set(rows.map(mismatchKey));
+}
+
+/**
+ * Đẩy các dòng còn ở DRAFT / SELF_REVIEWED của một kỳ lên MANAGER_REVIEWED
+ * (hàng chờ Ban Giám đốc). Số chốt lấy theo thứ tự chốt → tự khai → hệ thống,
+ * RIÊNG ô đang lệch số chưa chốt thì không tự chọn số nào: giữ nguyên
+ * actualFinal để Ban Giám đốc chốt ở trang Đối soát (ceoApprove cũng chặn).
+ */
+async function escalatePendingRows(periodId: string, now: Date) {
+  const pending = await prisma.kpiResult.findMany({
+    where: { periodId, status: { in: ["DRAFT", "SELF_REVIEWED"] } },
+  });
+  const openMismatch = await openMismatchKeys([periodId]);
+  let moved = 0;
+  let mismatched = 0;
+  for (const r of pending) {
+    const isMismatch = openMismatch.has(mismatchKey(r));
+    if (isMismatch) mismatched++;
+    const res = await prisma.kpiResult.updateMany({
+      where: { id: r.id, status: { in: ["DRAFT", "SELF_REVIEWED"] } },
+      data: {
+        // Không có số nào thì để trống (0 điểm), không quy về 0
+        actualFinal: isMismatch
+          ? r.actualFinal
+          : (r.actualFinal ?? r.actualSelf ?? r.actualSystem ?? null),
+        status: "MANAGER_REVIEWED",
+        managerReviewedAt: now,
+      },
+    });
+    if (res.count === 1) {
+      moved++;
+      await recalcResult(r.id);
+    }
+  }
+  return { moved, mismatched };
+}

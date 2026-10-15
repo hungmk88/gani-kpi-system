@@ -23,6 +23,7 @@ import {
 import { buildExecutiveBriefing, type BriefingFacts } from "../ai/executive-advisor";
 import { round2, summarizeResults } from "../kpi";
 import { vnDateKey, vnStartOfDay } from "../vn-time";
+import { getPeriodWithCeoDeadlineToday } from "./period-service";
 import type { SessionUser } from "../auth";
 
 /**
@@ -826,6 +827,13 @@ export async function gatherExecutiveBriefingFacts(now = new Date()) {
   return { health: snapshot.health as HealthResult, facts, period, accuracy };
 }
 
+/**
+ * Dấu nhận biết báo cáo giao ban do bộ máy nền tự soạn (đầu `inputText`) — để
+ * phân biệt với bản Ban Giám đốc bấm tay. Bản bấm tay không bao giờ mở đầu bằng
+ * dấu này (xem app/api/ai/executive-briefing/route.ts).
+ */
+const AUTO_BRIEFING_MARKER = "[Tự động ngày 5]";
+
 /** Cùng một ngày theo lịch Việt Nam (không phụ thuộc múi giờ server). */
 function isSameCalendarDay(a: Date, b: Date) {
   return vnDateKey(a) === vnDateKey(b);
@@ -841,18 +849,29 @@ function isSameCalendarDay(a: Date, b: Date) {
  * trôi chảy hơn.
  */
 export async function runMonthlyExecutiveBriefingIfDue(now = new Date()) {
-  const period = await prisma.kpiPeriod.findFirst({
-    orderBy: [{ year: "desc" }, { month: "desc" }],
-  });
-  if (!period) return { sent: false, reason: "NO_PERIOD" };
-
+  // Ngày 5 tháng M+1 là ngày chốt của kỳ tháng M — tức kỳ ĐANG CHỐT, không
+  // phải kỳ mới nhất (kỳ tháng M+1 thường đã mở sẵn, hạn của nó ở tháng sau).
+  // Tìm thẳng kỳ có hạn chốt rơi đúng hôm nay: kỳ đã được chốt sớm hơn hạn vẫn
+  // có buổi giao ban như thường.
+  const period = await getPeriodWithCeoDeadlineToday(now);
+  if (!period) {
+    const any = await prisma.kpiPeriod.count();
+    return { sent: false, reason: any === 0 ? "NO_PERIOD" : "NOT_DUE_TODAY" };
+  }
   if (!isSameCalendarDay(now, period.ceoApprovalDeadline)) {
     return { sent: false, reason: "NOT_DUE_TODAY" };
   }
 
+  // Chỉ tính bản TỰ ĐỘNG đã gửi hôm nay. Ban Giám đốc bấm tay xem báo cáo lúc
+  // sáng (POST /api/ai/executive-briefing) không được làm mất bản giao ban gửi
+  // Telegram của ngày chốt.
   const since = vnStartOfDay(now);
   const already = await prisma.aiSuggestion.findFirst({
-    where: { kind: "EXEC_BRIEFING", createdAt: { gte: since } },
+    where: {
+      kind: "EXEC_BRIEFING",
+      createdAt: { gte: since },
+      inputText: { startsWith: AUTO_BRIEFING_MARKER },
+    },
     select: { id: true },
   });
   if (already) return { sent: false, reason: "ALREADY_SENT_TODAY" };
@@ -873,7 +892,7 @@ export async function runMonthlyExecutiveBriefingIfDue(now = new Date()) {
       modelName: briefing.modelName ?? "unknown",
       entityName: "system",
       entityId: "executive-briefing",
-      inputText: `[Tự động ngày 5] Sức khoẻ ${briefing.healthScore}/100 · ${facts.openTasks} việc mở · ${facts.periodName ?? "chưa có kỳ KPI"}`,
+      inputText: `${AUTO_BRIEFING_MARKER} Sức khoẻ ${briefing.healthScore}/100 · ${facts.openTasks} việc mở · ${facts.periodName ?? "chưa có kỳ KPI"}`,
       payload: JSON.stringify(briefing),
       confidencePercent: facts.predictionAccuracy ?? 0,
       rationale: briefing.executiveSummary,

@@ -6,6 +6,7 @@ import { summarizeResults, classifyScore } from "@/lib/kpi";
 import { periodName } from "@/lib/codes";
 import { getCapacityReports } from "@/lib/services/analytics-service";
 import { CONFIDENCE_LABEL } from "@/lib/analytics/constants";
+import { getDeadlinePeriod } from "@/lib/services/period-service";
 
 /**
  * GOM DỮ LIỆU CHO BẢNG ĐIỀU HÀNH.
@@ -286,9 +287,10 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
     OR: [{ completedAt: null }, { completedAt: { gt: weekAgo } }],
   };
 
-  const period = await prisma.kpiPeriod.findFirst({
-    orderBy: [{ year: "desc" }, { month: "desc" }],
-  });
+  // Kỳ của nhịp 2-4-5 đang chạy: ngày 1-5 là kỳ tháng trước (đang khai/duyệt/
+  // chốt), sau đó là kỳ tháng này. Lấy kỳ "mới nhất" như trước thì đầu tháng
+  // bảng điều hành hiện hạn của tháng sau, giấu mất hạn sắp đóng thật.
+  const period = await getDeadlinePeriod(now);
 
   const isLeader = user.role === "MANAGER" || user.role === "CEO";
 
