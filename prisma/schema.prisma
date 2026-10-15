@@ -649,6 +649,7 @@ model KpiActualFeed {
   import        DataImport?   @relation(fields: [importId], references: [id])
 
   @@index([employeeEmail, kpiDefinitionId, periodMonth, periodYear])
+  @@index([periodYear, periodMonth, kpiDefinitionId])
   @@index([importId])
   @@map("kpi_actual_feeds")
 }
