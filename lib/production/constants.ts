@@ -212,10 +212,18 @@ export const AUDIT_STATUS_LABEL: Record<string, string> = {
  * THƯỞNG
  * ========================================================================== */
 
-/** Bậc thang hệ số thưởng theo điểm cuối cùng. */
+/**
+ * Bậc thang hệ số thưởng theo điểm cuối cùng — chốt 15/10/2026 (phương án A).
+ *
+ * Ngưỡng đặt theo dải điểm THỰC TẾ của công thức 2 tầng: điểm cuối tối đa của
+ * người chính thức là 0,6 × 100 + 0,4 × 130 = 112, của thử việc/thời vụ là
+ * 0,8 × 100 + 0,2 × 130 = 106. Bản cũ để bậc 1,5× ở ≥ 120 nên không ai chạm
+ * được. Giờ người chính thức làm xuất sắc đạt được 1,5×; thử việc/thời vụ tối
+ * đa 1,2×. tests/bonus-tiers.test.ts giữ cho điều này luôn đúng khi đổi trọng số.
+ */
 export const BONUS_TIERS = [
-  { minScore: 120, multiplier: 1.5 },
-  { minScore: 110, multiplier: 1.2 },
+  { minScore: 110, multiplier: 1.5 },
+  { minScore: 105, multiplier: 1.2 },
   { minScore: 100, multiplier: 1.0 },
   { minScore: 90, multiplier: 0.7 },
   { minScore: 0, multiplier: 0 },
