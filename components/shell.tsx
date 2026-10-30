@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Home,
   CheckSquare,
@@ -22,8 +22,11 @@ import {
   MoreHorizontal,
   X,
   LogOut,
+  ChevronDown,
+  Gauge,
   type LucideIcon,
 } from "lucide-react";
+import { Avatar } from "@/components/ui";
 import { ROLE_LABEL } from "@/lib/constants";
 import { Toaster } from "@/components/toast";
 
@@ -54,6 +57,8 @@ const NAV: NavItem[] = [
   { href: "/leave-requests", label: "Nghỉ phép", icon: Palmtree, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], group: "work" },
   { href: "/reconciliation", label: "Đối soát dữ liệu", icon: Scale, roles: ["MANAGER", "CEO"], group: "kpi" },
   { href: "/production", label: "Xưởng sản xuất", icon: Factory, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], productionOnly: true, group: "factory" },
+  // Trang đã có (app/(app)/admin/kpi-dashboard) nhưng trước đây không mục nào trỏ tới
+  { href: "/admin/kpi-dashboard", label: "Bảng KPI sản xuất", icon: Gauge, roles: ["CEO", "ADMIN"], group: "factory" },
   { href: "/analytics", label: "Phân tích & Dự báo", icon: TrendingUp, roles: ["MANAGER", "CEO"], group: "kpi" },
   { href: "/ceo", label: "Bảng điều hành", icon: Target, roles: ["CEO"], mobile: true, group: "kpi" },
   { href: "/audit", label: "Nhật ký hệ thống", icon: ScrollText, roles: ["CEO", "ADMIN"], group: "system" },
@@ -99,18 +104,73 @@ export default function Shell({
     (n): n is NavItem => !!n
   );
 
-  const isActive = (href: string) =>
+  const matches = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
+  // Mục khớp DÀI NHẤT mới sáng: đang ở /admin/kpi-dashboard thì chỉ "Bảng KPI
+  // sản xuất" sáng, không sáng kèm "Quản trị" (/admin).
+  const bestMatch = items
+    .filter((n) => matches(n.href))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+  const isActive = (href: string) =>
+    matches(href) && (!bestMatch || !bestMatch.startsWith(href + "/"));
+
+  // Menu tài khoản (avatar trên thanh đầu trang, máy tính)
+  const [accountOpen, setAccountOpen] = useState(false);
 
   // Chuyển trang thì đóng ngăn menu; Esc cũng đóng
   useEffect(() => {
     setMenuOpen(false);
+    setAccountOpen(false);
   }, [pathname]);
   useEffect(() => {
-    if (!menuOpen) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
+    if (!accountOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setAccountOpen(false);
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+  }, [accountOpen]);
+  // Ngăn menu là hộp thoại (aria-modal): mở ra thì đưa focus vào trong, Tab
+  // chỉ chạy vòng trong ngăn (không lọt xuống trang bị phủ phía sau), đóng
+  // thì trả focus về đúng nút đã mở (nút ☰ trên đầu hoặc "Thêm" ở thanh dưới).
+  const drawerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const opener =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const panel = drawerRef.current;
+    const focusables = () =>
+      Array.from(
+        panel?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ) ?? []
+      );
+    focusables()[0]?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMenuOpen(false);
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const list = focusables();
+      if (list.length === 0) return;
+      const a = list[0];
+      const z = list[list.length - 1];
+      if (!panel?.contains(document.activeElement)) {
+        e.preventDefault();
+        a.focus();
+      } else if (e.shiftKey && document.activeElement === a) {
+        e.preventDefault();
+        z.focus();
+      } else if (!e.shiftKey && document.activeElement === z) {
+        e.preventDefault();
+        a.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (opener?.isConnected) opener.focus();
+    };
   }, [menuOpen]);
 
   const groups = (["work", "kpi", "factory", "system"] as const)
@@ -189,7 +249,7 @@ export default function Shell({
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen flex-col">
       <Toaster />
       {logoutFailed && (
         <div
@@ -208,99 +268,119 @@ export default function Shell({
           </button>
         </div>
       )}
-      {/* ---------------- Sidebar (desktop) ---------------- */}
-      {/* Dính theo màn hình: trang dài thì Thông báo / Đăng xuất vẫn trong tầm mắt */}
-      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-ink-200 bg-white lg:flex print:hidden">
-        <Link
-          href="/dashboard"
-          className="flex items-center gap-2.5 border-b border-ink-100 px-5 py-4"
-        >
-          <Image src="/logo-mark.png" alt="" width={36} height={36} className="shrink-0" />
-          <div>
-            <div className="text-[17px] font-bold tracking-tight text-brand-700">
+      {/* ---------------- Thanh đầu trang (GANI Vivid) ----------------
+          Gradient theo màu logo, chạy hết chiều ngang ở mọi kích thước màn
+          hình. Logo đặt trên ô trắng để giữ đúng màu thương hiệu. */}
+      <header className="vivid-bar sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between gap-3 px-4 text-white shadow-[0_2px_12px_-4px_rgb(11_47_71/0.45)] lg:px-5 print:hidden">
+        <Link href="/dashboard" className="flex min-w-0 items-center gap-2.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-white shadow-sm">
+            <Image src="/logo-mark.png" alt="" width={26} height={26} />
+          </span>
+          <span className="min-w-0 leading-tight">
+            <span className="block truncate text-[15px] font-bold tracking-tight">
               GANI FOODY
-            </div>
-            <div className="text-xs text-ink-500">Công việc &amp; KPI</div>
-          </div>
+            </span>
+            <span className="hidden text-xs text-white/75 sm:block">
+              Công việc &amp; KPI
+            </span>
+          </span>
         </Link>
 
+        <div className="flex items-center gap-1.5">
+          <Link
+            href="/notifications"
+            aria-label={`Thông báo${unread > 0 ? ` (${unread} chưa đọc)` : ""}`}
+            aria-current={isActive("/notifications") ? "page" : undefined}
+            className="relative flex h-10 w-10 items-center justify-center rounded-[10px] text-white/90 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:outline-none"
+          >
+            <Bell size={20} strokeWidth={2} />
+            {unread > 0 && (
+              <span className="absolute top-1 right-1 min-w-4 rounded-full bg-red-600 px-1 text-center text-[11px] leading-4 font-semibold text-white ring-2 ring-[#114b70]">
+                {unread > 9 ? "9+" : unread}
+              </span>
+            )}
+          </Link>
+
+          {/* Tài khoản (máy tính): avatar + tên, bấm ra Đổi mật khẩu / Đăng xuất */}
+          <div className="relative hidden lg:block">
+            <button
+              onClick={() => setAccountOpen((v) => !v)}
+              aria-expanded={accountOpen}
+              aria-haspopup="menu"
+              className="flex items-center gap-2 rounded-full border border-white/15 bg-white/10 py-1 pr-3 pl-1 text-sm hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:outline-none"
+            >
+              <Avatar name={user.fullName} size={30} className="ring-2 ring-white/30" />
+              <span className="max-w-44 truncate font-medium">{user.fullName}</span>
+              <ChevronDown size={16} className="text-white/75" />
+            </button>
+            {accountOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setAccountOpen(false)}
+                  aria-hidden
+                />
+                <div
+                  role="menu"
+                  className="absolute right-0 z-50 mt-2 w-64 rounded-[14px] border border-ink-200 bg-white p-1.5 text-ink-700 shadow-lift"
+                >
+                  <div className="flex items-center gap-3 px-3 py-2.5">
+                    <Avatar name={user.fullName} size={36} />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-ink-900">
+                        {user.fullName}
+                      </div>
+                      <div className="truncate text-xs text-ink-500">{roleLine}</div>
+                    </div>
+                  </div>
+                  <div className="my-1 border-t border-ink-100" />
+                  <Link
+                    role="menuitem"
+                    href="/doi-mat-khau"
+                    className="flex min-h-10 items-center gap-3 rounded-md px-3 text-sm font-medium hover:bg-ink-50"
+                  >
+                    <KeyRound size={16} strokeWidth={2} /> Đổi mật khẩu
+                  </Link>
+                  <button
+                    role="menuitem"
+                    onClick={logout}
+                    className="flex min-h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium hover:bg-ink-50"
+                  >
+                    <LogOut size={16} strokeWidth={2} /> Đăng xuất
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          <button
+            onClick={() => setMenuOpen(true)}
+            aria-label="Mở menu"
+            aria-expanded={menuOpen}
+            aria-controls="mobile-menu"
+            className="flex h-10 w-10 items-center justify-center rounded-[10px] text-white hover:bg-white/10 lg:hidden"
+          >
+            <MenuIcon size={22} strokeWidth={2} />
+          </button>
+        </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1">
+      {/* ---------------- Sidebar (desktop) ---------------- */}
+      {/* Dính theo màn hình: trang dài thì Thông báo / Đăng xuất vẫn trong tầm mắt */}
+      <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 flex-col border-r border-ink-200 bg-white lg:flex print:hidden">
         <nav aria-label="Điều hướng chính" className="flex-1 overflow-y-auto p-3">
           {navList()}
         </nav>
 
-        <div className="border-t border-ink-100 p-3">
-          <Link
-            href="/notifications"
-            aria-current={isActive("/notifications") ? "page" : undefined}
-            className={`mb-2 flex min-h-10 items-center justify-between rounded-md px-3 py-2 text-sm font-medium ${
-              isActive("/notifications")
-                ? "bg-brand-50 text-brand-800"
-                : "text-ink-600 hover:bg-ink-50"
-            }`}
-          >
-            <span className="flex items-center gap-3">
-              <Bell size={18} strokeWidth={2} /> Thông báo
-            </span>
-            {unreadBadge}
-          </Link>
-          <div className="rounded-md bg-ink-50 px-3 py-2.5">
-            <div className="truncate text-sm font-medium text-ink-800">
-              {user.fullName}
-            </div>
-            <div className="truncate text-xs text-ink-500">{roleLine}</div>
-            <div className="mt-2 flex items-center gap-3">
-              <Link
-                href="/doi-mat-khau"
-                className="text-xs font-medium text-ink-600 hover:text-ink-900 hover:underline"
-              >
-                Đổi mật khẩu
-              </Link>
-              <button
-                onClick={logout}
-                className="text-xs font-medium text-ink-600 hover:text-red-700 hover:underline"
-              >
-                Đăng xuất
-              </button>
-            </div>
-          </div>
+        {/* Thông báo + tài khoản đã lên thanh đầu trang */}
+        <div className="border-t border-ink-100 px-5 py-3 text-xs text-ink-400">
+          GANI FOODY · Công việc &amp; KPI
         </div>
       </aside>
 
       {/* ---------------- Nội dung ---------------- */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Thanh trên (điện thoại) */}
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-ink-200 bg-white/95 px-4 backdrop-blur lg:hidden print:hidden">
-          <Link href="/dashboard" className="flex min-w-0 items-center gap-2">
-            <Image src="/logo-mark.png" alt="" width={28} height={28} className="shrink-0" />
-            <span className="truncate font-bold tracking-tight text-brand-700">
-              GANI FOODY
-            </span>
-          </Link>
-          <div className="flex items-center gap-1">
-            <Link
-              href="/notifications"
-              aria-label={`Thông báo${unread > 0 ? ` (${unread} chưa đọc)` : ""}`}
-              className="relative flex h-11 w-11 items-center justify-center rounded-md text-ink-600 hover:bg-ink-50"
-            >
-              <Bell size={20} strokeWidth={2} />
-              {unread > 0 && (
-                <span className="absolute top-1.5 right-1.5 min-w-4 rounded-full bg-red-600 px-1 text-center text-[11px] leading-4 font-semibold text-white">
-                  {unread > 9 ? "9+" : unread}
-                </span>
-              )}
-            </Link>
-            <button
-              onClick={() => setMenuOpen(true)}
-              aria-label="Mở menu"
-              aria-expanded={menuOpen}
-              aria-controls="mobile-menu"
-              className="flex h-11 w-11 items-center justify-center rounded-md text-ink-700 hover:bg-ink-50"
-            >
-              <MenuIcon size={22} strokeWidth={2} />
-            </button>
-          </div>
-        </header>
-
         {/* Ngăn menu nổi (điện thoại): phủ lên trang, không đẩy nội dung —
             trước đây menu mở ở đầu trang, đang cuộn giữa trang bấm thì
             tưởng không có gì xảy ra. */}
@@ -312,6 +392,7 @@ export default function Shell({
               aria-hidden
             />
             <div
+              ref={drawerRef}
               role="dialog"
               aria-modal="true"
               aria-label="Menu"
@@ -426,6 +507,7 @@ export default function Shell({
             Thêm
           </button>
         </nav>
+      </div>
       </div>
     </div>
   );

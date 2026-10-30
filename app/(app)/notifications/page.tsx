@@ -61,7 +61,7 @@ export default async function NotificationsPage() {
               <div
                 className={`card p-4 transition ${
                   n.isRead ? "" : "border-l-[3px] border-l-brand-600"
-                } ${n.linkUrl ? "hover:shadow-md" : ""}`}
+                } ${n.linkUrl ? "hover:shadow-lift" : ""}`}
               >
                 <div className="mb-1 flex flex-wrap items-center gap-2">
                   <span

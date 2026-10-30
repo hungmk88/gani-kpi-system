@@ -7,6 +7,7 @@ import {
   telegramEnabled,
 } from "./telegram-api";
 import { writeAudit } from "./audit";
+import { LINK_CODE_LENGTH, normalizeLinkCode } from "./integrations/signature";
 import { notify } from "./notify";
 import { ceoApprove } from "./services/kpi-service";
 import { getClosingPeriod, getDeadlinePeriod } from "./services/period-service";
@@ -37,8 +38,9 @@ import type { SessionUser } from "./auth";
  *      khoản trong nhóm thì cả nhóm dùng chung tài khoản người đó — nên chặn.
  *      Người dùng luôn được nhận diện theo `from.id` (người gõ/bấm), không
  *      theo `chat.id`.
- *   5. Mã nối 6 số: tối đa 5 lần nhập sai mỗi chat trong 15 phút (đếm trên
- *      nhật ký audit), cộng một trần chung toàn hệ thống chống dò mã hàng loạt.
+ *   5. Mã nối 8 ký tự chữ+số (~8,5×10¹¹ tổ hợp): tối đa 5 lần nhập sai mỗi
+ *      chat trong 15 phút (đếm trên nhật ký audit). Nhiều lượt sai trên toàn
+ *      hệ thống thì BÁO Quản trị/BGĐ chứ không khoá nối của cả công ty.
  * ---------------------------------------------------------------------------
  */
 
@@ -163,21 +165,22 @@ export async function sendKpiApprovalRequest(kpiResultId: string) {
     ],
   };
 
-  let sent = 0;
-  for (const ceo of ceos) {
-    const res = await sendMessage(ceo.telegramChatId!, lines.join("\n"), keyboard);
-    if (res.ok) sent++;
-  }
-  // Ghi mốc kể cả khi gửi hỏng: Telegram lỗi thì lượt sau cũng hỏng y vậy,
-  // không thử lại 12 lần/ngày. Ngày mai gửi lại.
+  // Ghi mốc TRƯỚC khi gửi (và kể cả khi gửi hỏng): Telegram lỗi thì lượt sau
+  // cũng hỏng y vậy, không thử lại 12 lần/ngày; còn lượt cron bị giết giữa lúc
+  // gửi thì lượt sau không gửi lặp. Ngày mai gửi lại.
   await writeAudit({
     actor: null,
     action: APPROVAL_SENT_ACTION,
     entityName: "kpi_results",
     entityId: row.id,
-    after: { sent, ceos: ceos.length },
+    after: { ceos: ceos.length },
     userAgent: "telegram-bot",
   });
+  let sent = 0;
+  for (const ceo of ceos) {
+    const res = await sendMessage(ceo.telegramChatId!, lines.join("\n"), keyboard);
+    if (res.ok) sent++;
+  }
   return { sent };
 }
 
@@ -531,7 +534,7 @@ async function handleCommand(
           "Cách nối:",
           `1. Đăng nhập <a href="${appUrl("/notifications")}">hệ thống</a>`,
           "2. Vào mục <b>Thông báo</b>, bấm <b>Nối Telegram</b>",
-          "3. Chép mã 6 số rồi gõ vào đây: <code>/start 123456</code>",
+          "3. Chép mã 8 ký tự rồi gõ vào đây: <code>/start ABCD2345</code>",
         ].join("\n")
       );
     }
@@ -773,9 +776,47 @@ async function handleCommand(
 
 /** Số lần nhập sai mã tối đa của một tài khoản Telegram trong cửa sổ thời gian. */
 const LINK_MAX_FAILS_PER_CHAT = 5;
-/** Trần chung toàn hệ thống — chặn dò mã bằng nhiều tài khoản Telegram. */
-const LINK_MAX_FAILS_GLOBAL = 100;
+/**
+ * Ngưỡng báo động chung toàn hệ thống: quá chừng này lượt sai trong cửa sổ thì
+ * báo Quản trị + Ban Giám đốc (tối đa một lần mỗi cửa sổ). KHÔNG khoá: trước
+ * đây trần này chặn nối cho cả công ty, nên ai cũng tắt được chức năng nối
+ * Telegram của mọi người chỉ bằng vài tài khoản Telegram nhập sai cho đủ số.
+ * Mã 8 ký tự đã đủ dài để dò mù vô vọng.
+ */
+const LINK_ALERT_FAILS_GLOBAL = 100;
 const LINK_FAIL_WINDOW_MS = 15 * 60_000;
+const LINK_ALERT_ACTION = "TELEGRAM_LINK_BRUTEFORCE_ALERT";
+
+/** Báo Quản trị + Ban Giám đốc có người dò mã nối — tối đa một lần mỗi cửa sổ. */
+async function alertLinkBruteforce(fails: number, since: Date) {
+  const alerted = await prisma.auditLog.findFirst({
+    where: { action: LINK_ALERT_ACTION, createdAt: { gte: since } },
+    select: { id: true },
+  });
+  if (alerted) return;
+  // Ghi dấu trước rồi mới báo: hai tin đến sát nhau không báo hai lần
+  await writeAudit({
+    actor: null,
+    action: LINK_ALERT_ACTION,
+    entityName: "telegram_chats",
+    entityId: "*",
+    after: { fails, windowMinutes: LINK_FAIL_WINDOW_MS / 60_000 },
+    userAgent: "telegram-bot",
+  });
+  const admins = await prisma.user.findMany({
+    where: { role: { in: ["CEO", "ADMIN"] }, isActive: true },
+    select: { id: true },
+  });
+  for (const a of admins) {
+    await notify({
+      userId: a.id,
+      title: "Có dấu hiệu dò mã nối Telegram",
+      body: `${fails} lượt nhập sai mã nối Telegram trong ${LINK_FAIL_WINDOW_MS / 60_000} phút qua, từ nhiều tài khoản Telegram. Chức năng nối vẫn chạy bình thường (mỗi tài khoản Telegram bị giới hạn ${LINK_MAX_FAILS_PER_CHAT} lần sai). Xem Nhật ký hệ thống (TELEGRAM_LINK_FAILED) để biết nguồn.`,
+      level: "WARNING",
+      linkUrl: "/audit",
+    }).catch((e) => console.error("[TELEGRAM] Không gửi được cảnh báo dò mã:", e));
+  }
+}
 
 async function recordLinkFailure(
   chatId: string,
@@ -793,7 +834,7 @@ async function recordLinkFailure(
   });
 }
 
-async function linkAccount(code: string, chatId: string, ip?: string | null) {
+async function linkAccount(rawCode: string, chatId: string, ip?: string | null) {
   const since = new Date(Date.now() - LINK_FAIL_WINDOW_MS);
   const [failsThisChat, failsGlobal] = await Promise.all([
     prisma.auditLog.count({
@@ -814,19 +855,22 @@ async function linkAccount(code: string, chatId: string, ip?: string | null) {
         "⛔ Bạn đã nhập sai mã quá nhiều lần. Vui lòng chờ 15 phút rồi lấy mã mới trên hệ thống.",
     };
   }
-  if (failsGlobal >= LINK_MAX_FAILS_GLOBAL) {
-    console.warn("[TELEGRAM] Quá nhiều lượt nhập sai mã nối — tạm khoá nối tài khoản.");
-    return {
-      ok: false,
-      message:
-        "⛔ Chức năng nối tài khoản đang tạm khoá do có quá nhiều lượt nhập sai. Vui lòng thử lại sau ít phút.",
-    };
+  if (failsGlobal >= LINK_ALERT_FAILS_GLOBAL) {
+    console.warn("[TELEGRAM] Nhiều lượt nhập sai mã nối trên toàn hệ thống — báo quản trị.");
+    await alertLinkBruteforce(failsGlobal, since).catch((e) =>
+      console.error("[TELEGRAM] Báo động dò mã lỗi:", e)
+    );
   }
 
-  if (!/^\d{6}$/.test(code)) {
+  const normalized = normalizeLinkCode(rawCode);
+  if (!normalized) {
     await recordLinkFailure(chatId, "Sai định dạng mã", ip);
-    return { ok: false, message: "❌ Mã nối phải gồm đúng 6 chữ số." };
+    return {
+      ok: false,
+      message: `❌ Mã nối gồm đúng ${LINK_CODE_LENGTH} ký tự chữ và số, chép y nguyên từ hệ thống.`,
+    };
   }
+  const code = normalized;
 
   const link = await prisma.telegramLink.findUnique({
     where: { code },

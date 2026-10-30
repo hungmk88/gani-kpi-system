@@ -3,13 +3,23 @@
  * bộ lọc nhanh đếm sẵn từng loại. Thuần (không React, không DB) để test được.
  *
  * Thứ tự ưu tiên: lệch số → chờ tôi xử lý → chạm trần → dưới 70 → còn lại.
- * Lệch số đứng đầu vì nó chặn chốt kỳ; "chờ tôi" là việc của chính người
+ * Lệch số (ô đối soát MISMATCH chưa chốt) đứng đầu vì nó chặn chốt kỳ; "chờ tôi" là việc của chính người
  * đang xem; chạm trần / dưới 70 là tín hiệu cần để mắt, không chặn gì.
  */
 
 export type ExceptionRow = {
   status: string;
+  /**
+   * Cờ "lệch" giữa số tự khai và số hệ thống trên chính dòng KPI — CHỈ để
+   * hiển thị ghi chú, không chặn gì.
+   */
   hasMismatch: boolean;
+  /**
+   * Ô đang có bản đối soát MISMATCH chưa ai chốt — đây mới là thứ máy chủ
+   * dùng để chặn chốt (ceoApprove bỏ qua dòng này). Mọi cờ "lệch số / bị bỏ
+   * qua / chờ tôi" phải theo cờ này để màn hình nói đúng như máy chủ làm.
+   */
+  reconMismatch: boolean;
   isCapped: boolean;
   /** Gatekeeper không có mức đạt → không bao giờ tính là "chạm trần" */
   isGatekeeper: boolean;
@@ -52,11 +62,14 @@ export function rowNeedsViewer(
   const isMine = group.employeeId === viewer.userId;
   if (isMine) return viewer.selfOpen && row.status === "DRAFT";
   if (viewer.role === "CEO") {
-    // Dòng còn lệch số thì BGĐ chưa khoá được — nó nằm ở nhóm "lệch số"
-    if (row.status === "MANAGER_REVIEWED") return !row.hasMismatch;
+    // Dòng còn lệch số (đối soát chưa chốt) thì BGĐ chưa khoá được — nó nằm
+    // ở nhóm "lệch số"
+    if (row.status === "MANAGER_REVIEWED") return !row.reconMismatch;
     return row.status === "SELF_REVIEWED" && group.employeeRole === "MANAGER";
   }
   if (viewer.role === "MANAGER") {
+    // KPI của trưởng phòng khác (kể cả cùng phòng) do Ban Giám đốc duyệt
+    if (group.employeeRole === "MANAGER" || group.employeeRole === "ADMIN") return false;
     return viewer.managerOpen && row.status === "SELF_REVIEWED";
   }
   return false;
@@ -77,7 +90,7 @@ export function groupFlags(
 ): GroupFlags {
   const draft = group.rows.filter((r) => r.status === "DRAFT").length;
   return {
-    mismatch: group.rows.filter((r) => r.hasMismatch && r.status !== "FINALIZED").length,
+    mismatch: group.rows.filter((r) => r.reconMismatch && r.status !== "FINALIZED").length,
     needsMe: group.rows.filter((r) => rowNeedsViewer(r, group, viewer)).length,
     capped: group.rows.filter((r) => r.isCapped && !r.isGatekeeper).length,
     // Chỉ xét "dưới 70" khi đã có đủ số (không còn dòng chưa khai) — đang

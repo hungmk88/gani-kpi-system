@@ -80,9 +80,15 @@ function sign(rawBody, tsSeconds, secret) {
   return `sha256=${mac.digest("hex")}`;
 }
 
+// Máy chủ chặn chữ ký lặp lại (chống phát lại), nên hai lần gửi cùng nội dung
+// trong cùng một giây phải mang dấu thời gian khác nhau.
+let lastTs = 0;
+
 async function postWebhook(sourceCode, items, secret, opts = {}) {
   const rawBody = JSON.stringify(items);
-  const ts = opts.timestamp ?? Math.floor(Date.now() / 1000);
+  const ts =
+    opts.timestamp ??
+    (lastTs = Math.max(Math.floor(Date.now() / 1000), lastTs + 1));
   const headers = { "Content-Type": "application/json" };
   if (!opts.omitTimestamp) headers["X-Timestamp"] = String(ts);
   if (!opts.omitSignature) {
@@ -677,8 +683,9 @@ async function main() {
   const emp2 = api(empCookie);
   const codeRes = await emp2("/api/telegram/link", { method: "POST" });
   check(
-    "Nhân viên tự lấy được mã nối 6 số",
-    codeRes.status === 200 && /^\d{6}$/.test(codeRes.body?.code ?? ""),
+    "Nhân viên tự lấy được mã nối 8 ký tự",
+    codeRes.status === 200 &&
+      /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/.test(codeRes.body?.code ?? ""),
     `HTTP ${codeRes.status}, code=${codeRes.body?.code}`
   );
   const linkCode = codeRes.body?.code;
@@ -688,7 +695,7 @@ async function main() {
       message: {
         chat: { id: 900000003, type: "private" },
         from: { id: 900000003 },
-        text: "/start 000000",
+        text: "/start AAAAAAAA",
       },
     },
     webhookSecret

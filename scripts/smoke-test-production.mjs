@@ -243,6 +243,27 @@ async function main() {
     `HTTP ${selfQc.status} ${selfQc.body?.message}`
   );
 
+  // Lỗi công đoạn ghi cho người KHÔNG có tên trong ca: trước đây bị bỏ qua im
+  // lặng (KCS tưởng đã ghi), giờ bị chặn để KCS biết mà sửa.
+  const outsiderDefect = await kcs(`/api/production/shifts/${shiftId}`, {
+    method: "POST",
+    body: JSON.stringify({
+      action: "QC_APPROVE",
+      qcPassedKg: 400,
+      reworkKg: 20,
+      scrapKg: 10,
+      haccpViolationCount: 0,
+      participantDefects: [
+        { userId: phuc.id, personalDefectKg: 1, violationCount: 0 },
+      ],
+    }),
+  });
+  check(
+    "Ghi lỗi công đoạn cho người ngoài danh sách làm ca thì bị chặn",
+    outsiderDefect.status === 400,
+    `HTTP ${outsiderDefect.status} ${outsiderDefect.body?.message}`
+  );
+
   const qcOk = await kcs(`/api/production/shifts/${shiftId}`, {
     method: "POST",
     body: JSON.stringify({

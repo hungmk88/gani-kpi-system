@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -16,9 +17,27 @@ import {
 import { SHIFT_TYPES, SHIFT_TYPE_LABEL } from "@/lib/production/constants";
 import { SHIFT_STAGES, SHIFT_STAGE_LABEL } from "@/lib/production/shift-flow";
 import { fmtDate, fmtDateTime, fmtNum, fmtPct, fmtScore, fmtVnd } from "@/lib/format";
+import { vnDateKey } from "@/lib/vn-time";
 import PrintToolbar from "./print-toolbar";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Tiêu đề trang = tên file khi "Lưu thành PDF" (layout gốc ghép thành
+ * "%s · GANI KPI"). Không có tiêu đề thì file nào cũng mang tên chung chung,
+ * in nhiều kỳ không phân biệt được. Không dùng "/" trong ngày — trình duyệt
+ * thay ký tự đó trong tên file.
+ */
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>;
+}): Promise<Metadata> {
+  const { period } = await searchParams;
+  return {
+    title: `Báo cáo KPI sản xuất · ${PERIOD_LABEL[normalizePeriod(period)]} · ${vnDateKey()}`,
+  };
+}
 
 /**
  * BÁO CÁO DASHBOARD KPI SẢN XUẤT — bản in.
@@ -97,7 +116,13 @@ export default async function KpiDashboardReportPage({
         )}
 
         <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 print:grid-cols-3">
-          <Stat label="Số ca đã khoá" value={fmt(summary.summary.totalShifts)} />
+          <Stat label="Số ca đã khoá (đã chấm điểm)" value={fmt(summary.summary.totalShifts)} />
+          {summary.summary.unscoredShifts > 0 && (
+            <Stat
+              label="Ca đã khoá chờ chấm điểm"
+              value={fmt(summary.summary.unscoredShifts)}
+            />
+          )}
           <Stat label="Lượt chấm (người × ca)" value={fmt(summary.summary.resultCount)} />
           <Stat label="Điểm cuối trung bình" value={num2(summary.summary.avgScore)} />
           <Stat label="Điểm tầng 2 trung bình" value={num2(summary.summary.avgTier2Score)} />

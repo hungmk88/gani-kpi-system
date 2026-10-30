@@ -87,14 +87,50 @@ export async function runBackup({ quiet = false } = {}) {
   const name = `kpi-${stamp()}.dump`;
   const outPath = path.resolve(BACKUP_DIR, name);
 
-  await runPgDump(url, outPath);
+  // Ghi vào *.partial rồi mới đổi tên khi pg_dump thành công: một lần dump
+  // hỏng giữa chừng để lại file 0 byte/cụt mang đúng tên kpi-*.dump thì luật
+  // "giữ bản đầu tháng vĩnh viễn" sẽ giữ cái file vô dụng đó mãi mãi — và đẩy
+  // một bản tốt ra khỏi 14 bản gần nhất.
+  const partialPath = `${outPath}.partial`;
+  try {
+    await runPgDump(url, partialPath);
+    const partialSize = fs.statSync(partialPath).size;
+    if (partialSize === 0) throw new Error("pg_dump tạo ra file rỗng (0 byte).");
+    fs.renameSync(partialPath, outPath);
+  } catch (e) {
+    fs.rmSync(partialPath, { force: true });
+    throw e;
+  }
   const size = fs.statSync(outPath).size;
 
   /* ------------------------- Dọn bản cũ ------------------------- */
 
-  const all = fs
-    .readdirSync(BACKUP_DIR)
-    .filter((f) => /^kpi-\d{8}-\d{4}\.dump$/.test(f))
+  const files = fs.readdirSync(BACKUP_DIR);
+  // Dọn *.partial sót lại từ lần chạy bị kill (không qua được nhánh catch ở trên)
+  for (const f of files) {
+    if (/^kpi-\d{8}-\d{4}\.dump\.partial$/.test(f) && f !== path.basename(partialPath)) {
+      fs.rmSync(path.join(BACKUP_DIR, f), { force: true });
+    }
+  }
+  const sizeOf = (f) => {
+    try {
+      return fs.statSync(path.join(BACKUP_DIR, f)).size;
+    } catch {
+      return 0;
+    }
+  };
+  const named = files.filter((f) => /^kpi-\d{8}-\d{4}\.dump$/.test(f));
+  // File 0 byte (từ bản script cũ chưa có *.partial) không phải bản sao lưu:
+  // không được tính vào 14 bản gần nhất hay "bản đầu tháng" — xoá luôn.
+  let xoaRong = 0;
+  for (const f of named) {
+    if (sizeOf(f) === 0) {
+      fs.rmSync(path.join(BACKUP_DIR, f), { force: true });
+      xoaRong++;
+    }
+  }
+  const all = named
+    .filter((f) => fs.existsSync(path.join(BACKUP_DIR, f)))
     .sort()
     .reverse(); // mới nhất trước
 
@@ -108,7 +144,7 @@ export async function runBackup({ quiet = false } = {}) {
   }
   for (const f of dauThang.values()) giu.add(f);
 
-  let xoa = 0;
+  let xoa = xoaRong;
   for (const f of all) {
     if (giu.has(f)) continue;
     fs.rmSync(path.join(BACKUP_DIR, f));

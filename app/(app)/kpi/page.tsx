@@ -341,7 +341,7 @@ export default async function KpiHomePage() {
                 <Link
                   key={p.id}
                   href={`/kpi/${p.id}`}
-                  className="card p-4 transition hover:shadow-md"
+                  className="card p-4 transition hover:shadow-lift"
                 >
                   <div className="mb-2 flex items-center justify-between">
                     <span className="font-semibold text-ink-900">{p.name}</span>

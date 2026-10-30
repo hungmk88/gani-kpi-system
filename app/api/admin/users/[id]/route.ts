@@ -236,6 +236,10 @@ export async function PATCH(
       // mới sau khi đổi mật khẩu.
       data.telegramChatId = null;
     }
+    // Khoá tài khoản = người đó không còn quyền nhận gì — cắt Telegram luôn
+    // (mở lại thì chính chủ tự nối lại bằng mã mới).
+    const deactivating = body.isActive === false && target.isActive;
+    if (deactivating) data.telegramChatId = null;
 
     const updated = await prisma.$transaction(async (tx) => {
       const u = await tx.user.update({ where: { id }, data }).catch((e) => {
@@ -244,8 +248,8 @@ export async function PATCH(
         }
         throw e;
       });
-      if (body.newPassword) {
-        // Mã nối Telegram đang chờ (lấy trước lúc đặt lại) cũng huỷ luôn.
+      if (body.newPassword || deactivating) {
+        // Mã nối Telegram đang chờ (lấy trước lúc đặt lại / khoá) cũng huỷ luôn.
         await tx.telegramLink.deleteMany({ where: { userId: id, usedAt: null } });
       }
       return u;
@@ -297,6 +301,24 @@ export async function PATCH(
       await alertCeos(
         `Đổi vai trò sản xuất ${updated.email}: ${target.productionRole ?? "(không)"} → ${updated.productionRole ?? "(không)"}`,
         `Người thực hiện: ${actor.email}. Vai trò xưởng mở quyền ký xác nhận KCS / khoá ca — nếu không phải chủ ý của Ban Giám đốc, kiểm tra lại ngay.`
+      );
+    }
+
+    // Chuyển trưởng phòng sang phòng khác = trao quyền duyệt KPI của cả phòng
+    // mới (và bỏ trống phòng cũ) — phải báo như đổi vai trò.
+    if (
+      updated.departmentId !== target.departmentId &&
+      (target.role === "MANAGER" || updated.role === "MANAGER")
+    ) {
+      const ids = [target.departmentId, updated.departmentId].filter((x): x is string => !!x);
+      const depts = ids.length
+        ? await prisma.department.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })
+        : [];
+      const nameOf = (id: string | null) =>
+        (id && depts.find((d) => d.id === id)?.name) || "(không phòng ban)";
+      await alertCeos(
+        `Chuyển trưởng phòng ${updated.email}: ${nameOf(target.departmentId)} → ${nameOf(updated.departmentId)}`,
+        `Người thực hiện: ${actor.email}. Trưởng phòng duyệt KPI của cả phòng mới — nếu không phải chủ ý của Ban Giám đốc, kiểm tra lại ngay.`
       );
     }
 

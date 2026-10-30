@@ -18,7 +18,8 @@ import { rescoreLockedShiftsWithoutResults } from "../services/production-servic
  * số máy tính ra từ nhật ký ca, hệ thống treo lại chờ người quyết.
  *
  * Chỉ tính ca đã khoá. Ca còn DRAFT hay chờ KCS thì số chưa chắc, đẩy sang KPI
- * tháng là làm bẩn dữ liệu.
+ * tháng là làm bẩn dữ liệu. Ca bị mở lại thì số đã đẩy trước đó được đè bằng 0
+ * (staleProductionCells) — không để số cũ tiếp tục vào đối soát.
  */
 
 export type ProductionSyncResult = {
@@ -55,7 +56,8 @@ export async function runProductionKpiSync(
     skippedNoKpi: [],
   };
 
-  if (shifts.length === 0) return result;
+  // KHÔNG dừng sớm khi tháng không còn ca khoá: ca có thể vừa bị mở lại hết,
+  // số đã đẩy sang KPI tháng ở lượt trước phải được đưa về 0 (xem dưới).
 
   /* ---------------- gộp số theo từng người ---------------- */
 
@@ -131,8 +133,9 @@ export async function runProductionKpiSync(
   );
 
   // Tra MỘT LẦN số đã gộp lần trước của mọi (người × chỉ tiêu) trong tháng,
-  // thay vì một findFirst cho từng ô — cron Vercel chỉ có 60 giây.
-  const emails = [...new Set([...byUser.values()].map((a) => a.email))];
+  // thay vì một findFirst cho từng ô — cron Vercel chỉ có 60 giây. Tra theo
+  // TOÀN BỘ nguồn production của tháng (không chỉ người còn ca khoá) để biết
+  // ai từng có số mà giờ không còn ca nào.
   const defIds = [...defs.values()].map((d) => d.id);
   const cellKey = (email: string, defId: string) => `${email}|${defId}`;
   const lastValue = new Map<string, number>();
@@ -140,7 +143,6 @@ export async function runProductionKpiSync(
     const prevFeeds = await prisma.kpiActualFeed.findMany({
       where: {
         kpiDefinitionId: { in: defIds },
-        employeeEmail: { in: emails },
         periodMonth: month,
         periodYear: year,
         sourceCode: PRODUCTION_FEED_SOURCE,
@@ -166,6 +168,8 @@ export async function runProductionKpiSync(
   };
   const newFeeds: NewFeed[] = [];
   const changedCells: { userId: string; defId: string }[] = [];
+  // Ô (người × chỉ tiêu) lượt này còn tính được số từ ca đã khoá
+  const liveCells: string[] = [];
 
   for (const [userId, agg] of byUser) {
     const values: Record<string, number | null> = {
@@ -187,6 +191,7 @@ export async function runProductionKpiSync(
         if (!result.skippedNoKpi.includes(code)) result.skippedNoKpi.push(code);
         continue;
       }
+      liveCells.push(cellKey(agg.email, def.id));
 
       // Nhật ký thô ghi kể cả khi kỳ tháng chưa mở — nhưng CHỈ khi số đổi so
       // với lần gộp trước. Cron chạy mỗi 2 tiếng; ghi lặp cùng một số sẽ phình
@@ -212,6 +217,42 @@ export async function runProductionKpiSync(
         }),
       });
       changedCells.push({ userId, defId: def.id });
+    }
+  }
+
+  /* -------- ô cũ không còn căn cứ: đưa về 0 --------
+     Bộ đối soát luôn lấy feed MỚI NHẤT của từng nguồn (latestSources) và không
+     có cách "rút" một feed. Nên khi ca bị mở lại khiến một người không còn ca
+     khoá nào trong tháng (hoặc chỉ số không còn tính được), feed cũ vẫn là số
+     production mới nhất và tiếp tục chảy vào cột Số hệ thống. Ghi một feed 0
+     (trung tính: chưa có ca khoá nào ghi nhận cho người này) để đè lên —
+     khớp nghĩa "số máy tính ra từ nhật ký ca đã khoá"; nếu nhân viên tự khai
+     khác 0 thì bộ đối soát treo lại chờ người quyết, đúng nguyên tắc không âm
+     thầm chọn số. Ô đã là 0 thì không ghi lặp. */
+  const stale = staleProductionCells(lastValue, new Set(liveCells));
+  if (stale.length > 0) {
+    const staleUsers = await prisma.user.findMany({
+      where: { email: { in: [...new Set(stale.map((c) => c.email))] } },
+      select: { id: true, email: true },
+    });
+    const idByEmail = new Map(staleUsers.map((u) => [u.email, u.id]));
+    for (const c of stale) {
+      newFeeds.push({
+        kpiDefinitionId: c.defId,
+        employeeEmail: c.email,
+        periodMonth: month,
+        periodYear: year,
+        value: 0,
+        source: "PRODUCTION",
+        sourceCode: PRODUCTION_FEED_SOURCE,
+        rawPayload: JSON.stringify({
+          khongConCaKhoa: true,
+          ghiChu: "Không còn ca đã khoá nào tính được chỉ số này trong tháng (ca bị mở lại) — đưa số production về 0.",
+          soTruocDo: lastValue.get(cellKey(c.email, c.defId)),
+        }),
+      });
+      const uid = idByEmail.get(c.email);
+      if (uid) changedCells.push({ userId: uid, defId: c.defId });
     }
   }
 
@@ -286,4 +327,24 @@ export async function runProductionKpiSyncRecent(now = new Date()) {
     tongDongDay: a.feedsWritten + b.feedsWritten,
     tongLechSo: a.mismatches + b.mismatches,
   };
+}
+
+/**
+ * Ô production (email × chỉ tiêu) cần đưa về 0: lượt trước có số KHÁC 0 mà
+ * lượt này không còn tính được (người không còn ca khoá trong tháng, hoặc chỉ
+ * số không xác định được nữa). Hàm thuần — để kiểm thử được.
+ *
+ * `lastValue`: số production mới nhất của từng ô, khoá "email|defId".
+ */
+export function staleProductionCells(
+  lastValue: Map<string, number>,
+  liveCells: Set<string>
+): { email: string; defId: string }[] {
+  const out: { email: string; defId: string }[] = [];
+  for (const [key, value] of lastValue) {
+    if (liveCells.has(key) || value === 0) continue;
+    const sep = key.lastIndexOf("|");
+    out.push({ email: key.slice(0, sep), defId: key.slice(sep + 1) });
+  }
+  return out;
 }

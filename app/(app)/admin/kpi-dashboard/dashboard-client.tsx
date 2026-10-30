@@ -38,6 +38,8 @@ import { StatCard, fmtScore } from "@/components/ui";
 interface SummaryResponse {
   summary: {
     totalShifts: number;
+    /** Ca đã khoá nhưng chưa có điểm (chờ chấm lại) — không vào mẫu số */
+    unscoredShifts?: number;
     resultCount: number;
     avgScore: number | null;
     avgTier2Score: number | null;
@@ -138,10 +140,6 @@ export default function DashboardClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    fetchData();
-  }, [period]);
-
   /** Lỗi theo chuẩn { errorCode, message } của handle()/fail(); bản cũ dùng .error. */
   const readJson = async (res: Response) => {
     if (res.status === 401) {
@@ -155,28 +153,40 @@ export default function DashboardClient() {
     return body;
   };
 
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-      setError("");
+  useEffect(() => {
+    // Bấm "Tuần này" rồi "Hôm nay" liền tay: hai lượt tải chạy song song, lượt
+    // tuần về SAU thì số tuần hiện dưới nhãn "Hôm nay". Huỷ lượt cũ khi kỳ đổi
+    // (hoặc rời trang) và bỏ qua mọi kết quả / lỗi của lượt đã huỷ.
+    const ctrl = new AbortController();
+    const { signal } = ctrl;
 
-      const [summaryBody, distBody, trendsBody] = await Promise.all([
-        fetch(`/api/kpi/dashboard/summary?period=${period}`).then(readJson),
-        fetch(`/api/kpi/dashboard/distribution`).then(readJson),
-        fetch(`/api/kpi/dashboard/trends?days=7`).then(readJson),
-      ]);
+    (async () => {
+      try {
+        setLoading(true);
+        setError("");
 
-      setSummary(summaryBody.data);
-      setDistribution(distBody.data);
-      setTrends(trendsBody.data);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Lỗi khi tải dữ liệu"
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+        const [summaryBody, distBody, trendsBody] = await Promise.all([
+          fetch(`/api/kpi/dashboard/summary?period=${period}`, { signal }).then(readJson),
+          fetch(`/api/kpi/dashboard/distribution`, { signal }).then(readJson),
+          fetch(`/api/kpi/dashboard/trends?days=7`, { signal }).then(readJson),
+        ]);
+        if (signal.aborted) return;
+
+        setSummary(summaryBody.data);
+        setDistribution(distBody.data);
+        setTrends(trendsBody.data);
+      } catch (err) {
+        if (signal.aborted) return;
+        setError(
+          err instanceof Error ? err.message : "Lỗi khi tải dữ liệu"
+        );
+      } finally {
+        if (!signal.aborted) setLoading(false);
+      }
+    })();
+
+    return () => ctrl.abort();
+  }, [period]);
 
   // Thanh chọn kỳ + nút xuất — luôn hiện, kể cả khi đang tải hoặc lỗi
   const toolbar = (
@@ -242,7 +252,7 @@ export default function DashboardClient() {
         {toolbar}
         <div
           role="alert"
-          className="flex items-center gap-1.5 rounded-[10px] border border-red-200 bg-red-50 p-4 text-sm text-red-800"
+          className="flex items-center gap-1.5 rounded-[14px] border border-red-200 bg-red-50 p-4 text-sm text-red-800"
         >
           <CircleX size={16} strokeWidth={2} className="shrink-0" /> {error}
         </div>
@@ -285,7 +295,12 @@ export default function DashboardClient() {
           <StatCard
             label="Ca đã khoá"
             value={fmtInt(s.totalShifts)}
-            hint={`${fmtInt(s.resultCount)} lượt chấm (người × ca)`}
+            hint={
+              `${fmtInt(s.resultCount)} lượt chấm (người × ca)` +
+              (s.unscoredShifts
+                ? ` · ${fmtInt(s.unscoredShifts)} ca đã khoá đang chờ chấm điểm`
+                : "")
+            }
           />
           <StatCard
             label="Điểm trung bình"

@@ -19,8 +19,10 @@ export const PERMISSIONS = {
   "kpi.edit_after_lock": ["CEO"],
   "kpi.period.manage": ["CEO", "ADMIN"],
   "kpi.definition.manage": ["CEO", "ADMIN"],
-  "kpi.target.assign": ["MANAGER", "CEO", "ADMIN"],
-  "kpi.import": ["MANAGER", "CEO", "ADMIN"],
+  // Quản trị hệ thống KHÔNG có quyền chạm vào điểm KPI: đặt mục tiêu và nạp
+  // "số hệ thống" đều đổi điểm trực tiếp, nên không có ADMIN ở đây.
+  "kpi.target.assign": ["MANAGER", "CEO"],
+  "kpi.import": ["MANAGER", "CEO"],
   "kpi.export": ["MANAGER", "CEO", "ADMIN"],
   "admin.users": ["ADMIN"],
   "admin.departments": ["ADMIN"],

@@ -6,6 +6,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
   canExplainAudit,
+  canOpenAuditPortal,
   withProductionRole,
 } from "@/lib/services/production-service";
 import {
@@ -28,12 +29,8 @@ export default async function AuditsPage() {
   const base = (await requireSession())!;
   const user = await withProductionRole(base);
 
-  const allowed =
-    user.role === "CEO" ||
-    ["SUPERVISOR", "PRODUCTION_DIRECTOR", "TEAM_LEADER", "QC_OFFICER"].includes(
-      user.productionRole ?? ""
-    );
-  if (!allowed) redirect("/production");
+  // Cùng điều kiện với mọi liên kết dẫn tới trang này (canOpenAuditPortal)
+  if (!canOpenAuditPortal(user)) redirect("/production");
 
   /* Mỗi nhóm một truy vấn riêng, có count() riêng.
      Trước đây gộp một truy vấn sắp theo `status asc` + take 60: status là chuỗi

@@ -5,7 +5,9 @@ import { BusinessError } from "@/lib/rbac";
 import { clientMeta } from "@/lib/audit";
 import {
   approveByQc,
+  canResubmitReturnedShift,
   canSeeMoney,
+  redactAuditForViewer,
   redactShiftForViewer,
   lockAndTriggerKpi,
   reopenShift,
@@ -16,7 +18,7 @@ import {
 import { computeShiftMetrics } from "@/lib/production/kpi-engine";
 // Cùng trần an toàn kg với form khai ca (lib/production/draft-schema.ts)
 import { kgField as kg, shiftDraftSchema } from "@/lib/production/draft-schema";
-import { SHIFT_RETURN_MIN_REASON } from "@/lib/production/shift-flow";
+import { SHIFT_RETURN_MIN_REASON, isShiftReturned } from "@/lib/production/shift-flow";
 import { parseVnDate } from "@/lib/vn-time";
 import { ERR } from "@/lib/constants";
 
@@ -73,8 +75,9 @@ const actionSchema = z.discriminatedUnion("action", [
  * Xem chi tiết một ca.
  *
  * BẢO MẬT CẤP ĐỘ TRƯỜNG DỮ LIỆU: chỉ Ban Giám đốc và Giám đốc Sản xuất mới thấy
- * phần quy ra tiền (tổn thất VNĐ, đơn giá) và chi tiết cảnh báo chống chạy chỉ
- * tiêu. Công nhân xem được số liệu ca và điểm của mình, không xem được tiền.
+ * phần quy ra tiền (tổn thất VNĐ, đơn giá). Chi tiết cảnh báo chống chạy chỉ
+ * tiêu theo redactAuditForViewer. Công nhân xem được số liệu ca và điểm của
+ * mình, không xem được tiền.
  */
 export async function GET(
   _req: Request,
@@ -88,7 +91,9 @@ export async function GET(
       where: { id },
       include: {
         sku: true,
-        createdBy: { select: { id: true, fullName: true } },
+        createdBy: {
+          select: { id: true, fullName: true, isActive: true, role: true, productionRole: true },
+        },
         qcOfficer: { select: { id: true, fullName: true } },
         lockedBy: { select: { id: true, fullName: true } },
         participants: { select: { userId: true } },
@@ -113,7 +118,10 @@ export async function GET(
       ["SUPERVISOR", "QC_OFFICER", "PRODUCTION_DIRECTOR"].includes(
         user.productionRole ?? ""
       );
-    if (!isWide && !isParticipant && log.createdById !== user.id) {
+    // Tổ trưởng nhận thay ca trả về của người khai đã nghỉ (cùng luật trang chi tiết)
+    const takingOver =
+      isShiftReturned(log) && canResubmitReturnedShift(user, log.createdBy);
+    if (!isWide && !isParticipant && log.createdById !== user.id && !takingOver) {
       throw new BusinessError(
         ERR.FORBIDDEN,
         "Bạn không tham gia ca này.",
@@ -173,6 +181,9 @@ export async function GET(
           breakdown: r.breakdownJson ? JSON.parse(r.breakdownJson) : null,
         })),
       auditCount: log.audits.length,
+      // Cùng một luật với trang chi tiết ca (redactAuditForViewer): ai làm ca
+      // cũng biết có cảnh báo; nội dung chi tiết chỉ cho cấp quản lý xưởng.
+      antiGamingAudits: log.audits.map((a) => redactAuditForViewer(a, user)),
     };
 
     /* --- Phần chỉ Ban Giám đốc và Giám đốc Sản xuất xem được --- */
@@ -184,7 +195,6 @@ export async function GET(
           (log.rawMaterialInputKg - log.stdMaterialNormKg) *
           log.sku.unitPriceVnd,
       };
-      response.antiGamingAudits = log.audits;
       response.overrides = {
         targetOverrideReason: log.targetOverrideReason,
         materialOverrideReason: log.materialOverrideReason,

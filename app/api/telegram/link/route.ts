@@ -30,7 +30,7 @@ export async function POST() {
       where: { usedAt: null, expiresAt: { lt: new Date() } },
     });
 
-    // Vòng lặp phòng trường hợp hiếm gặp: mã 6 số trùng với mã đã có
+    // Vòng lặp phòng trường hợp (cực hiếm) mã mới trùng với mã đã có
     let code: string | null = null;
     for (let i = 0; i < 8; i++) {
       const candidate = generateLinkCode();

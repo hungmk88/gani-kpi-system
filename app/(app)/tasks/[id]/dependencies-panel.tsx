@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/components/toast";
 import { fmtDate } from "@/lib/format";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 
 type Rel = {
   id: string;
@@ -45,14 +46,12 @@ export default function DependenciesPanel({
     setBusy(true);
     setError(null);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/dependencies`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dependsOnId: pick }),
-      });
-      const d = await r.json();
+      const r = await fetchJson(
+        `/api/tasks/${taskId}/dependencies`,
+        jsonInit("POST", { dependsOnId: pick })
+      );
       if (!r.ok) {
-        setError(d.message || "Không nối được.");
+        setError(r.message || "Không nối được.");
         return;
       }
       setPick("");
@@ -194,9 +193,12 @@ export default function DependenciesPanel({
 
       {canEdit && candidates.length > 0 && (
         <div className="border-t border-ink-100 pt-3">
-          <label className="label">Thêm việc phải chờ</label>
+          <label className="label" htmlFor="task-dependency-pick">
+            Thêm việc phải chờ
+          </label>
           <div className="flex gap-2">
             <select
+              id="task-dependency-pick"
               className="input"
               value={pick}
               onChange={(e) => setPick(e.target.value)}

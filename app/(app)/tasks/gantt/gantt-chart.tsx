@@ -151,6 +151,7 @@ export default function GanttChart({
       <div className="card mb-4 flex flex-wrap items-center gap-2 p-3">
         <select
           className="input w-auto"
+          aria-label="Lọc theo dự án"
           value={activeProject}
           onChange={(e) => setParam("project", e.target.value)}
         >
@@ -165,6 +166,7 @@ export default function GanttChart({
         {showDeptFilter && (
           <select
             className="input w-auto"
+            aria-label="Lọc theo phòng ban"
             value={activeDept}
             onChange={(e) => setParam("dept", e.target.value)}
           >

@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Ban, CircleCheck } from "lucide-react";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 import { toast } from "@/components/toast";
 
 /**
@@ -34,6 +35,8 @@ export default function AuditActions({
   explainedByMe?: boolean;
 }) {
   const router = useRouter();
+  // Nhiều thẻ cảnh báo trên một trang → id riêng cho từng thẻ (useId)
+  const fid = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -45,19 +48,18 @@ export default function AuditActions({
     setError(null);
     setMessage(null);
     try {
-      const res = await fetch(`/api/production/audits/${auditId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
+      const res = await fetchJson<{ bonusUnlocked?: boolean; stillOpen?: number }>(
+        `/api/production/audits/${auditId}`,
+        jsonInit("POST", payload)
+      );
       if (!res.ok) {
-        setError(data.message || "Thao tác thất bại.");
+        setError(res.message ?? "Thao tác thất bại.");
         return;
       }
+      const data = res.data;
       if (data.bonusUnlocked === true) {
         setMessage("Đã mở khoá thưởng cho cả ca.");
-      } else if (data.bonusUnlocked === false && data.stillOpen > 0) {
+      } else if (data.bonusUnlocked === false && (data.stillOpen ?? 0) > 0) {
         setMessage(
           `Đã ghi nhận, nhưng ca này còn ${data.stillOpen} cảnh báo chưa xử lý nên thưởng vẫn khoá.`
         );
@@ -94,11 +96,12 @@ export default function AuditActions({
 
       {status === "PENDING_EXPLANATION" && canExplain && (
         <div className="space-y-2">
-          <label className="label">
+          <label className="label" htmlFor={`${fid}-explain`}>
             Giải trình (tối thiểu 20 ký tự) — nói rõ nguyên nhân, dẫn được chứng
             từ thì càng tốt
           </label>
           <textarea
+            id={`${fid}-explain`}
             className="input min-h-20"
             placeholder="Ví dụ: lô thịt đông ngày 07/09 rã đông hao nước cao hơn thường lệ 3,5% nên phải cấp thêm NVL cho đủ kg thành phẩm. Có biên bản bàn giao kho kèm theo."
             value={text}
@@ -135,11 +138,12 @@ export default function AuditActions({
 
       {status === "EXPLAINED" && isCeo && !explainedByMe && (
         <div className="space-y-2">
-          <label className="label">
+          <label className="label" htmlFor={`${fid}-review`}>
             Ý kiến của bạn (tối thiểu 10 ký tự) — người bị khoá thưởng sẽ đọc
             được câu này
           </label>
           <input
+            id={`${fid}-review`}
             className="input"
             placeholder="Ví dụ: chấp nhận, nhưng yêu cầu KCS kiểm soát khâu rã đông từ tuần sau"
             value={note}

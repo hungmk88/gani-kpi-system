@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { TASK_PRIORITIES, TASK_PRIORITY_LABEL } from "@/lib/constants";
-import { addDays, vnDate, vnDateKey } from "@/lib/vn-time";
+import { addDays, vnDateKey } from "@/lib/vn-time";
+import { vnLocalToIso } from "@/lib/vn-input";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 
 type Opt = { id: string; name: string };
 
@@ -31,6 +33,7 @@ export default function NewTaskForm({
   projects: { id: string; name: string; departmentId: string }[];
 }) {
   const router = useRouter();
+  const fid = useId();
 
   // Khớp luật của /api/requests: chỉ trưởng phòng / Ban Giám đốc gửi yêu cầu
   // liên phòng ban, và phải còn ít nhất một phòng khác để gửi tới.
@@ -77,31 +80,32 @@ export default function NewTaskForm({
 
   async function submitTask(e: React.FormEvent) {
     e.preventDefault();
+    const dueIso = vnLocalToIso(dueDate);
+    if (!dueIso) {
+      setError("Hạn chót không hợp lệ.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const res = await fetchJson<{ task?: { id: string } }>(
+        "/api/tasks",
+        jsonInit("POST", {
           title,
           description: description || undefined,
           departmentId,
           assigneeId: assigneeId || null,
           projectId: projectId || null,
-          dueDate: vnLocalToIso(dueDate),
+          dueDate: dueIso,
           priority,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.message || "Không tạo được công việc.");
+        })
+      );
+      if (!res.ok || !res.data.task) {
+        setError(res.message || "Không tạo được công việc.");
         return;
       }
-      router.push(`/tasks/${data.task.id}`);
+      router.push(`/tasks/${res.data.task.id}`);
       router.refresh();
-    } catch {
-      setError("Mất kết nối tới máy chủ.");
     } finally {
       setBusy(false);
     }
@@ -109,23 +113,28 @@ export default function NewTaskForm({
 
   async function submitRequest(e: React.FormEvent) {
     e.preventDefault();
+    const dueIso = vnLocalToIso(dueDate);
+    if (!dueIso) {
+      setError("Hạn chót không hợp lệ.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/requests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      // fetchJson không throw: trước đây mất mạng ở đây là lỗi văng ra ngoài,
+      // nút ngừng quay mà không báo gì (submitTask thì có catch, cái này không).
+      const res = await fetchJson(
+        "/api/requests",
+        jsonInit("POST", {
           title,
           description: description || undefined,
           targetDeptId,
-          dueDate: vnLocalToIso(dueDate),
+          dueDate: dueIso,
           priority,
-        }),
-      });
-      const data = await res.json();
+        })
+      );
       if (!res.ok) {
-        setError(data.message || "Không gửi được yêu cầu.");
+        setError(res.message || "Không gửi được yêu cầu.");
         return;
       }
       router.push("/requests");
@@ -179,8 +188,9 @@ export default function NewTaskForm({
         className="card space-y-4 p-5"
       >
         <div>
-          <label className="label">Tên công việc *</label>
+          <label className="label" htmlFor={`${fid}-title`}>Tên công việc *</label>
           <input
+            id={`${fid}-title`}
             className="input"
             required
             minLength={3}
@@ -191,8 +201,9 @@ export default function NewTaskForm({
         </div>
 
         <div>
-          <label className="label">Mô tả chi tiết</label>
+          <label className="label" htmlFor={`${fid}-desc`}>Mô tả chi tiết</label>
           <textarea
+            id={`${fid}-desc`}
             className="input min-h-24"
             placeholder="Yêu cầu cụ thể, kết quả cần đạt, ai phối hợp..."
             value={description}
@@ -204,8 +215,9 @@ export default function NewTaskForm({
           <>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="label">Phòng ban *</label>
+                <label className="label" htmlFor={`${fid}-dept`}>Phòng ban *</label>
                 <select
+                  id={`${fid}-dept`}
                   className="input"
                   value={departmentId}
                   onChange={(e) => {
@@ -242,8 +254,9 @@ export default function NewTaskForm({
               </div>
 
               <div>
-                <label className="label">Người phụ trách</label>
+                <label className="label" htmlFor={`${fid}-assignee`}>Người phụ trách</label>
                 <select
+                  id={`${fid}-assignee`}
                   className="input"
                   value={assigneeId}
                   onChange={(e) => setAssigneeId(e.target.value)}
@@ -261,8 +274,9 @@ export default function NewTaskForm({
 
             {deptProjects.length > 0 && (
               <div>
-                <label className="label">Thuộc dự án</label>
+                <label className="label" htmlFor={`${fid}-project`}>Thuộc dự án</label>
                 <select
+                  id={`${fid}-project`}
                   className="input"
                   value={projectId}
                   onChange={(e) => setProjectId(e.target.value)}
@@ -279,8 +293,9 @@ export default function NewTaskForm({
           </>
         ) : (
           <div>
-            <label className="label">Gửi tới phòng ban *</label>
+            <label className="label" htmlFor={`${fid}-target`}>Gửi tới phòng ban *</label>
             <select
+              id={`${fid}-target`}
               className="input"
               value={targetDeptId}
               onChange={(e) => setTargetDeptId(e.target.value)}
@@ -299,8 +314,9 @@ export default function NewTaskForm({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <label className="label">Hạn chót *</label>
+            <label className="label" htmlFor={`${fid}-due`}>Hạn chót *</label>
             <input
+              id={`${fid}-due`}
               type="datetime-local"
               className="input"
               required
@@ -309,8 +325,9 @@ export default function NewTaskForm({
             />
           </div>
           <div>
-            <label className="label">Mức ưu tiên</label>
+            <label className="label" htmlFor={`${fid}-priority`}>Mức ưu tiên</label>
             <select
+              id={`${fid}-priority`}
               className="input"
               value={priority}
               onChange={(e) => setPriority(e.target.value)}
@@ -362,20 +379,4 @@ export default function NewTaskForm({
  */
 function defaultDue() {
   return `${vnDateKey(addDays(new Date(), 3))}T17:00`;
-}
-
-/**
- * Ô datetime-local trả "YYYY-MM-DDTHH:mm" không kèm múi giờ. Hệ thống quy ước
- * đó là giờ VN — không để trình duyệt tự hiểu theo múi giờ của máy.
- */
-function vnLocalToIso(value: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
-  if (!m) return new Date(value).toISOString();
-  return vnDate(
-    Number(m[1]),
-    Number(m[2]),
-    Number(m[3]),
-    Number(m[4]),
-    Number(m[5])
-  ).toISOString();
 }

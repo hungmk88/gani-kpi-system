@@ -8,6 +8,7 @@ import type {
 import { BusinessError } from "./rbac";
 import { ERR } from "./constants";
 import { formatVnDate, formatVnDateTime, vnParts } from "./vn-time";
+import { parseVnNumber } from "./vn-number";
 
 /* ------------------------------------------------- GIỚI HẠN FILE NHẬP */
 
@@ -127,7 +128,7 @@ export async function buildImportTemplate(
     "2. MA_KPI: chép đúng mã ở sheet DANH_MUC_KPI.",
     "3. EMAIL_NHAN_VIEN: chép đúng email ở sheet DANH_SACH_NHAN_SU.",
     "4. THANG / NAM: kỳ đánh giá, ví dụ tháng 8 năm 2026 thì ghi 8 và 2026.",
-    "5. GIA_TRI_THUC_TE: chỉ ghi số, không ghi đơn vị, không ghi dấu chấm phân cách nghìn.",
+    "5. GIA_TRI_THUC_TE: chỉ ghi số, không ghi đơn vị. Số lẻ dùng dấu phẩy (1,5); có thể ghi 1.234.000. Ô trống bị báo lỗi, không tính là 0.",
     "6. Lưu file rồi vào hệ thống, mở bảng KPI của kỳ, bấm 'Nạp số từ Excel'.",
     "",
     "LƯU Ý: số nạp từ file này vào cột 'Số hệ thống'. Nếu nhân viên tự khai lệch quá 5% so với số này,",
@@ -188,8 +189,13 @@ export async function parseImportFile(buffer: ArrayBuffer): Promise<{
     const email = cellText(row.getCell(2)).toLowerCase();
     const month = Number(cellText(row.getCell(3)));
     const year = Number(cellText(row.getCell(4)));
-    const rawValue = cellText(row.getCell(5)).replace(/[,\s]/g, "");
-    const value = Number(rawValue);
+    // Ô số thật của Excel thì lấy thẳng giá trị; ô chữ thì đọc theo kiểu Việt
+    // ("1,5" = 1.5, "1.234.000" = 1234000). Trước đây bỏ hết dấu phẩy nên
+    // "1,5" thành 15, và ô trống thành 0 (Number("") = 0) — với chỉ tiêu
+    // "càng thấp càng tốt" là điểm tối đa.
+    const valueCell = row.getCell(5);
+    const rawValue = cellText(valueCell);
+    const value = cellNumber(valueCell);
 
     if (!code && !email) return; // dòng trống
 
@@ -209,9 +215,11 @@ export async function parseImportFile(buffer: ArrayBuffer): Promise<{
       errors.push(`Dòng ${rowNumber}: NAM không hợp lệ ("${year}").`);
       return;
     }
-    if (!Number.isFinite(value)) {
+    if (value === null) {
       errors.push(
-        `Dòng ${rowNumber}: GIA_TRI_THUC_TE phải là số ("${rawValue}").`
+        rawValue === ""
+          ? `Dòng ${rowNumber}: GIA_TRI_THUC_TE đang trống — không có số thì bỏ dòng này đi.`
+          : `Dòng ${rowNumber}: GIA_TRI_THUC_TE phải là số ("${rawValue}"). Số lẻ dùng dấu phẩy, vd 1,5.`
       );
       return;
     }
@@ -628,6 +636,19 @@ function styleHeader(row: ExcelJS.Row) {
     };
   });
   row.height = 24;
+}
+
+/**
+ * Đọc số từ một ô: ô kiểu số (hoặc công thức ra số) lấy thẳng; ô chữ đọc
+ * theo quy ước Việt qua parseVnNumber. Trống / không phải số → null.
+ */
+function cellNumber(cell: ExcelJS.Cell): number | null {
+  const v = cell.value;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (v && typeof v === "object" && "result" in v && typeof v.result === "number") {
+    return Number.isFinite(v.result) ? v.result : null;
+  }
+  return parseVnNumber(cellText(cell));
 }
 
 function cellText(cell: ExcelJS.Cell): string {

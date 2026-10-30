@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { KeyRound, Check, Circle, Plus } from "lucide-react";
-import { Badge, ShowingCount, formatDateTime } from "@/components/ui";
-import { fmtNum } from "@/lib/format";
+import { Badge, ShowingCount } from "@/components/ui";
+import { fmtDateTime, fmtNum } from "@/lib/format";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 import ConfirmDialog from "@/components/confirm-dialog";
 
 export type SourceRow = {
@@ -61,6 +62,7 @@ export default function IntegrationsTab({
   zaloReady: { enabled: boolean; hasToken: boolean };
 }) {
   const router = useRouter();
+  const fid = useId();
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   // Đổi khoá / ngưng nhận dữ liệu: hai thao tác cắt luồng số liệu ngay lập tức
@@ -85,14 +87,14 @@ export default function IntegrationsTab({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/integrations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...f, code: f.code.toLowerCase() }),
-      });
-      const data = await res.json();
+      const res = await fetchJson<{
+        source: { code: string };
+        secret: string;
+        webhookUrl: string;
+      }>("/api/admin/integrations", jsonInit("POST", { ...f, code: f.code.toLowerCase() }));
+      const data = res.data;
       if (!res.ok) {
-        setError(data.message);
+        setError(res.message);
         return;
       }
       setFreshSecret({
@@ -112,14 +114,13 @@ export default function IntegrationsTab({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/integrations?id=${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
+      const res = await fetchJson<{ secret?: string }>(
+        `/api/admin/integrations?id=${id}`,
+        jsonInit("PATCH", payload)
+      );
+      const data = res.data;
       if (!res.ok) {
-        setError(data.message);
+        setError(res.message);
         return;
       }
       if (data.secret) {
@@ -218,7 +219,7 @@ export default function IntegrationsTab({
 
       {/* ---------------- khoá vừa tạo ---------------- */}
       {freshSecret && (
-        <div role="alert" className="rounded-[10px] border border-amber-300 bg-amber-50 p-5">
+        <div role="alert" className="rounded-[14px] border border-amber-300 bg-amber-50 p-5">
           <div className="mb-2 flex items-start justify-between gap-3">
             <h3 className="flex items-center gap-1.5 font-semibold text-amber-900">
               <KeyRound size={15} strokeWidth={2} /> Khoá bí mật của nguồn &quot;{freshSecret.code}&quot;
@@ -273,8 +274,9 @@ export default function IntegrationsTab({
         {adding && (
           <div className="mb-4 grid gap-3 rounded-md bg-ink-50 p-4 sm:grid-cols-4">
             <div>
-              <label className="label">Mã nguồn</label>
+              <label className="label" htmlFor={`${fid}-code`}>Mã nguồn</label>
               <input
+                id={`${fid}-code`}
                 className="input lowercase"
                 value={f.code}
                 onChange={(e) =>
@@ -287,8 +289,9 @@ export default function IntegrationsTab({
               </p>
             </div>
             <div>
-              <label className="label">Tên hiển thị</label>
+              <label className="label" htmlFor={`${fid}-name`}>Tên hiển thị</label>
               <input
+                id={`${fid}-name`}
                 className="input"
                 value={f.name}
                 onChange={(e) => setF({ ...f, name: e.target.value })}
@@ -296,8 +299,9 @@ export default function IntegrationsTab({
               />
             </div>
             <div>
-              <label className="label">Loại</label>
+              <label className="label" htmlFor={`${fid}-kind`}>Loại</label>
               <select
+                id={`${fid}-kind`}
                 className="input"
                 value={f.kind}
                 onChange={(e) => setF({ ...f, kind: e.target.value })}
@@ -310,8 +314,9 @@ export default function IntegrationsTab({
               </select>
             </div>
             <div>
-              <label className="label">Độ tin cậy</label>
+              <label className="label" htmlFor={`${fid}-priority`}>Độ tin cậy</label>
               <input
+                id={`${fid}-priority`}
                 type="number"
                 className="input"
                 value={f.priority}
@@ -364,7 +369,7 @@ export default function IntegrationsTab({
                       {fmtNum(s.priority)}
                     </td>
                     <td className="text-xs text-ink-500">
-                      {s.lastSeenAt ? formatDateTime(s.lastSeenAt) : "chưa gọi bao giờ"}
+                      {s.lastSeenAt ? fmtDateTime(s.lastSeenAt) : "chưa gọi bao giờ"}
                       {s.lastStatus && (
                         <div className="text-xs">{s.lastStatus}</div>
                       )}
@@ -434,7 +439,7 @@ export default function IntegrationsTab({
                 {logs.map((l) => (
                   <tr key={l.id} className={l.signatureOk ? "" : "bg-red-50/50"}>
                     <td className="text-xs whitespace-nowrap text-ink-500">
-                      {formatDateTime(l.createdAt)}
+                      {fmtDateTime(l.createdAt)}
                     </td>
                     <td className="font-mono text-xs text-ink-600">
                       {l.sourceCode}

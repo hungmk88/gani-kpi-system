@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { Badge } from "@/components/ui";
 import VnNumberInput from "@/components/vn-number-input";
 import { toast } from "@/components/toast";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 // Đơn vị NVL do người dùng đặt (kg, lít, bao…) nên dùng fmtNum + đơn vị, không fmtKg
 import { fmtDateTime, fmtNum } from "@/lib/format";
 
@@ -44,6 +45,8 @@ export default function RawMaterialManager({
   canEdit: boolean;
 }) {
   const router = useRouter();
+  // Nhãn gắn với ô nhập (htmlFor) — bấm nhãn vào ô, trình đọc màn hình đọc đúng tên
+  const fid = useId();
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,18 +72,16 @@ export default function RawMaterialManager({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/production/raw-materials", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const res = await fetchJson(
+        "/api/production/raw-materials",
+        jsonInit("POST", {
           ...f,
           code: f.code.toUpperCase(),
           initialStockKg: f.initialStockKg ?? 0,
-        }),
-      });
-      const data = await res.json();
+        })
+      );
       if (!res.ok) {
-        setError(data.message);
+        setError(res.message);
         return;
       }
       setAdding(false);
@@ -118,18 +119,16 @@ export default function RawMaterialManager({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/production/raw-materials/${id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const res = await fetchJson(
+        `/api/production/raw-materials/${id}`,
+        jsonInit("POST", {
           action: tf.action,
           quantityKg: tf.quantityKg ?? 0,
           note: tf.note || undefined,
-        }),
-      });
-      const data = await res.json();
+        })
+      );
       if (!res.ok) {
-        setError(data.message);
+        setError(res.message);
         return;
       }
       setTxForm(null);
@@ -175,8 +174,9 @@ export default function RawMaterialManager({
       {adding && (
         <div className="card mb-4 grid gap-3 p-4 sm:grid-cols-4">
           <div>
-            <label className="label">Mã NVL</label>
+            <label className="label" htmlFor={`${fid}-code`}>Mã NVL</label>
             <input
+              id={`${fid}-code`}
               className="input uppercase"
               value={f.code}
               onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })}
@@ -184,8 +184,9 @@ export default function RawMaterialManager({
             />
           </div>
           <div className="sm:col-span-2">
-            <label className="label">Tên NVL</label>
+            <label className="label" htmlFor={`${fid}-name`}>Tên NVL</label>
             <input
+              id={`${fid}-name`}
               className="input"
               value={f.name}
               onChange={(e) => setF({ ...f, name: e.target.value })}
@@ -193,8 +194,9 @@ export default function RawMaterialManager({
             />
           </div>
           <div>
-            <label className="label">Đơn vị</label>
+            <label className="label" htmlFor={`${fid}-unit`}>Đơn vị</label>
             <input
+              id={`${fid}-unit`}
               className="input"
               value={f.unit}
               onChange={(e) => setF({ ...f, unit: e.target.value })}
@@ -295,8 +297,9 @@ export default function RawMaterialManager({
               {txForm === m.id && (
                 <div className="grid gap-3 border-t border-ink-100 bg-ink-50 p-4 sm:grid-cols-4">
                   <div>
-                    <label className="label">Loại</label>
+                    <label className="label" htmlFor={`${fid}-tx-${m.id}-kind`}>Loại</label>
                     <select
+                      id={`${fid}-tx-${m.id}-kind`}
                       className="input"
                       value={tf.action}
                       onChange={(e) =>
@@ -308,13 +311,13 @@ export default function RawMaterialManager({
                     </select>
                   </div>
                   <div>
-                    <label className="label">
+                    <label className="label" htmlFor={`${fid}-tx-${m.id}-qty`}>
                       Số lượng ({m.unit}){tf.action === "ADJUSTMENT" && " — âm để trừ"}
                     </label>
                     {/* Nhập kho chỉ nhận số dương; chỉnh tay cho phép âm để trừ */}
                     <VnNumberInput
+                      id={`${fid}-tx-${m.id}-qty`}
                       min={tf.action === "STOCK_IN" ? 0 : undefined}
-                      aria-label={`Số lượng (${m.unit})`}
                       value={tf.quantityKg}
                       onValue={(n, bad) => {
                         setTf({ ...tf, quantityKg: n });
@@ -323,10 +326,11 @@ export default function RawMaterialManager({
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="label">
+                    <label className="label" htmlFor={`${fid}-tx-${m.id}-note`}>
                       Ghi chú{tf.action === "ADJUSTMENT" && " (bắt buộc)"}
                     </label>
                     <input
+                      id={`${fid}-tx-${m.id}-note`}
                       className="input"
                       value={tf.note}
                       onChange={(e) => setTf({ ...tf, note: e.target.value })}

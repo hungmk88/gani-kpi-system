@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 
 export default function LoginForm() {
   const router = useRouter();
@@ -17,14 +18,9 @@ export default function LoginForm() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await res.json();
+      const res = await fetchJson("/api/auth/login", jsonInit("POST", { email, password }));
       if (!res.ok) {
-        setError(data.message || "Đăng nhập thất bại.");
+        setError(res.message || "Đăng nhập thất bại.");
         return;
       }
       router.push("/dashboard");

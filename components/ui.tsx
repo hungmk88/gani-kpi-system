@@ -1,4 +1,3 @@
-import { formatVnDate, formatVnDateTime } from "@/lib/vn-time";
 import Link from "next/link";
 import { Inbox, Lock, Flame } from "lucide-react";
 import {
@@ -8,7 +7,7 @@ import {
   PERIOD_STATUS_LABEL,
 } from "@/lib/constants";
 import { RISK_LEVEL_LABEL, riskLevel } from "@/lib/risk";
-import { fmtNum, fmtScore } from "@/lib/format";
+import { fmtDate, fmtNum, fmtScore } from "@/lib/format";
 
 export { fmtScore };
 
@@ -280,7 +279,7 @@ export function StatCard({
           : alarm === "amber"
             ? "border-l-[3px] border-l-amber-500"
             : ""
-      } ${href ? "transition hover:border-ink-300 hover:shadow-md" : ""}`}
+      } ${href ? "transition hover:border-ink-300 hover:shadow-lift" : ""}`}
     >
       <div
         className={`text-[13px] font-medium ${
@@ -310,7 +309,7 @@ export function StatCard({
   return href ? (
     <Link
       href={href}
-      className="block rounded-[10px] outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+      className="block rounded-[14px] outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
     >
       {inner}
     </Link>
@@ -349,6 +348,54 @@ export function ProgressBar({
 }
 
 /* ------------------------------------------------------------------ nhãn */
+
+/* ------------------------------------------------------------- ảnh đại diện */
+
+/**
+ * Hai chữ cái đầu theo cách gọi tên người Việt: hai chữ cuối của họ tên
+ * ("Trần Minh Quân" → "MQ"), tên một chữ thì lấy một chữ.
+ */
+export function initialsOf(fullName: string) {
+  const words = fullName.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "?";
+  const pick = words.length === 1 ? [words[0]] : words.slice(-2);
+  return pick.map((w) => w[0]!.toLocaleUpperCase("vi-VN")).join("");
+}
+
+/**
+ * Nền avatar chỉ trong họ màu thương hiệu (lam, lá, trung tính) — KHÔNG dùng
+ * đỏ/vàng, vốn dành cho ngoại lệ. Cùng một tên luôn ra cùng một màu.
+ */
+const AVATAR_TONES = [
+  "bg-brand-100 text-brand-800",
+  "bg-leaf-100 text-leaf-800",
+  "bg-ink-100 text-ink-700",
+  "bg-brand-600 text-white",
+  "bg-leaf-600 text-white",
+];
+
+export function Avatar({
+  name,
+  size = 36,
+  className = "",
+}: {
+  name: string;
+  size?: number;
+  className?: string;
+}) {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const tone = AVATAR_TONES[h % AVATAR_TONES.length];
+  return (
+    <span
+      aria-hidden
+      className={`inline-flex shrink-0 items-center justify-center rounded-full font-semibold select-none ${tone} ${className}`}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.38) }}
+    >
+      {initialsOf(name)}
+    </span>
+  );
+}
 
 export function Badge({
   children,
@@ -481,22 +528,14 @@ export function ScoreBadge({
 
 /* ------------------------------------------------------------------ ngày giờ */
 
-export function formatDate(d: Date | string | null | undefined) {
-  if (!d) return "—";
-  return formatVnDate(d);
-}
-
-/** Ngày giờ theo giờ Việt Nam, đúng ở cả server (UTC) lẫn trình duyệt. */
-export function formatDateTime(d: Date | string | null | undefined) {
-  return formatVnDateTime(d);
-}
-
+// formatDate/formatDateTime cũ đã gộp vào fmtDate/fmtDateTime của lib/format
+// (một cách viết ngày cho toàn hệ thống).
 export function DueDate({ date, done }: { date: Date | string; done?: boolean }) {
   const d = new Date(date);
   const late = !done && d.getTime() < Date.now();
   return (
     <span className={late ? "font-medium text-red-600" : "text-ink-600"}>
-      {formatDate(d)}
+      {fmtDate(d)}
       {late && " · trễ"}
     </span>
   );

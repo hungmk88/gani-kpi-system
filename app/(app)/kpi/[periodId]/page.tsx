@@ -29,15 +29,26 @@ export default async function KpiPeriodPage({
   const period = await prisma.kpiPeriod.findUnique({ where: { id: periodId } });
   if (!period) notFound();
 
-  const results = await prisma.kpiResult.findMany({
-    where: { periodId, ...kpiScopeWhere(user) },
-    include: {
-      // Phòng của CHỈ TIÊU quyết định trần (Sales 120%) — xem kpiCapFor
-      kpiDefinition: { include: { department: true } },
-      employee: { include: { department: true } },
-    },
-    orderBy: [{ employee: { fullName: "asc" } }, { weightPercent: "desc" }],
-  });
+  const [results, openRecon] = await Promise.all([
+    prisma.kpiResult.findMany({
+      where: { periodId, ...kpiScopeWhere(user) },
+      include: {
+        // Phòng của CHỈ TIÊU quyết định trần (Sales 120%) — xem kpiCapFor
+        kpiDefinition: { include: { department: true } },
+        employee: { include: { department: true } },
+      },
+      orderBy: [{ employee: { fullName: "asc" } }, { weightPercent: "desc" }],
+    }),
+    // Ô đối soát còn treo (MISMATCH chưa ai chốt) — đúng thứ máy chủ dùng để
+    // chặn chốt KPI. Bảng làm việc phải theo cờ này, không theo hasMismatch.
+    prisma.reconciliation.findMany({
+      where: { periodId, status: "MISMATCH", ...kpiScopeWhere(user) },
+      select: { employeeId: true, kpiDefinitionId: true },
+    }),
+  ]);
+  const openReconKeys = new Set(
+    openRecon.map((x) => `${x.employeeId}|${x.kpiDefinitionId}`)
+  );
 
   // Gom theo nhân sự
   const groupsMap = new Map<
@@ -88,6 +99,7 @@ export default async function KpiPeriodPage({
       cap: kpiCapFor(r.kpiDefinition?.department?.code),
       gatekeeper: gatekeeperRuleFor(r.kpiDefinition?.code),
       hasMismatch: r.hasMismatch,
+      reconMismatch: openReconKeys.has(`${r.employeeId}|${r.kpiDefinitionId}`),
       mismatchPercent: r.mismatchPercent,
       status: r.status,
       selfNote: r.selfNote,

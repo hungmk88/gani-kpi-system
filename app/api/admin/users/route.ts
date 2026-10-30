@@ -144,6 +144,19 @@ export async function POST(req: Request) {
         `Vừa tạo tài khoản Ban Giám đốc mới: ${email}`,
         `Người thực hiện: ${actor.email}. Nếu không phải chủ ý của Ban Giám đốc, khoá tài khoản này ngay.`
       );
+    } else if (body.role === "MANAGER" || body.productionRole) {
+      // Trưởng phòng duyệt KPI cả phòng; vai trò xưởng ký KCS / khoá ca —
+      // tạo mới cũng nhạy cảm như ĐỔI sang các vai trò này (route [id]).
+      const what = [
+        body.role === "MANAGER" ? "trưởng phòng" : null,
+        body.productionRole ? `vai trò sản xuất ${body.productionRole}` : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      await alertCeos(
+        `Vừa tạo tài khoản ${what}: ${email}`,
+        `Người thực hiện: ${actor.email}. Nếu không phải chủ ý của Ban Giám đốc, khoá tài khoản này ngay.`
+      ).catch((e) => console.error("[USER_CREATE] Không gửi được báo động Ban Giám đốc:", e));
     }
 
     return ok({ user }, 201);

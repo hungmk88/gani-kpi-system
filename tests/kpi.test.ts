@@ -9,6 +9,7 @@ import {
   gatekeeperOutcome,
   gatekeeperRuleFor,
   kpiCapFor,
+  kpiOversightDenial,
   spreadPercent,
 } from "@/lib/kpi";
 import { KPI_SCORE_CAP, SALES_KPI_CAP } from "@/lib/constants";
@@ -131,5 +132,39 @@ describe("trần theo chỉ tiêu & gatekeeper", () => {
     expect(gatekeeperOutcome(rule, 2)).toBe("PASS");
     expect(gatekeeperOutcome(rule, 2.01)).toBe("FAIL");
     expect(gatekeeperOutcome(rule, null)).toBe("NO_DATA");
+  });
+});
+
+describe("kpiOversightDenial — ai được duyệt / đặt mục tiêu / nạp số cho ai", () => {
+  const tp = { id: "tp", role: "MANAGER", departmentId: "SALES" };
+  const ceo = { id: "ceo", role: "CEO", departmentId: null };
+  const nv = { id: "nv", role: "EMPLOYEE", departmentId: "SALES" };
+  const nvKhac = { id: "nv2", role: "EMPLOYEE", departmentId: "OPS" };
+  const tp2 = { id: "tp2", role: "MANAGER", departmentId: "SALES" };
+
+  it("trưởng phòng: chỉ nhân viên thường cùng phòng", () => {
+    expect(kpiOversightDenial(tp, nv, "review")).toBeNull();
+    expect(kpiOversightDenial(tp, nvKhac, "review")).toMatch(/phòng ban mình/);
+    expect(kpiOversightDenial(tp, tp, "review")).toMatch(/chính bạn/);
+  });
+
+  it("trưởng phòng không duyệt / đặt mục tiêu / nạp số cho trưởng phòng khác cùng phòng", () => {
+    expect(kpiOversightDenial(tp, tp2, "review")).toMatch(/Ban Giám đốc/);
+    expect(kpiOversightDenial(tp, tp2, "target")).toMatch(/Ban Giám đốc/);
+    expect(kpiOversightDenial(tp, tp2, "import")).toMatch(/Ban Giám đốc/);
+    expect(kpiOversightDenial(tp, tp, "import")).toMatch(/chính bạn/);
+  });
+
+  it("Ban Giám đốc được mọi dòng; vai trò khác thì không", () => {
+    expect(kpiOversightDenial(ceo, tp, "review")).toBeNull();
+    expect(kpiOversightDenial(ceo, nv, "import")).toBeNull();
+    expect(kpiOversightDenial({ id: "ad", role: "ADMIN", departmentId: "SALES" }, nv, "target")).not.toBeNull();
+    expect(kpiOversightDenial(nv, { ...nv, id: "x" }, "review")).not.toBeNull();
+  });
+
+  it("trưởng phòng chưa có phòng ban thì không đụng được ai", () => {
+    expect(
+      kpiOversightDenial({ id: "t", role: "MANAGER", departmentId: null }, { ...nv, departmentId: null }, "review")
+    ).not.toBeNull();
   });
 });

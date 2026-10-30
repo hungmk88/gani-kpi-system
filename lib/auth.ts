@@ -38,9 +38,25 @@ export async function verifyPassword(plain: string, hash: string) {
   return bcrypt.compare(plain, hash);
 }
 
+const DEFAULT_SESSION_TTL_SECONDS = 12 * 60 * 60;
+const TTL_UNITS: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400 };
+
+/**
+ * Thời hạn phiên (giây) — MỘT nguồn cho cả hạn JWT lẫn maxAge của cookie.
+ * Trước đây JWT đọc JWT_EXPIRES_IN còn cookie cứng 12h: đặt "7d" thì token còn
+ * sống mà cookie đã mất (đăng xuất "bí ẩn"), đặt "1h" thì cookie giữ token hết
+ * hạn thêm 11 tiếng. Chỉ nhận dạng "<số><s|m|h|d>"; sai định dạng -> 12h.
+ */
+export function sessionTtlSeconds(raw: string | undefined = process.env.JWT_EXPIRES_IN): number {
+  const m = /^\s*(\d+)\s*([smhd])?\s*$/i.exec(raw ?? "");
+  if (!m) return DEFAULT_SESSION_TTL_SECONDS;
+  const n = Number(m[1]) * TTL_UNITS[(m[2] ?? "s").toLowerCase()];
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_SESSION_TTL_SECONDS;
+}
+
 /** Ký token và ghi vào cookie HttpOnly. */
 export async function createSession(user: SessionUser) {
-  const expiresIn = process.env.JWT_EXPIRES_IN || "12h";
+  const ttl = sessionTtlSeconds();
   const token = await new SignJWT({
     email: user.email,
     fullName: user.fullName,
@@ -51,7 +67,7 @@ export async function createSession(user: SessionUser) {
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(user.id)
     .setIssuedAt()
-    .setExpirationTime(expiresIn)
+    .setExpirationTime(`${ttl}s`)
     .sign(secretKey());
 
   const jar = await cookies();
@@ -60,7 +76,7 @@ export async function createSession(user: SessionUser) {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 12,
+    maxAge: ttl,
   });
   return token;
 }

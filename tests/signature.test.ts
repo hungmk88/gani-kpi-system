@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   generateLinkCode,
   generateSecret,
+  normalizeLinkCode,
   signPayload,
   SIGNATURE_TOLERANCE_SECONDS,
   verifyWebhookSignature,
@@ -103,7 +104,20 @@ describe("sinh khoá / mã liên kết", () => {
     expect(generateSecret()).not.toBe(a);
   });
 
-  it("generateLinkCode: đúng 6 chữ số", () => {
-    for (let i = 0; i < 50; i++) expect(generateLinkCode()).toMatch(/^\d{6}$/);
+  it("generateLinkCode: 8 ký tự chữ HOA + số, không có ký tự dễ nhầm", () => {
+    for (let i = 0; i < 200; i++) {
+      const c = generateLinkCode();
+      expect(c).toMatch(/^[A-HJKMNP-Z2-9]{8}$/);
+      expect(normalizeLinkCode(c)).toBe(c);
+    }
+  });
+
+  it("normalizeLinkCode: chấp nhận chữ thường, khoảng trắng, gạch; từ chối sai định dạng", () => {
+    expect(normalizeLinkCode("abcd-2345")).toBe("ABCD2345");
+    expect(normalizeLinkCode(" ab cd 23 45 ")).toBe("ABCD2345");
+    expect(normalizeLinkCode("123456")).toBeNull(); // mã 6 số kiểu cũ
+    expect(normalizeLinkCode("ABCD0345")).toBeNull(); // số 0 không có trong bảng chữ
+    expect(normalizeLinkCode("ABCD23456")).toBeNull();
+    expect(normalizeLinkCode(null)).toBeNull();
   });
 });

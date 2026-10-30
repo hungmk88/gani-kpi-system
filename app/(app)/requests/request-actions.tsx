@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import { toast } from "@/components/toast";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 
 export default function RequestActions({
   requestId,
@@ -23,18 +24,16 @@ export default function RequestActions({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/requests/${requestId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const res = await fetchJson(
+        `/api/requests/${requestId}`,
+        jsonInit("PATCH", {
           action,
           assigneeId: assigneeId || null,
           rejectReason: reason || undefined,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
+        })
+      );
       if (!res.ok) {
-        setError(data.message || "Không xử lý được.");
+        setError(res.message || "Không xử lý được.");
         return;
       }
       toast(
@@ -62,6 +61,7 @@ export default function RequestActions({
         <div className="space-y-2">
           <input
             className="input"
+            aria-label="Lý do từ chối yêu cầu"
             placeholder="Lý do từ chối (bắt buộc)"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
@@ -76,6 +76,7 @@ export default function RequestActions({
             </button>
             <button
               className="btn-ghost btn-sm"
+              disabled={busy}
               onClick={() => setRejecting(false)}
             >
               Quay lại
@@ -86,6 +87,7 @@ export default function RequestActions({
         <div className="flex flex-wrap items-center gap-2">
           <select
             className="input w-auto min-w-52"
+            aria-label="Người phụ trách khi tiếp nhận"
             value={assigneeId}
             onChange={(e) => setAssigneeId(e.target.value)}
           >

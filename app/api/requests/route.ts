@@ -103,15 +103,21 @@ export async function POST(req: Request) {
 export async function GET() {
   return handle(async () => {
     const user = await requireUser();
+    // Cùng luật với trang /requests: chỉ trưởng phòng và Ban Giám đốc xem
+    // hộp thư yêu cầu của PHÒNG. Trước đây nhân viên gọi thẳng API là đọc được
+    // mọi yêu cầu gửi tới phòng mình (nội dung nhờ việc giữa hai trưởng
+    // phòng). Vai trò khác chỉ thấy yêu cầu do CHÍNH MÌNH gửi (nếu có).
     const where =
       user.role === "CEO"
         ? {}
-        : {
-            OR: [
-              { requesterId: user.id },
-              { targetDeptId: user.departmentId ?? "__none__" },
-            ],
-          };
+        : user.role === "MANAGER"
+          ? {
+              OR: [
+                { requesterId: user.id },
+                { targetDeptId: user.departmentId ?? "__none__" },
+              ],
+            }
+          : { requesterId: user.id };
 
     const requests = await prisma.crossDeptRequest.findMany({
       where,

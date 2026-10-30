@@ -1,8 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { BusinessError } from "../rbac";
-import { DATA_MISMATCH_THRESHOLD_PERCENT, ERR } from "../constants";
-import { spreadPercent } from "../kpi";
+import { DATA_MISMATCH_THRESHOLD_PERCENT, ERR, KPI_STATUS_ORDER } from "../constants";
+import { isManagerReviewOpen, round2, spreadPercent } from "../kpi";
+import { vnParts } from "../vn-time";
 import { writeAudit } from "../audit";
 import { fmtNum } from "../format";
 import { notify, sendCeoAlert } from "../telegram";
@@ -205,10 +206,54 @@ export async function reconcileCell(
   // nguồn đổi. So bằng "dấu vân tay" (mã nguồn + giá trị), bỏ qua thời điểm —
   // thời điểm đổi ở mỗi lượt cron nên so cả chuỗi JSON thì quyết định tay bị
   // xoá sau 2 tiếng.
-  const alreadyResolved =
-    existing?.status === "RESOLVED" &&
-    sourcesFingerprint(parseSources(existing.sourcesJson)) ===
+  const sourcesChanged =
+    !existing ||
+    sourcesFingerprint(parseSources(existing.sourcesJson)) !==
       sourcesFingerprint(sources);
+  const alreadyResolved = existing?.status === "RESOLVED" && !sourcesChanged;
+
+  // Số các nguồn đổi sau khi đã có người chốt: số chốt cũ (actualFinal) do
+  // lần chốt đó ghi vẫn thắng mọi số mới — phải gỡ ra hoặc treo lại.
+  const priorities =
+    isMatched
+      ? preloaded?.priorities ?? (await loadPriorities(external.map((s) => s.code)))
+      : null;
+  const chosen = priorities ? pickByPriority(external, priorities) : null;
+  const stale = alreadyResolved
+    ? "none"
+    : staleResolutionAction({
+        existing,
+        sourcesChanged,
+        row,
+        nextValue: chosen?.value ?? null,
+      });
+
+  let clearedFinal = false;
+  if (stale === "clear") {
+    // Ghi có điều kiện: trưởng phòng vừa duyệt (hoặc ai đó vừa sửa số chốt)
+    // đúng lúc này thì để nguyên, lượt sau xét lại.
+    const res = await prisma.kpiResult.updateMany({
+      where: {
+        id: kpiResultId,
+        status: { in: ["DRAFT", "SELF_REVIEWED"] },
+        actualFinal: existing!.resolvedValue,
+      },
+      data: { actualFinal: null },
+    });
+    clearedFinal = res.count === 1;
+    if (clearedFinal) {
+      await writeAudit({
+        actor: null,
+        action: "RECONCILIATION_RESET",
+        entityName: "kpi_results",
+        entityId: kpiResultId,
+        before: { actualFinal: existing!.resolvedValue },
+        after: { actualFinal: null, cacNguon: sources },
+        reason:
+          "Số các nguồn đã đổi sau lần chốt đối soát — gỡ số chốt cũ, đối soát lại theo số mới.",
+      });
+    }
+  }
 
   const record = await prisma.reconciliation.upsert({
     where: {
@@ -220,18 +265,29 @@ export async function reconcileCell(
     },
     update: alreadyResolved
       ? { minValue, maxValue, variancePercent }
-      : {
-          sourcesJson: JSON.stringify(sources),
-          minValue,
-          maxValue,
-          variancePercent,
-          status: isMatched ? "MATCHED" : "MISMATCH",
-          resolvedValue: null,
-          resolvedSource: null,
-          resolveReason: null,
-          resolvedById: null,
-          resolvedAt: null,
-        },
+      : stale === "flag"
+        ? {
+            // Dòng đã qua trưởng phòng nên không tự gỡ số chốt: treo lại ô
+            // (MISMATCH) để người có thẩm quyền chốt lại. Giữ resolvedValue
+            // làm dấu "số chốt cũ không còn khớp nguồn".
+            sourcesJson: JSON.stringify(sources),
+            minValue,
+            maxValue,
+            variancePercent,
+            status: "MISMATCH",
+          }
+        : {
+            sourcesJson: JSON.stringify(sources),
+            minValue,
+            maxValue,
+            variancePercent,
+            status: isMatched ? "MATCHED" : "MISMATCH",
+            resolvedValue: null,
+            resolvedSource: null,
+            resolveReason: null,
+            resolvedById: null,
+            resolvedAt: null,
+          },
     create: {
       periodId: row.periodId,
       employeeId: row.employeeId,
@@ -248,13 +304,11 @@ export async function reconcileCell(
     return { skipped: true as const, reason: "Đã có người chốt số cho ô này." };
   }
 
-  if (isMatched) {
-    // Các nguồn nhất trí -> lấy nguồn đáng tin nhất, đồng bộ, và im lặng
-    const priorities =
-      preloaded?.priorities ?? (await loadPriorities(external.map((s) => s.code)));
-    const chosen = pickByPriority(external, priorities);
-    await prisma.kpiResult.update({
-      where: { id: kpiResultId },
+  if (isMatched && chosen && stale !== "flag") {
+    // Các nguồn nhất trí -> lấy nguồn đáng tin nhất, đồng bộ, và im lặng.
+    // Ghi có điều kiện: dòng vừa bị Ban Giám đốc khoá thì không đụng nữa.
+    await prisma.kpiResult.updateMany({
+      where: { id: kpiResultId, status: { not: "FINALIZED" } },
       data: { actualSystem: chosen.value },
     });
     await recalcResult(kpiResultId);
@@ -267,18 +321,28 @@ export async function reconcileCell(
     };
   }
 
-  // Lệch quá ngưỡng -> KHÔNG ghi số nào vào KPI, treo lại chờ người quyết
+  // Lệch quá ngưỡng (hoặc số chốt cũ không còn khớp nguồn) -> KHÔNG ghi số
+  // nào vào KPI, treo lại chờ người quyết
+  if (clearedFinal) await recalcResult(kpiResultId);
   const wasMismatch = existing?.status === "MISMATCH";
   const detail = sources
     .map((s) => `${s.label}: ${fmt(s.value)}`)
     .join(" · ");
 
   if (!wasMismatch) {
-    await sendCeoAlert({
-      title: `Lệch số liệu ${variancePercent}%: ${row.kpiDefinition.name}`,
-      details: `${row.employee.fullName} (${row.employee.department?.name ?? "—"}) · ${detail} · Hệ thống chưa ghi số nào, đang chờ quyết định.`,
-      actionPath: "/reconciliation",
-    });
+    await sendCeoAlert(
+      stale === "flag"
+        ? {
+            title: `Số chốt đối soát cũ không còn khớp nguồn: ${row.kpiDefinition.name}`,
+            details: `${row.employee.fullName} (${row.employee.department?.name ?? "—"}) · Số đã chốt trước đây ${fmt(existing!.resolvedValue!)} · Nguồn mới: ${detail} · Dòng đã qua trưởng phòng nên hệ thống không tự đổi số, cần chốt lại.`,
+            actionPath: "/reconciliation",
+          }
+        : {
+            title: `Lệch số liệu ${variancePercent}%: ${row.kpiDefinition.name}`,
+            details: `${row.employee.fullName} (${row.employee.department?.name ?? "—"}) · ${detail} · Hệ thống chưa ghi số nào, đang chờ quyết định.`,
+            actionPath: "/reconciliation",
+          }
+    );
   }
 
   return {
@@ -320,6 +384,50 @@ export type ReconcilePreloaded = {
   priorities?: Map<string, number>;
 };
 
+export type StaleResolutionAction = "none" | "clear" | "flag";
+
+/**
+ * Ô đã có người chốt (RESOLVED) mà SỐ của các nguồn đổi sau đó: lần chốt đã
+ * ghi actualFinal = số chốt, và actualFinal thắng mọi số khác khi chấm điểm —
+ * chỉ reset bản đối soát về MATCHED thì số chốt cũ vẫn thắng âm thầm. Thuần.
+ *
+ * - "clear": dòng còn ở bước nhân viên (dưới MANAGER_REVIEWED) và số chốt
+ *   vẫn đúng là số lần chốt đã ghi → gỡ số chốt đó, đối soát lại như mới.
+ * - "flag":  dòng đã qua trưởng phòng → không tự đổi số đã duyệt; treo ô lại
+ *   (MISMATCH, giữ resolvedValue làm dấu) để người có thẩm quyền chốt lại.
+ *   Ô đã treo kiểu này (MISMATCH + resolvedValue) thì giữ nguyên treo.
+ * - "none":  không liên quan (chưa từng chốt, số chốt đã bị người khác sửa
+ *   khác đi, hoặc số mới khớp đúng số chốt cũ).
+ */
+export function staleResolutionAction(input: {
+  existing: { status: string; resolvedValue: number | null } | null;
+  /** Dấu vân tay nguồn khác với lần đối soát trước */
+  sourcesChanged: boolean;
+  row: { status: string; actualFinal: number | null };
+  /** Số sẽ đồng bộ nếu các nguồn khớp nhau; null khi đang lệch */
+  nextValue: number | null;
+}): StaleResolutionAction {
+  const { existing, sourcesChanged, row, nextValue } = input;
+  if (!existing || existing.resolvedValue === null || existing.resolvedValue === undefined) {
+    return "none";
+  }
+  const staleFlagged = existing.status === "MISMATCH";
+  if (existing.status !== "RESOLVED" && !staleFlagged) return "none";
+  if (existing.status === "RESOLVED" && !sourcesChanged) return "none";
+  // Số chốt không còn là số lần chốt đã ghi (trưởng phòng/BGĐ đã sửa) → đó là
+  // quyết định mới của người khác, không đụng tới.
+  if (row.actualFinal === null || round2(row.actualFinal) !== round2(existing.resolvedValue)) {
+    return "none";
+  }
+  if (row.status === "FINALIZED") return "none";
+  if ((KPI_STATUS_ORDER[row.status] ?? 0) < KPI_STATUS_ORDER.MANAGER_REVIEWED) {
+    return "clear";
+  }
+  // Nguồn mới khớp nhau và đúng bằng số đã duyệt thì chẳng có gì phải chốt lại
+  if (nextValue !== null && round2(nextValue) === round2(row.actualFinal)) return "none";
+  return "flag";
+}
+
 export type CellPlan =
   | { action: "noop"; outcome: "skipped" | "matched" | "mismatched" }
   | { action: "write" };
@@ -333,9 +441,14 @@ export type CellPlan =
 export function planCell(input: {
   row: Pick<CellRow, "status" | "kpiDefinitionId" | "actualSelf" | "actualSystem"> & {
     kpiDefinition: unknown;
+    actualFinal?: number | null;
   };
   feeds: FeedLite[];
-  existing: Pick<ReconRow, "status" | "sourcesJson" | "minValue" | "maxValue" | "variancePercent"> | null;
+  existing:
+    | (Pick<ReconRow, "status" | "sourcesJson" | "minValue" | "maxValue" | "variancePercent"> & {
+        resolvedValue?: number | null;
+      })
+    | null;
   priorities: Map<string, number>;
 }): CellPlan {
   const { row, feeds, existing, priorities } = input;
@@ -374,6 +487,18 @@ export function planCell(input: {
 
   const isMatched = variancePercent <= DATA_MISMATCH_THRESHOLD_PERCENT;
   if (!sameStats) return { action: "write" };
+
+  if (
+    existing.status === "MISMATCH" &&
+    existing.resolvedValue !== null &&
+    existing.resolvedValue !== undefined &&
+    (row.actualFinal === undefined ||
+      (row.actualFinal !== null && round2(row.actualFinal) === round2(existing.resolvedValue)))
+  ) {
+    // Ô đã treo lại vì số chốt cũ không còn khớp nguồn — nguồn không đổi thì
+    // vẫn treo như cũ, không ghi gì thêm
+    return { action: "noop", outcome: "mismatched" };
+  }
 
   if (isMatched && existing.status === "MATCHED") {
     // Đã khớp từ trước: chỉ cần số hệ thống đang đúng nguồn ưu tiên
@@ -605,6 +730,16 @@ export async function resolveReconciliation(
       409
     );
   }
+  // Chốt số đối soát là ĐỔI SỐ CHỐT của dòng KPI — với trưởng phòng thì cùng
+  // hạn như bước duyệt (23:59 ngày 4). Quá hạn / kỳ đã khoá bước trưởng phòng
+  // thì Ban Giám đốc quyết.
+  if (actor.role === "MANAGER" && !isManagerReviewOpen(rec.period)) {
+    throw new BusinessError(
+      ERR.SLA_LOCKED,
+      `Đã quá hạn duyệt của trưởng phòng (23:59 ngày ${vnParts(rec.period.managerReviewDeadline).day}). Ban Giám đốc sẽ chốt số dòng này.`,
+      400
+    );
+  }
 
   const before = {
     actualSystem: kpiRow.actualSystem,
@@ -614,10 +749,19 @@ export async function resolveReconciliation(
   // Số đã chốt khi đối soát là SỐ CHỐT của dòng KPI. Chỉ ghi vào actualSystem
   // thì vô nghĩa: điểm chấm theo actualFinal ?? actualSelf ?? actualSystem,
   // nên số nhân viên tự khai (đang lệch) vẫn thắng.
-  await prisma.kpiResult.update({
-    where: { id: kpiRow.id },
+  // Ghi có điều kiện: Ban Giám đốc vừa khoá dòng đúng lúc này thì lượt chốt
+  // này thua, không đè lên số đã khoá.
+  const claimed = await prisma.kpiResult.updateMany({
+    where: { id: kpiRow.id, status: { not: "FINALIZED" } },
     data: { actualSystem: input.value, actualFinal: input.value },
   });
+  if (claimed.count !== 1) {
+    throw new BusinessError(
+      ERR.KPI_FINALIZED,
+      "Dòng KPI vừa được Ban Giám đốc chốt và khoá — không đổi số nữa.",
+      409
+    );
+  }
   const updated = await recalcResult(kpiRow.id);
 
   await prisma.reconciliation.update({

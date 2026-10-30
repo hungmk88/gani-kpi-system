@@ -9,6 +9,8 @@ import { formatVnDate, parseVnDate } from "@/lib/vn-time";
 import {
   assertLeaveQuota,
   assertNoLeaveOverlap,
+  leaveReviewerKind,
+  leaveVisibleWhere,
   lockLeaveOwner,
 } from "@/lib/services/leave-service";
 
@@ -76,10 +78,15 @@ export async function POST(req: Request) {
         : [];
 
     // Trưởng phòng xin nghỉ, Admin xin nghỉ, hoặc phòng chưa có trưởng phòng
-    // -> Ban Giám đốc duyệt thẳng.
+    // -> Ban Giám đốc duyệt thẳng. Cùng luật (leaveReviewerKind) với hộp
+    // "Chờ tôi duyệt" và khối Duyệt nhanh — để đơn gửi tới ai thì nằm trong
+    // hộp chờ của đúng người đó.
     const needsCeo =
       !autoApprove &&
-      (user.role === "MANAGER" || user.role === "ADMIN" || managers.length === 0);
+      leaveReviewerKind({
+        requesterRole: user.role,
+        deptHasActiveManager: managers.length > 0,
+      }) === "CEO";
 
     // Hạn mức: chặn ngay khi gửi nếu (đã DUYỆT + đơn này) vượt 12 ngày/năm
     // hoặc 6 ngày/nửa năm — đơn đang chờ khác không tính, lúc duyệt kiểm lại.
@@ -157,20 +164,10 @@ export async function GET() {
   return handle(async () => {
     const user = await requireUser();
 
-    const where =
-      user.role === "CEO" || user.role === "ADMIN"
-        ? {}
-        : user.role === "MANAGER"
-          ? {
-              OR: [
-                { employeeId: user.id },
-                {
-                  departmentId: user.departmentId ?? "__none__",
-                  employee: { role: { not: "MANAGER" } },
-                },
-              ],
-            }
-          : { employeeId: user.id };
+    // Lý do nghỉ là thông tin riêng tư: Quản trị hệ thống chỉ xem đơn của
+    // mình như mọi nhân viên; Trưởng phòng không xem đơn của trưởng phòng /
+    // admin khác cùng phòng (xem leaveVisibleWhere).
+    const where = leaveVisibleWhere(user);
 
     const requests = await prisma.leaveRequest.findMany({
       where,

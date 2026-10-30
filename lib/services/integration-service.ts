@@ -1,7 +1,12 @@
+import crypto from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { safeEqual } from "../secrets";
 import { z } from "zod";
 import { prisma } from "../db";
-import { verifyWebhookSignature } from "../integrations/signature";
+import {
+  SIGNATURE_TOLERANCE_SECONDS,
+  verifyWebhookSignature,
+} from "../integrations/signature";
 import { writeAudit } from "../audit";
 import { reconcileCell } from "./reconciliation-service";
 
@@ -45,6 +50,44 @@ export type IngestResult = {
 /** Trần số dòng webhook_logs cho lượt xác thực hỏng, mỗi nguồn mỗi cửa sổ. */
 const FAILED_AUTH_LOG_LIMIT = 20;
 const FAILED_AUTH_LOG_WINDOW_MS = 10 * 60_000;
+
+const SIGNATURE_SEEN_ACTION = "INTEGRATION_SIGNATURE_SEEN";
+
+/**
+ * Giữ chỗ cho một chữ ký webhook. Trả `fresh: false` nếu chữ ký này đã được
+ * dùng trong cửa sổ chống phát lại. Nhìn lùi 2× dung sai (+1 phút): dấu thời
+ * gian được lệch ±dung sai nên một gói hợp lệ sống tối đa 2× dung sai.
+ */
+async function claimSignature(code: string, signature: string, ip?: string | null) {
+  const digest = crypto.createHash("sha256").update(signature.trim()).digest("hex");
+  const entityId = `${code}:${digest}`;
+  const since = new Date(Date.now() - (2 * SIGNATURE_TOLERANCE_SECONDS + 60) * 1000);
+  const fresh = await prisma.$transaction(async (tx) => {
+    // Khoá theo đúng chữ ký, tự nhả khi transaction kết thúc (an toàn với
+    // pgbouncer chế độ transaction vì cả khối chạy trên một connection).
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"webhook-sig:" + entityId}))`;
+    const seen = await tx.auditLog.findFirst({
+      where: {
+        action: SIGNATURE_SEEN_ACTION,
+        entityName: "integration_sources",
+        entityId,
+        createdAt: { gte: since },
+      },
+      select: { id: true },
+    });
+    if (seen) return false;
+    await tx.auditLog.create({
+      data: {
+        action: SIGNATURE_SEEN_ACTION,
+        entityName: "integration_sources",
+        entityId,
+        ipAddress: ip ?? null,
+      },
+    });
+    return true;
+  });
+  return { fresh };
+}
 
 /** Ánh xạ loại nguồn sang giá trị lưu trong cột `source` của kpi_actual_feeds. */
 function feedSourceKind(kind: string) {
@@ -197,6 +240,32 @@ export async function ingestFromSource(opts: {
     );
   }
 
+  /* -------------------------------------------- 2b. CHỐNG PHÁT LẠI */
+
+  // Chữ ký hợp lệ trong cửa sổ ±SIGNATURE_TOLERANCE_SECONDS: kẻ bắt được gói
+  // tin vẫn bắn lại được NGAY trong cửa sổ đó (ghi feed trùng, đối soát lại).
+  // Mỗi chữ ký chỉ được dùng một lần: lưu dấu (băm của chữ ký) vào audit_logs
+  // — không cần bảng mới — dưới khoá advisory để hai lượt song song không cùng
+  // lọt. Đường khoá cũ (legacy, không có chữ ký) không áp dụng được.
+  if (source) {
+    const replay = await claimSignature(code, opts.headers.get("x-signature") ?? "", opts.ip);
+    if (!replay.fresh) {
+      return log(
+        {
+          httpStatus: 409,
+          signatureOk: true,
+          received: 0,
+          applied: 0,
+          rejected: 0,
+          mismatches: 0,
+          errors: [],
+          message: "Gói tin này đã được nhận (trùng chữ ký) — bỏ qua để tránh ghi trùng.",
+        },
+        source.id
+      );
+    }
+  }
+
   /* -------------------------------------------------- 3. ĐỌC DỮ LIỆU */
 
   let parsed: z.infer<typeof bodySchema>;
@@ -227,14 +296,50 @@ export async function ingestFromSource(opts: {
 
   /* -------------------------------------------------- 4. NẠP VÀ ĐỐI SOÁT */
 
+  // Nạp trước MỘT lần cho cả lô: chỉ tiêu, nhân sự, kỳ, dòng KPI. Trước đây
+  // mỗi bản ghi ~10 query (lô 500 dòng = 5.000 vòng tới pooler) — vượt trần
+  // thời gian của hàm serverless.
+  const codes = [...new Set(items.map((i) => i.kpiCode))];
+  const emails = [...new Set(items.map((i) => i.employeeEmail))];
+  const monthYears = [
+    ...new Map(items.map((i) => [`${i.year}-${i.month}`, { month: i.month, year: i.year }])).values(),
+  ];
+  const [defs, users, periods] = await Promise.all([
+    prisma.kpiDefinition.findMany({ where: { code: { in: codes } } }),
+    prisma.user.findMany({ where: { email: { in: emails } }, select: { id: true, email: true } }),
+    prisma.kpiPeriod.findMany({ where: { OR: monthYears } }),
+  ]);
+  const defByCode = new Map(defs.map((d) => [d.code, d]));
+  const userByEmail = new Map(users.map((u) => [u.email, u]));
+  const periodByKey = new Map(periods.map((p) => [`${p.year}-${p.month}`, p]));
+
+  const usablePeriodIds = periods.filter((p) => p.status !== "FINALIZED").map((p) => p.id);
+  const resultRows =
+    usablePeriodIds.length && users.length && defs.length
+      ? await prisma.kpiResult.findMany({
+          where: {
+            periodId: { in: usablePeriodIds },
+            employeeId: { in: users.map((u) => u.id) },
+            kpiDefinitionId: { in: defs.map((d) => d.id) },
+          },
+          select: { id: true, periodId: true, employeeId: true, kpiDefinitionId: true, status: true },
+        })
+      : [];
+  const resultByKey = new Map(
+    resultRows.map((r) => [`${r.periodId}|${r.employeeId}|${r.kpiDefinitionId}`, r])
+  );
+
+  // Nhật ký thô: một lệnh createMany. createdAt tăng dần theo thứ tự trong lô
+  // để "bản mới nhất của mỗi nguồn" (latestSources) vẫn là dòng gửi sau cùng,
+  // y như khi ghi từng dòng.
+  const feedRows: Prisma.KpiActualFeedCreateManyInput[] = [];
+  const cellsToReconcile = new Set<string>();
+  const baseTime = Date.now();
+
   for (const item of items) {
-    const [def, employee, period] = await Promise.all([
-      prisma.kpiDefinition.findUnique({ where: { code: item.kpiCode } }),
-      prisma.user.findUnique({ where: { email: item.employeeEmail } }),
-      prisma.kpiPeriod.findUnique({
-        where: { month_year: { month: item.month, year: item.year } },
-      }),
-    ]);
+    const def = defByCode.get(item.kpiCode);
+    const employee = userByEmail.get(item.employeeEmail);
+    const period = periodByKey.get(`${item.year}-${item.month}`);
 
     if (!def) {
       errors.push(`Không có mã KPI "${item.kpiCode}".`);
@@ -246,17 +351,16 @@ export async function ingestFromSource(opts: {
     }
 
     // Nhật ký thô luôn được ghi, bất kể phần sau có dùng được hay không
-    await prisma.kpiActualFeed.create({
-      data: {
-        kpiDefinitionId: def.id,
-        employeeEmail: item.employeeEmail,
-        periodMonth: item.month,
-        periodYear: item.year,
-        value: item.value,
-        source: kind,
-        sourceCode: code,
-        rawPayload: JSON.stringify(item),
-      },
+    feedRows.push({
+      kpiDefinitionId: def.id,
+      employeeEmail: item.employeeEmail,
+      periodMonth: item.month,
+      periodYear: item.year,
+      value: item.value,
+      source: kind,
+      sourceCode: code,
+      rawPayload: JSON.stringify(item),
+      createdAt: new Date(baseTime + feedRows.length),
     });
 
     if (!period) {
@@ -270,15 +374,7 @@ export async function ingestFromSource(opts: {
       continue;
     }
 
-    const existing = await prisma.kpiResult.findUnique({
-      where: {
-        periodId_employeeId_kpiDefinitionId: {
-          periodId: period.id,
-          employeeId: employee.id,
-          kpiDefinitionId: def.id,
-        },
-      },
-    });
+    const existing = resultByKey.get(`${period.id}|${employee.id}|${def.id}`);
 
     // An toàn khoá dữ liệu: dòng đã chốt thì webhook không đụng vào được
     if (existing?.status === "FINALIZED") {
@@ -297,12 +393,26 @@ export async function ingestFromSource(opts: {
       );
       continue;
     }
-    const row = existing;
 
-    // Đối soát quyết định có ghi số vào KPI hay không — không ghi thẳng ở đây
-    const rec = await reconcileCell(row.id);
-    if (!rec.skipped && !rec.matched) mismatches++;
+    cellsToReconcile.add(existing.id);
     applied++;
+  }
+
+  if (feedRows.length) {
+    await prisma.kpiActualFeed.createMany({ data: feedRows });
+  }
+
+  // Đối soát quyết định có ghi số vào KPI hay không — không ghi thẳng ở đây.
+  // Mỗi ô chỉ đối soát MỘT lần dù lô có nhiều bản ghi cho cùng ô: đối soát
+  // đọc bản mới nhất của mỗi nguồn, chạy lại cũng ra đúng kết quả đó.
+  for (const rowId of cellsToReconcile) {
+    try {
+      const rec = await reconcileCell(rowId);
+      if (!rec.skipped && !rec.matched) mismatches++;
+    } catch (e) {
+      console.error("[INTEGRATION] Đối soát ô lỗi:", rowId, e);
+      errors.push("Một ô KPI đối soát lỗi — số thô đã lưu, bộ máy nền sẽ đối soát lại.");
+    }
   }
 
   if (source) {

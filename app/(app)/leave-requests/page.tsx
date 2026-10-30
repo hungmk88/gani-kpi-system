@@ -9,6 +9,8 @@ import {
   getAnnualLeaveQuota,
   leaveDaysBetween,
   leaveReportScope,
+  leaveVisibleWhere,
+  pendingLeaveForReviewerWhere,
   type LeaveConflictTask,
 } from "@/lib/services/leave-service";
 import { fmtDate, fmtDateTime, fmtNum } from "@/lib/format";
@@ -28,57 +30,44 @@ export default async function LeaveRequestsPage() {
   const exportScope = await leaveReportScope(user);
   const quota = await getAnnualLeaveQuota(user.id, vnParts(new Date()).year);
 
-  const where =
-    user.role === "CEO" || user.role === "ADMIN"
-      ? {}
-      : user.role === "MANAGER"
-        ? {
-            OR: [
-              { employeeId: user.id },
-              {
-                departmentId: user.departmentId ?? "__none__",
-                employee: { role: { not: "MANAGER" as const } },
-              },
-            ],
-          }
-        : { employeeId: user.id };
-
-  const requests = await prisma.leaveRequest.findMany({
-    where,
-    include: {
-      employee: {
-        select: {
-          id: true,
-          fullName: true,
-          role: true,
-          department: { select: { name: true } },
-        },
+  // Phạm vi xem dùng chung với GET /api/leave-requests (leaveVisibleWhere):
+  // Quản trị hệ thống chỉ thấy đơn của chính mình.
+  const include = {
+    employee: {
+      select: {
+        id: true,
+        fullName: true,
+        role: true,
+        department: { select: { name: true } },
       },
-      reviewedBy: { select: { id: true, fullName: true } },
     },
-    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-  });
-
-  // Đúng người phải duyệt — khớp luật ở app/api/leave-requests/[id]/route.ts:
-  // Trưởng phòng duyệt nhân viên phòng mình; BGĐ duyệt Trưởng phòng/Admin.
-  const inbox = requests.filter((r) => {
-    if (r.status !== "PENDING") return false;
-    if (user.role === "MANAGER") {
-      return (
-        r.departmentId === user.departmentId && r.employee.role !== "MANAGER"
-      );
-    }
-    if (user.role === "CEO") {
-      return r.employee.role === "MANAGER" || r.employee.role === "ADMIN";
-    }
-    return false;
-  });
+    reviewedBy: { select: { id: true, fullName: true } },
+  } as const;
+  const inboxWhere = pendingLeaveForReviewerWhere(user);
+  const [requests, inbox] = await Promise.all([
+    prisma.leaveRequest.findMany({
+      where: leaveVisibleWhere(user),
+      include,
+      orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+    }),
+    // Đúng người phải duyệt — cùng luật với nơi gửi thông báo khi đơn được
+    // tạo (leaveReviewerKind): Trưởng phòng duyệt nhân viên phòng mình; BGĐ
+    // duyệt Trưởng phòng/Admin và đơn của phòng chưa có trưởng phòng.
+    inboxWhere
+      ? prisma.leaveRequest.findMany({
+          where: inboxWhere,
+          include,
+          orderBy: [{ isUrgent: "desc" }, { startDate: "asc" }],
+        })
+      : Promise.resolve([]),
+  ]);
+  const inboxIds = new Set(inbox.map((r) => r.id));
 
   // Riêng BGĐ: xem TOÀN BỘ đơn đang chờ trong công ty, kể cả đơn không cần
   // chính CEO duyệt — để nắm tình hình chung, không chỉ phần việc của mình.
   const allPending =
     user.role === "CEO"
-      ? requests.filter((r) => r.status === "PENDING" && !inbox.includes(r))
+      ? requests.filter((r) => r.status === "PENDING" && !inboxIds.has(r.id))
       : [];
 
   const now = new Date();

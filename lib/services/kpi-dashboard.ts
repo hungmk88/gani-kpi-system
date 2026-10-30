@@ -166,7 +166,12 @@ export async function getDashboardSummary(periodInput: DashboardPeriod | string)
     SHIFT_STAGES.map((st) => [st, shifts.filter((s) => shiftStage(s) === st).length])
   ) as Record<ShiftStage, number>;
 
-  const locked = shifts.filter((s) => s.status === LOCKED);
+  // Mẫu số chỉ gồm ca ĐÃ CÓ ĐIỂM. Ca vừa khoá mà chấm điểm lỗi (chờ lượt tự
+  // chữa của cron) chưa có dòng điểm nào — tính vào mẫu số thì "thưởng TB mỗi
+  // ca" bị kéo xuống như thể ca đó thưởng 0. Đếm riêng để vẫn thấy việc treo.
+  const lockedAll = shifts.filter((s) => s.status === LOCKED);
+  const locked = lockedAll.filter((s) => s.kpiResults.length > 0);
+  const unscoredShifts = lockedAll.length - locked.length;
   const results = locked.flatMap((s) => s.kpiResults);
 
   const totalShifts = locked.length;
@@ -200,8 +205,10 @@ export async function getDashboardSummary(periodInput: DashboardPeriod | string)
     period,
     timestamp: new Date(),
     summary: {
-      /** Số ca đã khoá số trong kỳ */
+      /** Số ca đã khoá số VÀ đã chấm điểm trong kỳ (mẫu số của mọi trung bình) */
       totalShifts,
+      /** Ca đã khoá nhưng chưa có điểm (chấm lỗi, chờ cron chấm lại) — không vào mẫu số */
+      unscoredShifts,
       /** Số lượt chấm điểm (người × ca) */
       resultCount,
       /** Điểm cuối TB theo người; null = chưa có ca nào khoá */
@@ -211,7 +218,7 @@ export async function getDashboardSummary(periodInput: DashboardPeriod | string)
         avgOf(perShift.flatMap((s) => (s.tier2Score === null ? [] : [s.tier2Score])))
       ),
       totalBonus: Math.round(totalBonus),
-      /** Thưởng TB mỗi ca đã khoá */
+      /** Thưởng TB mỗi ca đã khoá và đã chấm điểm */
       avgBonus: totalShifts > 0 ? Math.round(totalBonus / totalShifts) : 0,
       /** Số lượt bị khoá thưởng vì cảnh báo chống chạy chỉ tiêu còn treo/bị từ chối */
       bonusLockedCount,
@@ -340,8 +347,13 @@ export async function getDashboardTrends(numDaysInput: number) {
   const today = vnStartOfDay();
   const start = addDays(today, -(numDays - 1));
 
+  // Chỉ ca đã khoá VÀ đã có điểm — cùng mẫu số với getDashboardSummary
   const shifts = await prisma.productionShiftLog.findMany({
-    where: { status: LOCKED, shiftDate: { gte: start, lt: addDays(today, 1) } },
+    where: {
+      status: LOCKED,
+      shiftDate: { gte: start, lt: addDays(today, 1) },
+      kpiResults: { some: {} },
+    },
     select: {
       shiftDate: true,
       // Đủ dữ kiện cho computeShiftMetrics — dùng đúng công thức của engine chấm điểm.

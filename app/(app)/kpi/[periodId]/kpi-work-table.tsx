@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Download,
@@ -15,7 +15,7 @@ import {
   Search,
   Send,
 } from "lucide-react";
-import { Badge, KpiStatusBadge, ScoreBadge } from "@/components/ui";
+import { Avatar, Badge, KpiStatusBadge, ScoreBadge } from "@/components/ui";
 import { fmtNum, fmtPct, fmtScore } from "@/lib/format";
 import { round2, scoreStateOf, type GatekeeperRule } from "@/lib/kpi";
 import KpiAdvisoryPanel from "@/components/kpi-advisory";
@@ -23,6 +23,7 @@ import ConfirmDialog from "@/components/confirm-dialog";
 import VnNumberInput from "@/components/vn-number-input";
 import StickyActions from "@/components/sticky-actions";
 import { toast } from "@/components/toast";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 import {
   AchievementBar,
   GatekeeperStatus,
@@ -58,7 +59,13 @@ export type KpiRow = {
   cap: number;
   /** Khác null = chỉ tiêu gatekeeper (không cộng điểm, vượt ngưỡng thì trừ) */
   gatekeeper: GatekeeperRule | null;
+  /** Số tự khai lệch số hệ thống quá ngưỡng — chỉ là ghi chú "lệch", không chặn */
   hasMismatch: boolean;
+  /**
+   * Ô đối soát đang MISMATCH chưa ai chốt — máy chủ chặn chốt dòng này
+   * (ceoApprove bỏ qua). Mọi tín hiệu "lệch số / bị bỏ qua" theo cờ này.
+   */
+  reconMismatch: boolean;
   mismatchPercent: number | null;
   status: string;
   selfNote: string | null;
@@ -105,8 +112,19 @@ export default function KpiWorkTable({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  // Trên điện thoại khung lỗi nằm tít đầu bảng, xa nút "Gửi tất cả" dính đáy
+  // màn hình — có lỗi thì bật toast ngay tại chỗ và cuộn khung lỗi vào tầm mắt.
+  function setError(msg: string | null) {
+    setErrorState(msg);
+    if (!msg) return;
+    toast(msg, "error");
+    requestAnimationFrame(() =>
+      errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
+    );
+  }
 
   // Sắp theo ngoại lệ: lệch số → chờ tôi → chạm trần → dưới 70 → còn lại.
   const ranked = useMemo(() => {
@@ -199,24 +217,23 @@ export default function KpiWorkTable({
     );
   });
 
-  async function call(url: string, payload: unknown, success?: string) {
+  async function call<T = Record<string, unknown>>(
+    url: string,
+    payload: unknown,
+    success?: string
+  ): Promise<T | null> {
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
+      const res = await fetchJson<T>(url, jsonInit("POST", payload));
       if (!res.ok) {
-        setError(data.message || "Thao tác thất bại.");
+        setError(res.message ?? "Thao tác thất bại.");
         return null;
       }
       if (success) toast(success);
       router.refresh();
-      return data;
+      return res.data;
     } catch {
       setError("Mất kết nối tới máy chủ.");
       return null;
@@ -228,7 +245,9 @@ export default function KpiWorkTable({
   async function submitAll() {
     if (bulkItems.length === 0) return;
     const nameOf = new Map(bulkItems.map((r) => [r.id, r.kpiName]));
-    const data = await call("/api/kpi/results/self-review", {
+    const data = await call<{ submitted: number; failed?: unknown[] }>(
+      "/api/kpi/results/self-review",
+      {
       items: bulkItems.map((r) => ({
         resultId: r.id,
         actualSelf: selfDrafts[r.id].value as number,
@@ -239,6 +258,8 @@ export default function KpiWorkTable({
     if (data.submitted > 0) toast(`Đã gửi ${fmtNum(data.submitted)} chỉ tiêu tự khai`);
     const failed = (data.failed ?? []) as { resultId: string; message: string }[];
     if (failed.length > 0) {
+      // setError cũng bật toast lỗi — gửi được một phần thì người dùng phải
+      // thấy ngay là CÒN dòng chưa gửi, không chỉ thấy toast "Đã gửi".
       setError(
         `Chưa gửi được ${failed.length} chỉ tiêu: ` +
           failed.map((f) => `${nameOf.get(f.resultId) ?? "—"} (${f.message})`).join("; ")
@@ -253,7 +274,11 @@ export default function KpiWorkTable({
   >(null);
 
   async function approveAll(employeeId?: string) {
-    const data = await call("/api/kpi/approve", {
+    const data = await call<{
+      finalized: number;
+      periodFinalized?: boolean;
+      skipped?: unknown[];
+    }>("/api/kpi/approve", {
       periodId,
       employeeId,
       finalizePeriod: !employeeId,
@@ -286,10 +311,14 @@ export default function KpiWorkTable({
         .flatMap((g) => g.rows)
     : [];
   const summary = {
-    ready: scopeRows.filter((r) => r.status === "MANAGER_REVIEWED" && !r.hasMismatch).length,
+    // Cùng điều kiện với máy chủ (planCeoApproval): chặn theo ô đối soát còn
+    // treo, không theo cờ "lệch" ghi chú trên dòng
+    ready: scopeRows.filter((r) => r.status === "MANAGER_REVIEWED" && !r.reconMismatch).length,
     draft: scopeRows.filter((r) => r.status === "DRAFT").length,
     waitingManager: scopeRows.filter((r) => r.status === "SELF_REVIEWED").length,
-    mismatch: scopeRows.filter((r) => r.hasMismatch && r.status !== "FINALIZED").length,
+    mismatch: scopeRows.filter(
+      (r) => r.reconMismatch && r.status === "MANAGER_REVIEWED"
+    ).length,
     locked: scopeRows.filter((r) => r.status === "FINALIZED").length,
   };
 
@@ -307,15 +336,19 @@ export default function KpiWorkTable({
         >
           <Download size={14} strokeWidth={2} /> Tải bảng KPI (Excel)
         </a>
-        <a
-          href={`/reports/kpi/${periodId}`}
-          target="_blank"
-          rel="noreferrer"
-          className="btn-ghost btn-sm inline-flex items-center gap-1.5"
-        >
-          <Printer size={14} strokeWidth={2} /> Báo cáo điều hành (PDF)
-        </a>
-        {(role === "MANAGER" || role === "CEO" || role === "ADMIN") && (
+        {/* /reports/kpi đẩy nhân viên về trang chủ — không hiện link cụt */}
+        {role !== "EMPLOYEE" && (
+          <a
+            href={`/reports/kpi/${periodId}`}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-ghost btn-sm inline-flex items-center gap-1.5"
+          >
+            <Printer size={14} strokeWidth={2} /> Báo cáo điều hành (PDF)
+          </a>
+        )}
+        {/* Cùng quyền "kpi.import" của máy chủ: trưởng phòng và Ban Giám đốc */}
+        {(role === "MANAGER" || role === "CEO") && (
           <>
             <a href="/api/kpi/template" className="btn-ghost btn-sm inline-flex items-center gap-1.5">
               <Download size={14} strokeWidth={2} /> Tải file mẫu nhập số
@@ -383,7 +416,11 @@ export default function KpiWorkTable({
       </ConfirmDialog>
 
       {error && !approveTarget && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div
+          ref={errorRef}
+          role="alert"
+          className="mb-4 scroll-mt-20 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
           {error}
         </div>
       )}
@@ -490,15 +527,19 @@ export default function KpiWorkTable({
           const pendingCeo = g.rows.filter(
             (r) => r.status === "MANAGER_REVIEWED"
           ).length;
-          // Dòng lệch số lên đầu — đó là thứ phải quyết trước khi chốt
+          // Dòng còn treo đối soát lên đầu — đó là thứ phải quyết trước khi
+          // chốt; sau đó tới dòng có ghi chú lệch
           const rows = [...g.rows].sort(
-            (a, b) => Number(b.hasMismatch) - Number(a.hasMismatch)
+            (a, b) =>
+              Number(b.reconMismatch) - Number(a.reconMismatch) ||
+              Number(b.hasMismatch) - Number(a.hasMismatch)
           );
           // Kỳ đã chốt: dòng số nào cả bảng toàn "—" thì bỏ, đỡ nhiễu
           const showSystem = !periodFinalized || g.rows.some((r) => r.actualSystem !== null);
           const showSelf = !periodFinalized || g.rows.some((r) => r.actualSelf !== null);
           const editorProps = {
             role,
+            employeeRole: g.employeeRole,
             isMine: isOwn,
             selfOpen,
             managerOpen,
@@ -516,6 +557,8 @@ export default function KpiWorkTable({
                 aria-expanded={isOpen}
                 className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-ink-50/60"
               >
+                <div className="flex min-w-0 items-center gap-3">
+                <Avatar name={g.employeeName} size={36} />
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-ink-900">
@@ -541,6 +584,7 @@ export default function KpiWorkTable({
                     {g.jobTitle || "—"} · {g.departmentName} · {g.rows.length}{" "}
                     chỉ tiêu · trọng số {fmtNum(g.summary.totalWeight)}%
                   </div>
+                </div>
                 </div>
                 {/* Đếm trạng thái: trung tính; phần việc của người đang xem đã
                     có nhãn "chờ bạn" màu thương hiệu ở bên trái. */}
@@ -707,6 +751,7 @@ function RowEditor({
   layout,
   row,
   role,
+  employeeRole,
   isMine,
   selfOpen,
   managerOpen,
@@ -721,6 +766,8 @@ function RowEditor({
   layout: "row" | "card";
   row: KpiRow;
   role: string;
+  /** Vai trò của người sở hữu dòng KPI */
+  employeeRole: string;
   isMine: boolean;
   selfOpen: boolean;
   managerOpen: boolean;
@@ -745,19 +792,24 @@ function RowEditor({
   // Ban Giám đốc thì vào được bất cứ lúc nào, kể cả dòng nhân viên chưa khai —
   // để không bị kẹt khi có người nghỉ việc hoặc bỏ khai giữa chừng.
   // Không ai tự duyệt KPI của chính mình (máy chủ cũng chặn) — không hiện nút.
+  // KPI của trưởng phòng khác (kể cả cùng phòng) do Ban Giám đốc duyệt.
+  const ownerIsManager = employeeRole === "MANAGER" || employeeRole === "ADMIN";
   const canManager = locked || isMine
     ? false
     : role === "CEO"
       ? true
-      : role === "MANAGER" && managerOpen && row.status !== "DRAFT";
+      : role === "MANAGER" && managerOpen && row.status !== "DRAFT" && !ownerIsManager;
   const canEditLocked = role === "CEO" && locked;
 
   const url = `/api/kpi/results/${row.id}`;
   const actual = row.actualFinal ?? row.actualSelf ?? row.actualSystem;
+  // Cùng luật với máy chủ: chốt khác số đang có (tự khai, không có thì số hệ
+  // thống) là điều chỉnh — bắt buộc lý do
+  const baseline = row.actualSelf ?? row.actualSystem;
   const needsReason =
-    row.actualSelf !== null &&
+    baseline !== null &&
     finalValue !== null &&
-    round2(finalValue) !== round2(row.actualSelf);
+    round2(finalValue) !== round2(baseline);
 
   const selfValue = selfDraft?.value ?? null;
   const selfInvalid = selfDraft?.invalid ?? false;
@@ -774,6 +826,8 @@ function RowEditor({
           : "Ban Giám đốc duyệt KPI của bạn"
         : isMine && role === "MANAGER"
           ? "Ban Giám đốc duyệt KPI của bạn"
+          : role === "MANAGER" && ownerIsManager
+            ? "Ban Giám đốc duyệt KPI của trưởng phòng"
           : role === "MANAGER" && !managerOpen
             ? "Hết hạn duyệt (ngày 4)"
             : row.status === "DRAFT"
@@ -965,8 +1019,22 @@ function RowEditor({
 
   const notes = (
     <>
+      {row.reconMismatch && row.status !== "FINALIZED" && (
+        <div className="mt-1 flex items-center gap-1 text-xs font-medium text-red-700">
+          <AlertTriangle size={12} strokeWidth={2.5} aria-hidden /> Các nguồn số liệu
+          đang lệch — chưa chốt được, chờ quyết ở{" "}
+          {role === "CEO" || role === "MANAGER" ? (
+            <a href="/reconciliation" className="underline">
+              trang Đối soát
+            </a>
+          ) : (
+            "trang Đối soát"
+          )}
+        </div>
+      )}
+      {/* Chỉ là ghi chú: số tự khai lệch số hệ thống — đối soát mới quyết */}
       {row.hasMismatch && (
-        <div className="mt-1 flex items-center gap-1 text-xs font-medium text-red-600">
+        <div className="mt-1 flex items-center gap-1 text-xs font-medium text-amber-700">
           <AlertTriangle size={12} strokeWidth={2.5} aria-hidden /> Lệch{" "}
           {fmtPct(row.mismatchPercent, { signed: true })} so với số hệ thống
         </div>
@@ -982,7 +1050,7 @@ function RowEditor({
 
   if (layout === "card") {
     return (
-      <li className={`px-4 py-3.5 ${row.hasMismatch ? "bg-red-50/50" : ""}`}>
+      <li className={`px-4 py-3.5 ${row.reconMismatch && !locked ? "bg-red-50/50" : ""}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="font-medium text-ink-800">{row.kpiName}</div>
@@ -1026,7 +1094,7 @@ function RowEditor({
   }
 
   return (
-    <tr className={row.hasMismatch ? "bg-red-50/40" : undefined}>
+    <tr className={row.reconMismatch && !locked ? "bg-red-50/40" : undefined}>
       <td>
         <div className="font-medium text-ink-800">{row.kpiName}</div>
         <div className="text-xs text-ink-500">
@@ -1070,7 +1138,7 @@ function RowEditor({
       {showActions && (
         <td
           className={`sticky right-0 z-10 shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.12)] ${
-            row.hasMismatch ? "bg-red-50" : "bg-white"
+            row.reconMismatch && !locked ? "bg-red-50" : "bg-white"
           }`}
         >
           {actions}
@@ -1094,12 +1162,16 @@ function ImportButton({ periodId }: { periodId: string }) {
     fd.append("file", file);
     fd.append("periodId", periodId);
     try {
-      const res = await fetch("/api/kpi/import", { method: "POST", body: fd });
-      const data = await res.json();
+      const res = await fetchJson<{
+        rowsOk: number;
+        rowsTotal: number;
+        rowsError?: number;
+      }>("/api/kpi/import", { method: "POST", body: fd });
       if (!res.ok) {
-        setResult(`Lỗi: ${data.message}`);
+        setResult(`Lỗi: ${res.message}`);
         return;
       }
+      const data = res.data;
       setResult(
         `Đã nạp ${fmtNum(data.rowsOk)}/${fmtNum(data.rowsTotal)} dòng.${
           data.rowsError ? ` ${fmtNum(data.rowsError)} dòng lỗi.` : ""

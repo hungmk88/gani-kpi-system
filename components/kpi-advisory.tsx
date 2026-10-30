@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Search } from "lucide-react";
 import { fmtPct } from "@/lib/format";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 
 type Advisory = {
   suggestedScore: number;
@@ -44,17 +45,16 @@ export default function KpiAdvisoryPanel({
     setBusy(true);
     setError(null);
     try {
-      const r = await fetch("/api/ai/kpi-advisory", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kpiResultId }),
-      });
-      const d = await r.json();
+      const r = await fetchJson<Advisory>(
+        "/api/ai/kpi-advisory",
+        jsonInit("POST", { kpiResultId })
+      );
       if (!r.ok) {
-        setError(d.message || "Không lấy được phân tích.");
+        // AI chậm → 504 dạng HTML; fetchJson đổi thành câu dễ hiểu
+        setError(r.message || "Không lấy được phân tích.");
         return;
       }
-      setData(d);
+      setData(r.data);
     } catch {
       setError("Mất kết nối tới máy chủ.");
     } finally {

@@ -5,15 +5,8 @@ import { BusinessError } from "@/lib/rbac";
 import { notify } from "@/lib/telegram";
 import { PUBLIC_USER_SELECT } from "@/lib/services/task-service";
 import { ERR } from "@/lib/constants";
-
-/** Chỉ nhận link http(s) — chặn javascript:, data:... bị nhúng vào trang. */
-function isHttpUrl(v: string) {
-  try {
-    return ["https:", "http:"].includes(new URL(v).protocol);
-  } catch {
-    return false;
-  }
-}
+import { canCommentTask, taskAccessFor } from "@/lib/task-access";
+import { isHttpUrl } from "@/lib/http-url";
 
 const schema = z.object({
   body: z.string().min(1, "Chưa nhập nội dung.").max(2000),
@@ -41,19 +34,17 @@ export async function POST(
       throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy công việc.", 404);
     }
 
-    const sameDept = task.departmentId === user.departmentId;
-    const isOwner = task.assigneeId === user.id || task.creatorId === user.id;
-    if (user.role === "EMPLOYEE" && !isOwner) {
+    // Cùng luật với GET/PATCH /api/tasks/[id] (lib/task-access.ts): người tham
+    // gia việc + người gửi Yêu cầu liên phòng ban được trao đổi. Quản trị hệ
+    // thống chỉ XEM — trước đây route này cho ADMIN bình luận vào mọi việc
+    // trong khi chính trang chi tiết qua API lại chặn ADMIN.
+    const access = await taskAccessFor(task, user);
+    if (!canCommentTask(access)) {
       throw new BusinessError(
         ERR.FORBIDDEN,
-        "Bạn không tham gia công việc này.",
-        403
-      );
-    }
-    if (user.role === "MANAGER" && !sameDept && !isOwner) {
-      throw new BusinessError(
-        ERR.FORBIDDEN,
-        "Công việc không thuộc phòng ban của bạn.",
+        access === "VIEW"
+          ? "Quản trị hệ thống chỉ xem được công việc, không tham gia trao đổi."
+          : "Bạn không tham gia công việc này.",
         403
       );
     }
@@ -69,9 +60,14 @@ export async function POST(
       include: { user: { select: PUBLIC_USER_SELECT } },
     });
 
-    // Báo cho những người liên quan còn lại
+    // Báo cho những người liên quan còn lại — kể cả người gửi Yêu cầu liên
+    // phòng ban (họ theo dõi việc mình nhờ). Gửi hỏng không làm hỏng bình luận.
+    const requesters = await prisma.crossDeptRequest.findMany({
+      where: { createdTaskId: id },
+      select: { requesterId: true },
+    });
     const targets = new Set(
-      [task.assigneeId, task.creatorId].filter(
+      [task.assigneeId, task.creatorId, ...requesters.map((r) => r.requesterId)].filter(
         (x): x is string => !!x && x !== user.id
       )
     );
@@ -82,7 +78,7 @@ export async function POST(
         body: `${user.fullName}: ${input.body.slice(0, 180)}`,
         level: "INFO",
         linkUrl: `/tasks/${id}`,
-      });
+      }).catch((e) => console.error("[COMMENT] Gửi thông báo lỗi:", e));
     }
 
     return ok({ comment }, 201);
