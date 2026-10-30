@@ -13,6 +13,11 @@
  * thống đồng bộ mà không phải sửa từng trang.
  */
 @theme {
+  /* GANI Vivid: bóng mềm cho thẻ — đủ tách thẻ khỏi nền, không nổi khối */
+  --shadow-soft: 0 1px 2px rgb(23 24 20 / 0.04), 0 6px 20px -8px rgb(23 24 20 / 0.10);
+  --shadow-lift: 0 2px 4px rgb(23 24 20 / 0.05), 0 12px 28px -10px rgb(23 24 20 / 0.16);
+  --radius-card: 14px;
+
   --font-sans: var(--font-be-vietnam), "Segoe UI", system-ui, -apple-system, sans-serif;
 
   /* Xanh lam của chữ "GANI" trong logo — #1E89CA. Nút chính dùng 600 (5,7:1). */
@@ -189,10 +194,38 @@ body {
 }
 
 @layer components {
-  /* Thẻ: một bo góc (10px), chỉ viền — không bóng khi đứng yên. Thẻ bấm được
-     tự thêm hover:shadow-md ở chỗ dùng. */
+  @media print {
+    .card,
+    .table-wrap {
+      box-shadow: none !important;
+    }
+  }
+  /* Thẻ (GANI Vivid): bo 14px, viền mảnh + bóng mềm. Nền luôn trắng — bảng,
+     form, số liệu đọc trên nền trắng. Thẻ bấm được tự thêm hover:shadow-lift. */
   .card {
-    @apply rounded-[10px] border border-ink-200 bg-white;
+    @apply rounded-[14px] border border-ink-200/80 bg-white shadow-soft;
+  }
+
+  /* KHỐI GRADIENT DUY NHẤT CỦA TRANG ("hôm nay"). Màu theo logo: xanh lam đậm
+     → xanh lam GANI, ánh lá xanh ở góc. Chữ trắng luôn đặt trên phần đậm
+     (≥4,5:1); ánh lá chỉ là quầng sáng, không nằm dưới chữ nhỏ. Mỗi trang chỉ
+     MỘT khối này — nhiều khối gradient là mất điểm nhấn. */
+  .vivid {
+    @apply relative overflow-hidden rounded-[18px] text-white shadow-lift;
+    background:
+      radial-gradient(120% 140% at 100% 100%, rgb(59 165 72 / 0.55) 0%, rgb(59 165 72 / 0) 45%),
+      radial-gradient(80% 90% at 85% 0%, rgb(30 137 202 / 0.55) 0%, rgb(30 137 202 / 0) 60%),
+      linear-gradient(120deg, #0b2f47 0%, #114b70 38%, #176ca3 100%);
+  }
+  /* Ô kính trong khối gradient: tách nhóm thông tin, không thêm màu */
+  .glass {
+    @apply rounded-[14px] border border-white/15 bg-white/10 backdrop-blur-sm;
+  }
+  /* Thanh đầu trang: cùng họ màu với khối "hôm nay", phẳng hơn */
+  .vivid-bar {
+    background:
+      radial-gradient(60% 260% at 100% 50%, rgb(59 165 72 / 0.45) 0%, rgb(59 165 72 / 0) 60%),
+      linear-gradient(90deg, #0b2f47 0%, #114b70 35%, #176ca3 100%);
   }
 
   /* Tailwind v4 không cho @apply một class do mình tự định nghĩa,
@@ -243,7 +276,7 @@ body {
   }
 
   .table-wrap {
-    @apply overflow-x-auto rounded-[10px] border border-ink-200 bg-white;
+    @apply overflow-x-auto rounded-[14px] border border-ink-200/80 bg-white shadow-soft;
   }
   .tbl {
     @apply w-full min-w-[720px] border-collapse text-sm;

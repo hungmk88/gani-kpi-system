@@ -242,7 +242,7 @@ export default function DashboardClient() {
         {toolbar}
         <div
           role="alert"
-          className="flex items-center gap-1.5 rounded-[10px] border border-red-200 bg-red-50 p-4 text-sm text-red-800"
+          className="flex items-center gap-1.5 rounded-[14px] border border-red-200 bg-red-50 p-4 text-sm text-red-800"
         >
           <CircleX size={16} strokeWidth={2} className="shrink-0" /> {error}
         </div>

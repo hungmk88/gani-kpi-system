@@ -297,7 +297,7 @@ export default function TaskBoard({
                       </span>
                     </div>
                     <div
-                      className={`space-y-2 rounded-[10px] p-2 ${
+                      className={`space-y-2 rounded-[14px] p-2 ${
                         alarm ? "bg-red-50" : "bg-ink-100/50"
                       }`}
                     >
@@ -403,7 +403,7 @@ function TaskCard({ t }: { t: TaskRow }) {
   return (
     <Link
       href={`/tasks/${t.id}`}
-      className={`block rounded-[10px] border bg-white p-3 transition hover:shadow-md ${
+      className={`block rounded-[14px] border bg-white p-3 transition hover:shadow-lift ${
         late ? "border-red-200 border-l-[3px] border-l-red-500" : "border-ink-200"
       }`}
     >

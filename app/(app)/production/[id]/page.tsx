@@ -188,7 +188,7 @@ export default async function ShiftDetailPage({
       {returnInfo && (
         <div
           role="status"
-          className="mb-6 flex flex-wrap items-start gap-3 rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+          className="mb-6 flex flex-wrap items-start gap-3 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
         >
           <Undo2 size={18} strokeWidth={2} className="mt-0.5 shrink-0" aria-hidden />
           <div className="min-w-0 flex-1">

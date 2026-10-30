@@ -15,6 +15,7 @@ import { CONFIDENCE_LABEL } from "@/lib/analytics/constants";
 import { getDeadlinePeriod } from "@/lib/services/period-service";
 import { LOCK_JUMP_MS, urgencyTone } from "@/lib/urgency";
 import { fmtDeadline, fmtNum } from "@/lib/format";
+import { buildKpiPayslip } from "@/lib/services/dashboard-extras";
 import { WAITING_QC_WHERE } from "@/lib/services/production-service";
 
 /**
@@ -381,7 +382,9 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
     period
       ? prisma.kpiResult.findMany({
           where: { periodId: period.id, employeeId: user.id },
-          include: { kpiDefinition: true },
+          include: {
+            kpiDefinition: { include: { department: { select: { code: true } } } },
+          },
           orderBy: { weightPercent: "desc" },
         })
       : Promise.resolve([]),
@@ -711,20 +714,9 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
     });
   }
 
-  // 6. Đơn xin nghỉ chờ duyệt
-  if (pendingLeaveRequests > 0) {
-    queue.push({
-      id: "leave",
-      title: `${pendingLeaveRequests} đơn nghỉ phép đang chờ bạn duyệt`,
-      detail: "Người xin nghỉ vẫn đang chờ bạn quyết định.",
-      href: "/leave-requests",
-      cta: "Duyệt",
-      tone: "brand",
-      when: "mới gửi",
-      hardLock: false,
-      dueAt: null,
-    });
-  }
+  // 6. Đơn nghỉ phép / yêu cầu liên phòng chờ duyệt: nằm ở khối "Duyệt
+  //    nhanh" (dashboard-extras) — duyệt ngay tại chỗ, không lặp ở đây.
+  void pendingLeaveRequests;
 
   /**
    * Luật xếp: khoá cứng trước, rồi tới hạn gần trước.
@@ -895,6 +887,7 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
           classTone: myClass.tone,
           draftCount: myDraft,
           selfReviewDeadline: new Date(period.selfReviewDeadline),
+          payslip: buildKpiPayslip(myResultsAll),
           weakest: myWeakest
             ? {
                 name: myWeakest.kpiDefinition?.name ?? "—",

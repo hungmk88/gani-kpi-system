@@ -218,7 +218,7 @@ export default function IntegrationsTab({
 
       {/* ---------------- khoá vừa tạo ---------------- */}
       {freshSecret && (
-        <div role="alert" className="rounded-[10px] border border-amber-300 bg-amber-50 p-5">
+        <div role="alert" className="rounded-[14px] border border-amber-300 bg-amber-50 p-5">
           <div className="mb-2 flex items-start justify-between gap-3">
             <h3 className="flex items-center gap-1.5 font-semibold text-amber-900">
               <KeyRound size={15} strokeWidth={2} /> Khoá bí mật của nguồn &quot;{freshSecret.code}&quot;

@@ -1,4 +1,4 @@
-import { formatVnDate, formatVnTime } from "@/lib/vn-time";
+import { formatVnTime } from "@/lib/vn-time";
 import Link from "next/link";
 import { Check } from "lucide-react";
 import AnomalyActions from "@/components/anomaly-actions";
@@ -11,7 +11,6 @@ import { fmtNum } from "@/lib/format";
 import type {
   ActionItem,
   DashboardAlert,
-  GateState,
   LeanTask,
   ProductionSummary,
 } from "@/lib/services/dashboard-service";
@@ -22,83 +21,6 @@ import type {
  * Tách khỏi components/ui.tsx vì chúng chỉ dùng ở một trang. Những thứ dùng
  * chung nhiều nơi (StatCard, Badge, ProgressBar…) vẫn nằm bên kia.
  */
-
-/* ==================================================================== */
-/* 1. THANH NHỊP KỲ KPI                                                  */
-/* ==================================================================== */
-
-/**
- * Ba cửa của kỳ vẽ thành một dải ngang, đánh dấu hôm nay đứng ở đâu.
- *
- * Đây là thông tin duy nhất trên bảng điều hành có hậu quả không đảo ngược
- * được: việc trễ hạn thì làm bù được, còn cửa KPI đóng lúc 23:59 là khoá thật.
- * Nên nó nằm trên cùng, trước cả số liệu.
- */
-export function PeriodGateTrack({ gate }: { gate: GateState }) {
-  const { openLeg, remaining, isMyTurn } = gate;
-
-  return (
-    <div className="card mb-4 p-4">
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold text-ink-800">
-          Nhịp kỳ KPI {gate.periodName}
-        </h2>
-
-        {openLeg ? (
-          <p className="text-xs text-ink-500">
-            {isMyTurn ? "Cửa của bạn" : `Cửa "${openLeg.label}"`} đóng lúc{" "}
-            <b className={isMyTurn ? "text-amber-800" : "text-ink-700"}>
-              23:59 {formatDayMonth(openLeg.deadline)}
-            </b>
-            {remaining && remaining !== "đã đóng" && (
-              <>
-                {" "}
-                — còn <b className={isMyTurn ? "text-amber-800" : "text-ink-700"}>{remaining}</b>
-              </>
-            )}
-          </p>
-        ) : (
-          <p className="text-xs text-ink-500">
-            {gate.periodStatus === "FINALIZED"
-              ? "Kỳ đã chốt xong."
-              : "Cả ba cửa đã đóng — kỳ đang chờ Ban Giám đốc xử lý."}
-          </p>
-        )}
-      </div>
-
-      <ol className="grid grid-cols-3 gap-1.5">
-        {gate.legs.map((leg) => {
-          const bar =
-            leg.state === "now"
-              ? "bg-amber-500"
-              : leg.state === "done"
-                ? "bg-ink-300"
-                : "bg-ink-200";
-          const text =
-            leg.state === "now"
-              ? "font-semibold text-amber-800"
-              : leg.state === "done"
-                ? "text-ink-500"
-                : "text-ink-400";
-
-          return (
-            <li key={leg.key}>
-              <div className={`h-1 rounded-full ${bar}`} />
-              <div className={`mt-1.5 text-xs leading-tight ${text}`}>
-                {leg.label}
-                <span className="block text-xs font-normal tabular-nums">
-                  {leg.state === "done" ? "đã đóng " : ""}
-                  {formatDayMonth(leg.deadline)}
-                  {leg.mine && leg.state === "now" && " · bạn ở đây"}
-                </span>
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-    </div>
-  );
-}
 
 /* ==================================================================== */
 /* NHỊP XƯỞNG SẢN XUẤT — CHỈ ADMIN VÀ BAN GIÁM ĐỐC                       */
@@ -121,7 +43,7 @@ export function ProductionStatRow({ summary }: { summary: ProductionSummary }) {
     return (
       <Link
         href="/production"
-        className="card flex items-center justify-between gap-3 px-4 py-3 text-sm text-ink-600 transition hover:shadow-md"
+        className="card flex items-center justify-between gap-3 px-4 py-3 text-sm text-ink-600 transition hover:shadow-lift"
       >
         <span>
           <span className="font-medium text-ink-800">Xưởng hôm nay:</span>{" "}
@@ -161,15 +83,6 @@ export function ProductionStatRow({ summary }: { summary: ProductionSummary }) {
   );
 }
 
-/**
- * "02/10" — ghép tay chứ không dùng toLocaleDateString.
- *
- * Locale vi-VN khi chỉ xin ngày và tháng thì trả về "02-10" với dấu gạch, lệch
- * hẳn với dd/mm/yyyy dùng ở mọi chỗ khác trong hệ thống.
- */
-function formatDayMonth(d: Date) {
-  return formatVnDate(d).slice(0, 5);
-}
 
 /* ==================================================================== */
 /* 2. HÀNG CHỜ HÀNH ĐỘNG                                                 */
@@ -211,7 +124,7 @@ export function ActionQueue({ items }: { items: ActionItem[] }) {
         <Link
           key={it.id}
           href={it.href}
-          className={`flex items-center gap-3 rounded-[10px] border border-l-[3px] border-ink-200 bg-white p-3 transition hover:shadow-md ${edge[it.tone]}`}
+          className={`flex items-center gap-3 rounded-[14px] border border-l-[3px] border-ink-200 bg-white p-3 transition hover:shadow-lift ${edge[it.tone]}`}
         >
           <span
             className={`w-16 shrink-0 text-xs leading-tight font-semibold ${when[it.tone]}`}
@@ -435,7 +348,7 @@ export function AlertCard({ alert }: { alert: DashboardAlert }) {
   }[alert.tone];
 
   return (
-    <Link href={alert.href} className="card block p-3 transition hover:shadow-md">
+    <Link href={alert.href} className="card block p-3 transition hover:shadow-lift">
       <div className={`text-xs font-semibold ${titleColor}`}>{alert.title}</div>
       <p className="mt-1 text-xs leading-snug text-ink-600">{alert.detail}</p>
       <p className="mt-1.5 text-xs text-ink-500">{alert.footnote}</p>

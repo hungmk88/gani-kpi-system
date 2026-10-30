@@ -167,7 +167,13 @@ async function main() {
   check(
     "Thanh nhịp nằm TRÊN hàng chờ — cửa đóng là thứ cấp bách nhất",
     (() => {
-      const [gate, queue] = order(dMgr.html, "Nhịp kỳ KPI", "Chờ bạn xử lý");
+      // So vị trí trong HTML đã vẽ (thuộc tính / thẻ), không phải trong dữ liệu
+      // RSC nhúng kèm — ở đó thành phần client chỉ là props, thứ tự khác.
+      const [gate, queue] = order(
+        dMgr.html,
+        'aria-label="Nhịp kỳ KPI',
+        ">Chờ bạn xử lý"
+      );
       return gate >= 0 && queue >= 0 && gate < queue;
     })()
   );

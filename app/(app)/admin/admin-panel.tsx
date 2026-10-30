@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Check, Circle, CircleCheck, CircleX, Plus, Search } from "lucide-react";
-import { Badge, formatDateTime } from "@/components/ui";
+import { Avatar, Badge, formatDateTime } from "@/components/ui";
 import StickyActions from "@/components/sticky-actions";
 import VnNumberInput from "@/components/vn-number-input";
 import { toast } from "@/components/toast";
@@ -767,7 +767,10 @@ function UsersTab({
             )}
             {shown.map((u) => (
               <tr key={u.id}>
-                <td className="min-w-52">
+                <td className="min-w-60">
+                  <div className="flex items-start gap-3">
+                  <Avatar name={u.fullName} size={34} className="mt-0.5" />
+                  <div className="min-w-0">
                   <div className="font-medium whitespace-nowrap text-ink-800">
                     {u.fullName}
                     {u.employeeCode && (
@@ -791,6 +794,8 @@ function UsersTab({
                   {u.jobTitle && (
                     <div className="text-xs text-ink-500">{u.jobTitle}</div>
                   )}
+                  </div>
+                  </div>
                 </td>
                 <td data-label="Vai trò">
                   {editing === u.id && u.role !== "CEO" ? (

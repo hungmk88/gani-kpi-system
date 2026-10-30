@@ -1,26 +1,29 @@
-import { formatVnTime, VN_TZ } from "@/lib/vn-time";
-import { fmtDate, fmtNum, fmtPct } from "@/lib/format";
+import { VN_TZ, vnParts } from "@/lib/vn-time";
+import { fmtNum } from "@/lib/format";
 import Link from "next/link";
 import { PartyPopper, Target } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { buildDashboard } from "@/lib/services/dashboard-service";
 import {
+  buildMyTeam,
+  buildQuickApprovals,
+} from "@/lib/services/dashboard-extras";
+import {
   ActionQueue,
   AlertCard,
   LeanTaskList,
-  PeriodGateTrack,
   ProductionStatRow,
   SelfAnomalyPanel,
   TaskGroupHeading,
 } from "@/components/dashboard";
 import {
-  EmptyState,
-  PageHeader,
-  ProgressBar,
-  ScoreBadge,
-  ShowingCount,
-  StatCard,
-} from "@/components/ui";
+  KpiPayslipCard,
+  MyTeamPanel,
+  QuickApprovals,
+  TodayHero,
+  type HeroAction,
+} from "@/components/vivid";
+import { EmptyState, ShowingCount, StatCard } from "@/components/ui";
 import { ROLE_LABEL } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +34,7 @@ export const dynamic = "force-dynamic";
  * Nguyên tắc xếp trang: **nêu thứ bất thường, không kể lại mọi thứ bình thường.**
  * Thứ tự từ trên xuống là thứ tự cấp bách, không phải thứ tự phòng ban:
  *
+ *   0. Khối "hôm nay" (GANI Vivid) — lời chào, ngoại lệ, hạn kỳ KPI, nút chính
  *   1. Cửa nào sắp đóng      — hậu quả không đảo ngược được
  *   2. Việc gì đang chờ mình — có thể bấm vào làm ngay
  *   3. Số liệu, có so sánh   — nói xu hướng, không chỉ nói con số
@@ -42,7 +46,11 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const user = (await requireSession())!;
   const now = new Date();
-  const d = await buildDashboard(user, now);
+  const [d, approvals, team] = await Promise.all([
+    buildDashboard(user, now),
+    buildQuickApprovals(user),
+    buildMyTeam(user, now),
+  ]);
 
   const kpiScoreLabel =
     user.role === "EMPLOYEE"
@@ -53,21 +61,26 @@ export default async function DashboardPage() {
 
   return (
     <>
-      <PageHeader
-        title={`Chào ${user.fullName.split(" ").slice(-1)[0]}`}
-        subtitle={`${ROLE_LABEL[user.role]}${
-          user.departmentName ? ` · Phòng ${user.departmentName}` : ""
-        } · ${now.toLocaleDateString("vi-VN", {
+      <TodayHero
+        nowMs={now.getTime()}
+        greeting={`Chào ${partOfDay(now)}, ${user.fullName.split(" ").slice(-1)[0]}`}
+        dateLine={`${now.toLocaleDateString("vi-VN", {
           timeZone: VN_TZ,
           weekday: "long",
           day: "2-digit",
           month: "2-digit",
           year: "numeric",
-        })} · ${formatVnTime(now)}`}
+        })} · ${ROLE_LABEL[user.role]}${
+          user.departmentName && user.departmentName !== ROLE_LABEL[user.role]
+            ? ` · Phòng ${user.departmentName}`
+            : ""
+        }`}
+        gate={d.gate}
+        overdue={d.overdueCount}
+        dueToday={d.todayCount}
+        approvals={approvals.total}
+        actions={heroActions(user.role, (d.myKpi?.draftCount ?? 0) > 0)}
       />
-
-      {/* 1 ── Nhịp kỳ KPI. Quản trị không có KPI nên không thấy khối này. */}
-      {d.gate && <PeriodGateTrack gate={d.gate} />}
 
       {/* 2 ── Việc đang chờ chính người này */}
       <h2 className="section-title mb-2">
@@ -184,6 +197,9 @@ export default async function DashboardPage() {
 
         {/* Cột phải */}
         <div className="space-y-6">
+          {/* Duyệt nhanh: đơn nghỉ / yêu cầu liên phòng đang chờ chính người này */}
+          <QuickApprovals items={approvals.items} total={approvals.total} />
+
           {/* 5 ── Ba bộ máy phân tích */}
           {d.alerts.length > 0 && (
             <div>
@@ -208,100 +224,37 @@ export default async function DashboardPage() {
             </div>
           )}
 
-          {/* 6 ── KPI của tôi: chỉ nêu chỉ tiêu đang kéo tụt */}
-          {d.myKpi && user.role !== "ADMIN" && (
-            <div>
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="section-title">
-                  KPI của tôi · {d.myKpi.periodName}
+          {/* 6 ── Phiếu điểm KPI: phần cộng, phần trừ, tổng — như phiếu lương */}
+          {d.myKpi &&
+            user.role !== "ADMIN" &&
+            (d.myKpi.hasResults ? (
+              <KpiPayslipCard
+                periodName={d.myKpi.periodName}
+                payslip={d.myKpi.payslip}
+                scoreState={d.myKpi.scoreState}
+                draftCount={d.myKpi.draftCount}
+                selfReviewDeadline={d.myKpi.selfReviewDeadline}
+              />
+            ) : user.role === "CEO" ? null : (
+              <div className="card p-4 text-sm text-ink-500">
+                <h2 className="section-title mb-1">
+                  Phiếu điểm KPI · {d.myKpi.periodName}
                 </h2>
-                <Link
-                  href="/kpi"
-                  className="text-xs font-medium text-brand-600 hover:underline"
-                >
-                  Mở →
-                </Link>
+                Bạn chưa được gán chỉ tiêu nào cho kỳ này.
               </div>
+            ))}
 
-              <div className="card p-4">
-                {!d.myKpi.hasResults ? (
-                  <p className="text-sm text-ink-500">
-                    Bạn chưa được gán chỉ tiêu nào cho kỳ này.
-                  </p>
-                ) : (
-                  <>
-                    <div className="mb-3 flex items-center justify-between gap-2">
-                      <ScoreBadge
-                        score={d.myKpi.totalScore}
-                        state={d.myKpi.scoreState}
-                      />
-                      <span className="text-xs text-ink-500">
-                        {d.myKpi.draftCount > 0
-                          ? `còn ${d.myKpi.draftCount} chưa khai`
-                          : "đã tự khai xong"}
-                      </span>
-                    </div>
-
-                    {d.myKpi.draftCount > 0 && (
-                      <div className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                        Còn <b>{d.myKpi.draftCount}</b> chỉ tiêu chưa tự khai.
-                        Hạn chót{" "}
-                        23:59 ngày {fmtDate(d.myKpi.selfReviewDeadline)}.
-                      </div>
-                    )}
-
-                    {/* Nêu đúng chỉ tiêu đang kéo tụt, phần còn lại gộp vào
-                        điểm tổng — muốn xem đủ thì bấm sang trang KPI. */}
-                    {d.myKpi.weakest && (
-                      <>
-                        <div className="flex items-center justify-between gap-2 text-xs">
-                          <span className="truncate text-ink-700">
-                            {d.myKpi.weakest.name}
-                          </span>
-                          <span
-                            className={`shrink-0 font-medium ${
-                              d.myKpi.weakest.achievement >= 100
-                                ? "text-leaf-700"
-                                : d.myKpi.weakest.achievement >= 80
-                                  ? "text-amber-800"
-                                  : "text-red-700"
-                            }`}
-                          >
-                            {fmtPct(d.myKpi.weakest.achievement)}
-                          </span>
-                        </div>
-                        <div className="mt-1">
-                          <ProgressBar
-                            value={(d.myKpi.weakest.achievement / 150) * 100}
-                            tone={
-                              d.myKpi.weakest.achievement >= 100
-                                ? "green"
-                                : d.myKpi.weakest.achievement >= 80
-                                  ? "amber"
-                                  : "red"
-                            }
-                          />
-                        </div>
-                        <p className="mt-1.5 text-xs text-ink-500">
-                          {d.myKpi.weakest.achievement >= 100
-                            ? "Chỉ tiêu thấp nhất của bạn — vẫn đang đạt."
-                            : "Chỉ tiêu thấp nhất — đang kéo điểm tổng xuống."}
-                        </p>
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          )}
+          {/* 7 ── Phòng của tôi: ai có mặt, ai nghỉ, ai đang kẹt */}
+          {team && team.members.length > 1 && <MyTeamPanel team={team} />}
 
           {user.role === "CEO" && (
             <Link
               href="/ceo"
-              className="card block p-4 transition hover:shadow-md"
+              className="card block p-4 transition hover:shadow-lift"
             >
               <div className="flex items-center gap-2 font-medium text-brand-700">
-                <Target size={16} strokeWidth={2} /> Mở bảng điều hành Ban Giám đốc
+                <Target size={16} strokeWidth={2} /> Mở bảng điều hành Ban Giám
+                đốc
               </div>
               <p className="mt-1 text-xs text-ink-500">
                 Toàn bộ cảnh báo ngoại lệ, lệch số liệu và KPI chờ duyệt gom về
@@ -324,4 +277,50 @@ export default async function DashboardPage() {
       <SelfAnomalyPanel items={d.myOpenAnomalies} />
     </>
   );
+}
+
+/** "buổi sáng / trưa / chiều / tối" theo giờ Việt Nam */
+function partOfDay(now: Date) {
+  const h = vnParts(now).hour;
+  if (h < 11) return "buổi sáng";
+  if (h < 14) return "buổi trưa";
+  if (h < 18) return "buổi chiều";
+  return "buổi tối";
+}
+
+/** Tối đa 3 nút trong khối "hôm nay" — nút đầu là việc chính của vai trò */
+function heroActions(role: string, hasDraftKpi: boolean): HeroAction[] {
+  switch (role) {
+    case "EMPLOYEE":
+      return hasDraftKpi
+        ? [
+            { href: "/kpi", label: "Tự khai KPI" },
+            { href: "/tasks", label: "Việc của tôi" },
+            { href: "/leave-requests", label: "Xin nghỉ phép" },
+          ]
+        : [
+            { href: "/tasks", label: "Việc của tôi" },
+            { href: "/kpi", label: "KPI của tôi" },
+            { href: "/leave-requests", label: "Xin nghỉ phép" },
+          ];
+    case "MANAGER":
+      return [
+        { href: "/kpi", label: "Duyệt KPI phòng" },
+        { href: "/tasks/new", label: "Giao việc mới" },
+        { href: "/tasks", label: "Bảng công việc" },
+      ];
+    case "CEO":
+      return [
+        { href: "/ceo", label: "Bảng điều hành" },
+        { href: "/kpi", label: "Duyệt & chốt KPI" },
+        { href: "/analytics", label: "Phân tích" },
+      ];
+    case "ADMIN":
+      return [
+        { href: "/admin", label: "Quản trị tài khoản" },
+        { href: "/audit", label: "Nhật ký hệ thống" },
+      ];
+    default:
+      return [];
+  }
 }

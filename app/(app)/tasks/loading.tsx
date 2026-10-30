@@ -18,12 +18,12 @@ export default function Loading() {
         {Array.from({ length: 5 }, (_, c) => (
           <div
             key={c}
-            className={`space-y-2 rounded-[10px] bg-ink-100/50 p-2 ${
+            className={`space-y-2 rounded-[14px] bg-ink-100/50 p-2 ${
               c > 2 ? "hidden lg:block" : c > 0 ? "hidden sm:block" : ""
             }`}
           >
             {Array.from({ length: 3 }, (_, i) => (
-              <div key={i} className="rounded-[10px] border border-ink-200 bg-white p-3">
+              <div key={i} className="rounded-[14px] border border-ink-200 bg-white p-3">
                 <Skeleton className="mb-2 h-4 w-full" />
                 <Skeleton className="mb-3 h-3 w-24" />
                 <Skeleton className="h-1.5 w-full" />

@@ -15,7 +15,7 @@ import {
   Search,
   Send,
 } from "lucide-react";
-import { Badge, KpiStatusBadge, ScoreBadge } from "@/components/ui";
+import { Avatar, Badge, KpiStatusBadge, ScoreBadge } from "@/components/ui";
 import { fmtNum, fmtPct, fmtScore } from "@/lib/format";
 import { round2, scoreStateOf, type GatekeeperRule } from "@/lib/kpi";
 import KpiAdvisoryPanel from "@/components/kpi-advisory";
@@ -516,6 +516,8 @@ export default function KpiWorkTable({
                 aria-expanded={isOpen}
                 className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-ink-50/60"
               >
+                <div className="flex min-w-0 items-center gap-3">
+                <Avatar name={g.employeeName} size={36} />
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-ink-900">
@@ -541,6 +543,7 @@ export default function KpiWorkTable({
                     {g.jobTitle || "—"} · {g.departmentName} · {g.rows.length}{" "}
                     chỉ tiêu · trọng số {fmtNum(g.summary.totalWeight)}%
                   </div>
+                </div>
                 </div>
                 {/* Đếm trạng thái: trung tính; phần việc của người đang xem đã
                     có nhãn "chờ bạn" màu thương hiệu ở bên trái. */}

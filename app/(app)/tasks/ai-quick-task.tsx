@@ -176,7 +176,7 @@ export default function AiQuickTask({
   if (!open) {
     return (
       <button
-        className="card mb-4 flex w-full items-center gap-3 p-3.5 text-left transition hover:shadow-md"
+        className="card mb-4 flex w-full items-center gap-3 p-3.5 text-left transition hover:shadow-lift"
         onClick={() => setOpen(true)}
       >
         <Wand2 size={20} strokeWidth={2} className="shrink-0 text-brand-600" />
