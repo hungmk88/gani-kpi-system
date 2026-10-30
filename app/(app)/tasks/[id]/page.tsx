@@ -299,7 +299,10 @@ export default async function TaskDetailPage({
 
         {/* ------------- Cột thao tác ------------- */}
         <div className="space-y-6">
+          {/* key theo trạng thái + tiến độ: đổi sang Hoàn thành thì máy chủ đặt
+              tiến độ 100% — dựng lại ô tiến độ, không giữ số cũ trong state */}
           <TaskActions
+            key={`${task.status}-${task.progress}`}
             task={{
               id: task.id,
               status: task.status,

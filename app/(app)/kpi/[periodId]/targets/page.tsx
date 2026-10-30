@@ -142,7 +142,11 @@ export default async function KpiTargetsPage({
         </div>
       )}
 
+      {/* key theo phòng ban: đổi tab chỉ đổi ?dept= trên CÙNG route, Next giữ
+          nguyên state của client component — thiếu key là bảng vẫn mang giá
+          trị của phòng trước (ô trống, lưu là ghi đè chỉ tiêu đã có). */}
       <TargetEditor
+        key={dept.id}
         periodId={periodId}
         readOnlyReason={readOnlyReason}
         currentUserId={user.id}

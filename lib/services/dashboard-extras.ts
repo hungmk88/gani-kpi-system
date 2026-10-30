@@ -110,7 +110,7 @@ export async function buildQuickApprovals(user: SessionUser) {
       who: r.requester.fullName,
       title: r.title,
       detail: `${r.requester.department?.name ?? "—"} · hạn ${dayMonth(r.dueDate)}`,
-      urgent: r.priority === "URGENT",
+      urgent: r.priority === "CRITICAL" || r.priority === "HIGH",
       href: "/requests",
     })),
   ];

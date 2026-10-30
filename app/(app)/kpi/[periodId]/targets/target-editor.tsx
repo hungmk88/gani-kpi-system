@@ -155,9 +155,27 @@ export default function TargetEditor({
       e.preventDefault();
       e.returnValue = "";
     };
+    // beforeunload không bắt được chuyển trang trong ứng dụng (thanh bên, thanh
+    // dưới, tab phòng ban…) — chặn cú bấm vào liên kết ở pha capture.
+    const onClickCapture = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+      const url = new URL(a.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname && url.search === window.location.search) return;
+      if (!window.confirm(`Còn ${dirtyCount} chỉ tiêu đã sửa nhưng chưa lưu. Rời trang và bỏ các thay đổi này?`)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
     window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [hasDirty]);
+    document.addEventListener("click", onClickCapture, true);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("click", onClickCapture, true);
+    };
+  }, [hasDirty, dirtyCount]);
 
   if (groups.length === 0) {
     return (

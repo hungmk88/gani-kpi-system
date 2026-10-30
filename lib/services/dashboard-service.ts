@@ -313,11 +313,17 @@ export async function buildDashboard(user: SessionUser, now = new Date()) {
    * trong tuần sẽ không được đếm vào mốc cũ vì không có cột thời điểm huỷ;
    * sai lệch nhỏ và luôn lệch về một phía, chấp nhận được cho một mũi tên xu hướng.
    */
+  // AND chứ không trải phẳng: phạm vi của nhân viên đã là { OR: [...] } —
+  // thêm khoá OR thứ hai sẽ ĐÈ mất phạm vi, mốc so sánh thành cả công ty.
   const existedAWeekAgo = {
-    ...scope,
-    createdAt: { lte: weekAgo },
-    status: { not: "CANCELLED" },
-    OR: [{ completedAt: null }, { completedAt: { gt: weekAgo } }],
+    AND: [
+      scope,
+      {
+        createdAt: { lte: weekAgo },
+        status: { not: "CANCELLED" },
+        OR: [{ completedAt: null }, { completedAt: { gt: weekAgo } }],
+      },
+    ],
   };
 
   // Kỳ của nhịp 2-4-5 đang chạy: ngày 1-5 là kỳ tháng trước (đang khai/duyệt/

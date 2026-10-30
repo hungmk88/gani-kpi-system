@@ -236,6 +236,10 @@ export async function PATCH(
       // mới sau khi đổi mật khẩu.
       data.telegramChatId = null;
     }
+    // Khoá tài khoản = người đó không còn quyền nhận gì — cắt Telegram luôn
+    // (mở lại thì chính chủ tự nối lại bằng mã mới).
+    const deactivating = body.isActive === false && target.isActive;
+    if (deactivating) data.telegramChatId = null;
 
     const updated = await prisma.$transaction(async (tx) => {
       const u = await tx.user.update({ where: { id }, data }).catch((e) => {
@@ -244,8 +248,8 @@ export async function PATCH(
         }
         throw e;
       });
-      if (body.newPassword) {
-        // Mã nối Telegram đang chờ (lấy trước lúc đặt lại) cũng huỷ luôn.
+      if (body.newPassword || deactivating) {
+        // Mã nối Telegram đang chờ (lấy trước lúc đặt lại / khoá) cũng huỷ luôn.
         await tx.telegramLink.deleteMany({ where: { userId: id, usedAt: null } });
       }
       return u;

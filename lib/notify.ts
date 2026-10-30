@@ -34,7 +34,9 @@ export type NotifyInput = {
 export async function notify(input: NotifyInput) {
   const level = input.level ?? "INFO";
   const user = await prisma.user.findUnique({ where: { id: input.userId } });
-  if (!user) return;
+  // Người đã nghỉ / bị khoá: không gửi gì nữa — kể cả Telegram / Zalo vẫn còn
+  // nối. Trước đây bình luận trên việc cũ, nhắc hạn KPI… vẫn bay tới họ.
+  if (!user || !user.isActive) return;
 
   const channels: string[] = ["IN_APP"];
   const errors: string[] = [];
