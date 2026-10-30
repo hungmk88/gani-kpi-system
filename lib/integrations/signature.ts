@@ -96,8 +96,31 @@ export function generateSecret(): string {
   return crypto.randomBytes(32).toString("hex");
 }
 
-/** Sinh mã 6 chữ số để người dùng tự nối tài khoản Telegram. */
+/**
+ * Bảng chữ của mã nối Telegram: chữ HOA + số, bỏ ký tự dễ nhầm (0/O, 1/I/L).
+ * 31 ký tự × 8 vị trí ≈ 8,5×10¹¹ tổ hợp — dò mù không còn khả thi, nên không
+ * cần trần chung toàn hệ thống (trần đó trước đây cho phép một người dùng vài
+ * tài khoản Telegram nhập sai cho đủ 100 lần là khoá nối của cả công ty).
+ */
+export const LINK_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+export const LINK_CODE_LENGTH = 8;
+
+/** Sinh mã nối Telegram 8 ký tự (an toàn mật mã, không lệch phân bố). */
 export function generateLinkCode(): string {
-  // randomInt an toàn về mặt mật mã, khác Math.random
-  return String(crypto.randomInt(100000, 1000000));
+  let out = "";
+  for (let i = 0; i < LINK_CODE_LENGTH; i++) {
+    out += LINK_CODE_ALPHABET[crypto.randomInt(LINK_CODE_ALPHABET.length)];
+  }
+  return out;
+}
+
+/**
+ * Chuẩn hoá mã người dùng gõ: bỏ khoảng trắng/gạch, đổi chữ thường thành hoa.
+ * Trả null nếu không đúng định dạng (sai độ dài hoặc có ký tự ngoài bảng).
+ */
+export function normalizeLinkCode(raw: string | null | undefined): string | null {
+  const v = String(raw ?? "").replace(/[\s-]/g, "").toUpperCase();
+  if (v.length !== LINK_CODE_LENGTH) return null;
+  for (const ch of v) if (!LINK_CODE_ALPHABET.includes(ch)) return null;
+  return v;
 }

@@ -5,9 +5,11 @@ import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
   CEO_QC_OVERRIDE_PREFIX,
+  canOpenAuditPortal,
   canSeeMoney,
   extractCeoQcOverrideReason,
   canResubmitReturnedShift,
+  redactAuditForViewer,
   withProductionRole,
 } from "@/lib/services/production-service";
 import { computeShiftMetrics } from "@/lib/production/kpi-engine";
@@ -23,6 +25,7 @@ import {
 import {
   SHIFT_STAGE_LABEL,
   extractShiftReturn,
+  isShiftReturned,
   shiftStage,
 } from "@/lib/production/shift-flow";
 import {
@@ -71,8 +74,12 @@ export default async function ShiftDetailPage({
       user.productionRole ?? ""
     );
   const isParticipant = log.participants.some((p) => p.userId === user.id);
+  // Người khai đã nghỉ thì tổ trưởng / quản đốc nhận thay việc sửa ca trả về
+  const canResubmit = canResubmitReturnedShift(user, log.createdBy);
+  // ...nên phải mở được ca đó dù không làm, không khai
+  const takingOver = canResubmit && isShiftReturned(log);
 
-  if (!isWide && !isParticipant && log.createdById !== user.id) {
+  if (!isWide && !isParticipant && log.createdById !== user.id && !takingOver) {
     return (
       <div className="card p-8 text-center">
         <div className="mb-2 flex justify-center text-ink-400">
@@ -107,12 +114,14 @@ export default async function ShiftDetailPage({
   // KCS trả ca về sản xuất sửa: ca vẫn DRAFT, người trả + lý do nằm trong qcNote
   const stage = shiftStage(log);
   const returnInfo = stage === "RETURNED" ? extractShiftReturn(log.qcNote) : null;
-  // Người khai đã nghỉ thì tổ trưởng / quản đốc nhận thay việc sửa ca trả về
-  const canResubmit = canResubmitReturnedShift(user, log.createdBy);
 
   const visibleScores = log.kpiResults.filter(
     (r) => isWide || r.userId === user.id
   );
+  // Cùng một luật với API chi tiết ca: người làm ca thấy CÓ cảnh báo (vì sao
+  // thưởng khoá) + giải trình của chính mình; nội dung cho cấp quản lý xưởng.
+  const audits = log.audits.map((a) => redactAuditForViewer(a, user));
+  const showAuditPortalLink = canOpenAuditPortal(user);
 
   return (
     <>
@@ -371,13 +380,13 @@ export default async function ShiftDetailPage({
           )}
 
           {/* ---------------- Cảnh báo ---------------- */}
-          {log.audits.length > 0 && (
+          {audits.length > 0 && (
             <div>
               <h2 className="section-title mb-3">
-                Cảnh báo chạy chỉ tiêu ({log.audits.length})
+                Cảnh báo chạy chỉ tiêu ({audits.length})
               </h2>
               <div className="space-y-2">
-                {log.audits.map((a) => (
+                {audits.map((a) => (
                   <div
                     key={a.id}
                     className={`card p-4 ${
@@ -397,7 +406,15 @@ export default async function ShiftDetailPage({
                         {AUDIT_STATUS_LABEL[a.status] ?? a.status}
                       </Badge>
                     </div>
-                    <p className="text-sm text-ink-700">{a.auditNote}</p>
+                    {a.detailed ? (
+                      <p className="text-sm text-ink-700">{a.auditNote}</p>
+                    ) : (
+                      <p className="text-sm text-ink-600">
+                        Hệ thống phát hiện dấu hiệu bất thường ở ca này — thưởng
+                        ca tạm khoá cho tới khi quản đốc giải trình và Ban Giám
+                        đốc xem xét.
+                      </p>
+                    )}
                     {a.explanationText && (
                       <div className="mt-2 rounded-md bg-white px-3 py-2 text-sm">
                         <div className="text-xs font-semibold text-ink-500">
@@ -417,12 +434,16 @@ export default async function ShiftDetailPage({
                   </div>
                 ))}
               </div>
-              <Link
-                href="/production/audits"
-                className="mt-2 inline-block text-sm text-brand-700 hover:underline"
-              >
-                Mở cổng xử lý cảnh báo →
-              </Link>
+              {/* Chỉ hiện cho người trang cảnh báo cho vào — không thì bấm
+                  vào lại bị đẩy về trang xưởng */}
+              {showAuditPortalLink && (
+                <Link
+                  href="/production/audits"
+                  className="mt-2 inline-block text-sm text-brand-700 hover:underline"
+                >
+                  Mở cổng xử lý cảnh báo →
+                </Link>
+              )}
             </div>
           )}
 
@@ -518,6 +539,7 @@ export default async function ShiftDetailPage({
                 qcOfficerId: log.qcOfficerId,
                 qcOverridden,
                 returned: returnInfo,
+                canResubmit,
                 // Chỉ người được xem tiền mới nhận đơn giá (để ước tổn thất
                 // trong hộp xác nhận khoá); người khác nhận null.
                 unitPriceVnd: showMoney ? log.sku.unitPriceVnd : null,

@@ -3,6 +3,7 @@ import {
   CEO_QC_OVERRIDE_PREFIX,
   canResubmitReturnedShift,
   RETURNED_WHERE,
+  STUCK_CREATOR_WHERE,
   WAITING_QC_WHERE,
   awaitingMyStepWhere,
   extractCeoQcOverrideReason,
@@ -100,26 +101,73 @@ describe("lệch cân đối khối lượng lúc KCS phân loại", () => {
 });
 
 describe("ca đang chờ vai trò của tôi", () => {
-  it("KCS: ca chờ KCS, trừ ca chính mình khai", () => {
+  it("KCS: ca chờ KCS, trừ ca chính mình khai và ca mình có tên làm", () => {
     expect(
       awaitingMyStepWhere({ id: "qc1", role: "STAFF", productionRole: "QC_OFFICER" })
-    ).toEqual({ ...WAITING_QC_WHERE, createdById: { not: "qc1" } });
+    ).toEqual({
+      ...WAITING_QC_WHERE,
+      createdById: { not: "qc1" },
+      participants: { none: { userId: "qc1" } },
+    });
   });
 
-  it("tổ trưởng: ca của chính mình bị trả về", () => {
+  it("tổ trưởng: ca của chính mình bị trả về + ca trả về mà người khai đã kẹt", () => {
     expect(
       awaitingMyStepWhere({ id: "t1", role: "STAFF", productionRole: "TEAM_LEADER" })
-    ).toEqual({ ...RETURNED_WHERE, createdById: "t1" });
+    ).toEqual({
+      OR: [
+        { ...RETURNED_WHERE, createdById: "t1" },
+        { ...RETURNED_WHERE, createdBy: STUCK_CREATOR_WHERE },
+      ],
+    });
   });
 
-  it("Ban Giám đốc: ca chờ khoá số + ca mình khai bị trả về", () => {
+  it("công nhân: chỉ ca của chính mình bị trả về (không nhận thay người khác)", () => {
+    expect(
+      awaitingMyStepWhere({ id: "w1", role: "STAFF", productionRole: "WORKER" })
+    ).toEqual({ ...RETURNED_WHERE, createdById: "w1" });
+  });
+
+  it("Ban Giám đốc: ca chờ khoá số + ca mình khai bị trả về + ca trả về bị kẹt", () => {
     expect(awaitingMyStepWhere({ id: "c1", role: "CEO", productionRole: null })).toEqual({
-      OR: [{ status: "QC_APPROVED" }, { ...RETURNED_WHERE, createdById: "c1" }],
+      OR: [
+        { status: "QC_APPROVED" },
+        { ...RETURNED_WHERE, createdById: "c1" },
+        { ...RETURNED_WHERE, createdBy: STUCK_CREATOR_WHERE },
+      ],
     });
   });
 
   it("không có vai trò trong luồng: không có ca nào chờ", () => {
     expect(awaitingMyStepWhere({ id: "a1", role: "ADMIN", productionRole: null })).toBeNull();
+  });
+
+  it("người khai 'kẹt' trong hàng chờ = đúng điều kiện của canResubmitReturnedShift", () => {
+    // Đánh giá điều kiện Prisma bằng tay trên vài người khai mẫu, so với hàm thuần
+    type U = { isActive: boolean; role: string; productionRole: string | null };
+    const matchesStuck = (u: U) =>
+      !u.isActive ||
+      (u.role !== "CEO" &&
+        (u.productionRole === null ||
+          !["WORKER", "TEAM_LEADER", "SUPERVISOR", "PRODUCTION_DIRECTOR"].includes(
+            u.productionRole
+          )));
+    const leader = { id: "L", role: "EMPLOYEE", productionRole: "TEAM_LEADER" };
+    const samples: U[] = [
+      { isActive: true, role: "EMPLOYEE", productionRole: "WORKER" },
+      { isActive: false, role: "EMPLOYEE", productionRole: "WORKER" },
+      { isActive: true, role: "EMPLOYEE", productionRole: null },
+      { isActive: true, role: "EMPLOYEE", productionRole: "QC_OFFICER" },
+      { isActive: true, role: "CEO", productionRole: null },
+      { isActive: false, role: "CEO", productionRole: null },
+    ];
+    for (const u of samples) {
+      expect(matchesStuck(u)).toBe(
+        canResubmitReturnedShift(leader, { id: "creator", ...u })
+      );
+    }
+    // Hình dạng điều kiện: NULL phải được ghi riêng (notIn của SQL bỏ qua NULL)
+    expect(JSON.stringify(STUCK_CREATOR_WHERE)).toContain('"productionRole":null');
   });
 });
 

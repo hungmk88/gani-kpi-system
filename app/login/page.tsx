@@ -4,7 +4,9 @@ import { Check } from "lucide-react";
 import { getSession, loadActiveUser } from "@/lib/auth";
 import LoginForm from "./login-form";
 
-export const metadata = { title: "Đăng nhập — GANI FOODY KPI" };
+// Chỉ tên trang — layout gốc đã có template "%s · GANI KPI", ghi thêm hậu tố
+// ở đây thì tab hiện "… — GANI FOODY KPI · GANI KPI".
+export const metadata = { title: "Đăng nhập" };
 
 export default async function LoginPage() {
   // Đối chiếu DB: token còn chữ ký nhưng đã bị thu hồi thì vẫn cho đăng nhập

@@ -10,12 +10,36 @@ export const runtime = "nodejs";
 
 const KINDS = ["IPOS", "CRM", "ERP", "SHEETS", "OTHER"] as const;
 
+/**
+ * Mã nguồn hệ thống dùng NỘI BỘ trong cột source/sourceCode của
+ * kpi_actual_feeds và trong đối soát (xem reconciliation-service: SELF,
+ * MANUAL_OVERRIDE; production/bridge: "production"; nạp Excel: EXCEL...).
+ * Đăng ký một nguồn webhook trùng mã này là giả được số "của xưởng" hay "nhân
+ * viên tự khai", mượn luôn độ ưu tiên của chúng khi đối soát.
+ */
+const RESERVED_SOURCE_CODES = new Set([
+  "production",
+  "self",
+  "manual",
+  "manual_override",
+  "manual-override",
+  "excel",
+  "system",
+  "ipos_api",
+  "crm_api",
+  "erp_api",
+  "external_api",
+]);
+
 const createSchema = z.object({
   code: z
     .string()
     .min(2)
     .max(50)
-    .regex(/^[a-z0-9_-]+$/, "Mã chỉ gồm chữ thường, số, gạch ngang hoặc gạch dưới."),
+    .regex(/^[a-z0-9_-]+$/, "Mã chỉ gồm chữ thường, số, gạch ngang hoặc gạch dưới.")
+    .refine((c) => !RESERVED_SOURCE_CODES.has(c.toLowerCase()), {
+      message: "Mã này hệ thống dùng nội bộ (sản xuất, tự khai, nhập tay, Excel...) — chọn mã khác.",
+    }),
   name: z.string().min(2).max(255),
   kind: z.enum(KINDS),
   priority: z.number().int().min(1).max(100).default(10),

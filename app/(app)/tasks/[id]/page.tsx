@@ -16,6 +16,8 @@ import { predecessorsDueAfter } from "@/lib/gantt";
 import TaskActions from "./task-actions";
 import StatusActions from "./status-actions";
 import DependenciesPanel from "./dependencies-panel";
+import ReadonlyComment from "./readonly-comment";
+import { canEditTask, canViewTask, taskAccessFor } from "@/lib/task-access";
 
 export const dynamic = "force-dynamic";
 
@@ -42,15 +44,12 @@ export default async function TaskDetailPage({
   });
   if (!task) notFound();
 
-  const isOwner = task.assigneeId === user.id || task.creatorId === user.id;
-  const sameDept = task.departmentId === user.departmentId;
-  const allowed =
-    user.role === "CEO" ||
-    user.role === "ADMIN" ||
-    (user.role === "MANAGER" && (sameDept || isOwner)) ||
-    (user.role === "EMPLOYEE" && isOwner);
+  // Cùng luật với API (lib/task-access.ts): người gửi Yêu cầu liên phòng ban
+  // sinh ra việc này được xem + trao đổi; Quản trị hệ thống chỉ xem.
+  const access = await taskAccessFor(task, user);
+  const editable = canEditTask(access);
 
-  if (!allowed) {
+  if (!canViewTask(access)) {
     return (
       <div className="card p-8 text-center">
         <div className="mb-2 flex justify-center text-ink-400">
@@ -73,13 +72,15 @@ export default async function TaskDetailPage({
   // Người "quản" việc — đúng luật của PATCH /api/tasks/[id]: BGĐ, người giao
   // việc, hoặc trưởng phòng của chính phòng sở hữu việc.
   const canManage =
-    user.role === "CEO" ||
-    task.creatorId === user.id ||
-    (user.role === "MANAGER" && task.departmentId === user.departmentId);
+    editable &&
+    (user.role === "CEO" ||
+      task.creatorId === user.id ||
+      (user.role === "MANAGER" && task.departmentId === user.departmentId));
 
   const canEditDeps =
-    user.role === "CEO" ||
-    (user.role === "MANAGER" && task.departmentId === user.departmentId);
+    editable &&
+    (user.role === "CEO" ||
+      (user.role === "MANAGER" && task.departmentId === user.departmentId));
 
   // Việc có thể nối làm điều kiện: cùng phòng ban, chưa nối, và không phải chính nó
   const alreadyLinked = new Set([
@@ -121,7 +122,7 @@ export default async function TaskDetailPage({
 
   // Nhân sự có thể chuyển giao (chỉ trong phòng ban, đúng luật cấm vượt cấp)
   const assignableUsers =
-    user.role === "EMPLOYEE"
+    user.role === "EMPLOYEE" || !canManage
       ? []
       : await prisma.user.findMany({
           where: {
@@ -184,13 +185,22 @@ export default async function TaskDetailPage({
                 một hàng trong thẻ, điện thoại dính đáy màn hình. Khoảng đệm
                 của StickyActions (phần tử aria-hidden) bị ẩn ở đây vì nó sẽ
                 nằm giữa trang — đệm thật đặt ở cuối trang bên dưới. */}
-            <div className="sm:-mt-4 sm:mb-4 [&>div[aria-hidden]]:hidden">
-              <StatusActions
-                taskId={task.id}
-                status={task.status}
-                canManage={canManage}
-              />
-            </div>
+            {editable ? (
+              <div className="sm:-mt-4 sm:mb-4 [&>div[aria-hidden]]:hidden">
+                <StatusActions
+                  taskId={task.id}
+                  status={task.status}
+                  canManage={canManage}
+                />
+              </div>
+            ) : (
+              <div className="mb-4 flex items-center gap-1.5 text-xs text-ink-500">
+                <Lock size={12} strokeWidth={2} aria-hidden />
+                {access === "COMMENT"
+                  ? "Chế độ chỉ xem: bạn là người gửi yêu cầu liên phòng ban của việc này."
+                  : "Chế độ chỉ xem: Quản trị hệ thống không tham gia xử lý công việc."}
+              </div>
+            )}
 
             {predsDueAfter.length > 0 && (
               <div className="mb-4 flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -301,6 +311,9 @@ export default async function TaskDetailPage({
         <div className="space-y-6">
           {/* key theo trạng thái + tiến độ: đổi sang Hoàn thành thì máy chủ đặt
               tiến độ 100% — dựng lại ô tiến độ, không giữ số cũ trong state */}
+          {access === "COMMENT" && <ReadonlyComment taskId={task.id} />}
+
+          {editable && (
           <TaskActions
             key={`${task.status}-${task.progress}`}
             task={{
@@ -317,6 +330,7 @@ export default async function TaskDetailPage({
               name: `${u.fullName} — ${u.department?.name ?? "Không phòng ban"}`,
             }))}
           />
+          )}
 
           <DependenciesPanel
             taskId={task.id}

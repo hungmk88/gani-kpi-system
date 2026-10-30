@@ -82,6 +82,13 @@ async function fire(label) {
         `    · ⚠ ${data.staleMismatch.stale} ô KPI treo vì lệch số quá lâu, chưa ai quyết.`
       );
     }
+    // Server tự dừng gọn khi gần hết trần thời gian của hàm (xem
+    // app/api/cron/run/route.ts) — các bước bị bỏ sẽ làm ở lượt sau.
+    if (Array.isArray(data.skippedOutOfTime) && data.skippedOutOfTime.length > 0) {
+      console.log(
+        `    · ⏱ Hết thời gian, lượt sau làm tiếp: ${data.skippedOutOfTime.join(", ")}`
+      );
+    }
   } catch (e) {
     console.error(`[${stamp}] ${label} — không gọi được server:`, e.message);
   }

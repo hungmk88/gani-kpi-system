@@ -3,7 +3,11 @@ import { BusinessError } from "../rbac";
 import { ERR } from "../constants";
 import { writeAudit } from "../audit";
 import { notify } from "../notify";
-import { sendCeoAlert, sendExecutiveBriefingTelegram } from "../telegram";
+import {
+  sendCeoAlert,
+  sendExecutiveBriefingTelegram,
+  type BriefingForTelegram,
+} from "../telegram";
 import {
   computeCapacity,
   computeHealth,
@@ -23,7 +27,12 @@ import {
 import { buildExecutiveBriefing, type BriefingFacts } from "../ai/executive-advisor";
 import { round2, summarizeResults } from "../kpi";
 import { vnDateKey, vnStartOfDay } from "../vn-time";
-import { getDeadlinePeriod, getPeriodWithCeoDeadlineToday } from "./period-service";
+import {
+  getClosingPeriod,
+  getDeadlinePeriod,
+  getPeriodWithCeoDeadlineToday,
+} from "./period-service";
+import { logOutOfTime, runBounded, TimeBudget } from "../time-budget";
 import type { SessionUser } from "../auth";
 
 /**
@@ -394,12 +403,17 @@ export async function getCapacityReports(departmentId?: string | null) {
  * So người với chính mình chứ không so người này với người kia — mỗi người một
  * đầu việc, so chéo là bất công.
  */
-export async function runAnomalyScan(periodId?: string, now = new Date()) {
+export async function runAnomalyScan(
+  periodId?: string,
+  now = new Date(),
+  budget: TimeBudget = TimeBudget.unlimited()
+) {
+  // Không chỉ định kỳ thì quét kỳ ĐANG CHỐT (số tự khai vừa nộp) — cùng cách
+  // chọn kỳ với phần còn lại của hệ thống. Trước đây lấy "kỳ mới nhất", mà kỳ
+  // tháng sau thường đã mở sẵn từ đầu tháng và chưa có dòng nào được khai.
   const period = periodId
     ? await prisma.kpiPeriod.findUnique({ where: { id: periodId } })
-    : await prisma.kpiPeriod.findFirst({
-        orderBy: [{ year: "desc" }, { month: "desc" }],
-      });
+    : await getClosingPeriod(now);
 
   if (!period) {
     return { checked: 0, flagged: 0, skippedThinHistory: 0, periodName: null };
@@ -462,9 +476,19 @@ export async function runAnomalyScan(periodId?: string, now = new Date()) {
   let checked = 0;
   let flagged = 0;
   let thin = 0;
+  // Cảnh báo OPEN cần gỡ (không còn bất thường / không đủ nền lịch sử): gom
+  // lại xoá MỘT lệnh, và chỉ cho dòng thật sự đang có cảnh báo OPEN — trước
+  // đây mỗi dòng KPI bình thường đều bắn một lệnh deleteMany.
+  const toClear: string[] = [];
+  const criticalAlerts: Parameters<typeof sendCeoAlert>[0][] = [];
+  let timedOut = false;
 
   for (const r of rows) {
     if (!r.kpiDefinitionId || !r.kpiDefinition) continue;
+    if (budget.expired(2000)) {
+      timedOut = true;
+      break;
+    }
 
     // Lịch sử của CHÍNH người này với CHÍNH chỉ tiêu này, các kỳ trước
     const values = (
@@ -474,23 +498,14 @@ export async function runAnomalyScan(periodId?: string, now = new Date()) {
     const res = detectAnomaly(r.actualSelf!, values);
     checked++;
 
-    if (res.confidence === "NONE") {
-      thin++;
-      // Dọn cảnh báo cũ nếu trước đó từng gắn mà giờ không đủ nền nữa
-      await prisma.kpiAnomaly.deleteMany({
-        where: { kpiResultId: r.id, status: "OPEN" },
-      });
-      continue;
-    }
-
-    if (!res.isAnomaly) {
-      await prisma.kpiAnomaly.deleteMany({
-        where: { kpiResultId: r.id, status: "OPEN" },
-      });
-      continue;
-    }
-
     const existing = existingByResult.get(r.id) ?? null;
+
+    if (res.confidence === "NONE" || !res.isAnomaly) {
+      if (res.confidence === "NONE") thin++;
+      // Dọn cảnh báo cũ nếu trước đó từng gắn mà giờ không đủ nền / hết bất thường
+      if (existing?.status === "OPEN") toClear.push(r.id);
+      continue;
+    }
 
     // Đã có người giải trình hoặc BGĐ đã xử lý thì không ghi đè
     if (existing && existing.status !== "OPEN") continue;
@@ -532,7 +547,7 @@ export async function runAnomalyScan(periodId?: string, now = new Date()) {
     if (!existing) {
       flagged++;
       if (res.severity === "CRITICAL") {
-        await sendCeoAlert({
+        criticalAlerts.push({
           title: `Khai báo KPI bất thường: ${r.employee.fullName}`,
           details: `${r.kpiDefinition.name} — ${res.reason}`,
           actionPath: "/analytics",
@@ -540,6 +555,21 @@ export async function runAnomalyScan(periodId?: string, now = new Date()) {
       }
     }
   }
+  if (timedOut) logOutOfTime("runAnomalyScan");
+
+  if (toClear.length) {
+    await prisma.kpiAnomaly.deleteMany({
+      where: { kpiResultId: { in: toClear }, status: "OPEN" },
+    });
+  }
+
+  // Gửi SAU khi đã ghi hết cảnh báo: gửi hỏng không làm mất dòng cảnh báo,
+  // và dòng đã có thì lượt sau không báo lại (existing).
+  await runBounded(criticalAlerts, 5, (a) => sendCeoAlert(a), {
+    budget,
+    reserveMs: 3000,
+    label: "cảnh báo KPI bất thường",
+  });
 
   return {
     checked,
@@ -851,6 +881,9 @@ export async function gatherExecutiveBriefingFacts(now = new Date(), periodId?: 
  */
 const AUTO_BRIEFING_MARKER = "[Tự động ngày 5]";
 
+/** Dấu "đã gửi báo cáo giao ban qua Telegram" trong audit_logs. */
+const BRIEFING_SENT_ACTION = "EXEC_BRIEFING_TELEGRAM_SENT";
+
 /** Cùng một ngày theo lịch Việt Nam (không phụ thuộc múi giờ server). */
 function isSameCalendarDay(a: Date, b: Date) {
   return vnDateKey(a) === vnDateKey(b);
@@ -865,7 +898,10 @@ function isSameCalendarDay(a: Date, b: Date) {
  * bằng luật cứng khi chưa cấu hình khoá, báo cáo vẫn đủ số liệu thật, chỉ kém
  * trôi chảy hơn.
  */
-export async function runMonthlyExecutiveBriefingIfDue(now = new Date()) {
+export async function runMonthlyExecutiveBriefingIfDue(
+  now = new Date(),
+  budget: TimeBudget = TimeBudget.unlimited()
+) {
   // Ngày 5 tháng M+1 là ngày chốt của kỳ tháng M — tức kỳ ĐANG CHỐT, không
   // phải kỳ mới nhất (kỳ tháng M+1 thường đã mở sẵn, hạn của nó ở tháng sau).
   // Tìm thẳng kỳ có hạn chốt rơi đúng hôm nay: kỳ đã được chốt sớm hơn hạn vẫn
@@ -879,54 +915,109 @@ export async function runMonthlyExecutiveBriefingIfDue(now = new Date()) {
     return { sent: false, reason: "NOT_DUE_TODAY" };
   }
 
-  // Chỉ tính bản TỰ ĐỘNG đã gửi hôm nay. Ban Giám đốc bấm tay xem báo cáo lúc
-  // sáng (POST /api/ai/executive-briefing) không được làm mất bản giao ban gửi
-  // Telegram của ngày chốt.
+  // "Đã gửi" = đã có dấu GỬI THÀNH CÔNG hôm nay (audit log, ghi sau khi
+  // Telegram nhận tin) — không phải "đã soạn". Trước đây dòng ai_suggestions
+  // được ghi trước khi gửi và bị coi là "đã gửi": Telegram lỗi một lần là mất
+  // luôn buổi giao ban của tháng.
   const since = vnStartOfDay(now);
-  const already = await prisma.aiSuggestion.findFirst({
+  const sentToday = await prisma.auditLog.findFirst({
+    where: { action: BRIEFING_SENT_ACTION, createdAt: { gte: since } },
+    select: { id: true },
+  });
+  if (sentToday) return { sent: false, reason: "ALREADY_SENT_TODAY" };
+
+  // Bản đã soạn hôm nay mà chưa gửi được thì dùng lại — không gọi Gemini lần
+  // nữa. Chỉ tính bản TỰ ĐỘNG: Ban Giám đốc bấm tay xem báo cáo lúc sáng (POST
+  // /api/ai/executive-briefing) không thay cho bản giao ban gửi Telegram.
+  const drafted = await prisma.aiSuggestion.findFirst({
     where: {
       kind: "EXEC_BRIEFING",
       createdAt: { gte: since },
       inputText: { startsWith: AUTO_BRIEFING_MARKER },
     },
-    select: { id: true },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, payload: true },
   });
-  if (already) return { sent: false, reason: "ALREADY_SENT_TODAY" };
+  let briefing: BriefingForTelegram | null = drafted ? parseStoredBriefing(drafted.payload) : null;
+  let briefingId = drafted?.id ?? null;
 
-  const ceo = await prisma.user.findFirst({
-    where: { role: "CEO", isActive: true },
-    orderBy: { createdAt: "asc" },
-  });
-  if (!ceo) return { sent: false, reason: "NO_CEO" };
+  // Soạn mới cần Gemini (tới ~20s) + Telegram; gửi lại bản cũ chỉ cần Telegram.
+  if (budget.expired(briefing ? 5000 : 25000)) {
+    logOutOfTime("runMonthlyExecutiveBriefingIfDue");
+    return { sent: false, reason: "OUT_OF_TIME" };
+  }
 
-  // Số liệu của ĐÚNG kỳ đang chốt hôm nay, khớp tiêu đề tin gửi Ban Giám đốc
-  const { health, facts } = await gatherExecutiveBriefingFacts(now, period.id);
-  const briefing = await buildExecutiveBriefing(health, facts);
+  if (!briefing) {
+    const ceo = await prisma.user.findFirst({
+      where: { role: "CEO", isActive: true },
+      orderBy: { createdAt: "asc" },
+    });
+    if (!ceo) return { sent: false, reason: "NO_CEO" };
 
-  const saved = await prisma.aiSuggestion.create({
-    data: {
-      kind: "EXEC_BRIEFING",
-      engine: briefing.engine,
-      modelName: briefing.modelName ?? "unknown",
-      entityName: "system",
-      entityId: "executive-briefing",
-      inputText: `${AUTO_BRIEFING_MARKER} Sức khoẻ ${briefing.healthScore}/100 · ${facts.openTasks} việc mở · ${facts.periodName ?? "chưa có kỳ KPI"}`,
-      payload: JSON.stringify(briefing),
-      confidencePercent: facts.predictionAccuracy ?? 0,
-      rationale: briefing.executiveSummary,
-      missingInfo: facts.predictionSampleSize === 0 ? briefing.dataBasis : null,
-      status: "PENDING",
-      latencyMs: briefing.latencyMs,
-      requestedById: ceo.id,
-    },
-  });
+    // Số liệu của ĐÚNG kỳ đang chốt hôm nay, khớp tiêu đề tin gửi Ban Giám đốc
+    const { health, facts } = await gatherExecutiveBriefingFacts(now, period.id);
+    const built = await buildExecutiveBriefing(health, facts);
 
-  const telegram = await sendExecutiveBriefingTelegram(
-    briefing,
-    period.name
-  );
+    const saved = await prisma.aiSuggestion.create({
+      data: {
+        kind: "EXEC_BRIEFING",
+        engine: built.engine,
+        modelName: built.modelName ?? "unknown",
+        entityName: "system",
+        entityId: "executive-briefing",
+        inputText: `${AUTO_BRIEFING_MARKER} Sức khoẻ ${built.healthScore}/100 · ${facts.openTasks} việc mở · ${facts.periodName ?? "chưa có kỳ KPI"}`,
+        payload: JSON.stringify(built),
+        confidencePercent: facts.predictionAccuracy ?? 0,
+        rationale: built.executiveSummary,
+        missingInfo: facts.predictionSampleSize === 0 ? built.dataBasis : null,
+        status: "PENDING",
+        latencyMs: built.latencyMs,
+        requestedById: ceo.id,
+      },
+    });
+    briefing = built;
+    briefingId = saved.id;
+  }
 
-  return { sent: true, briefingId: saved.id, telegram };
+  const telegram = await sendExecutiveBriefingTelegram(briefing, period.name);
+  if (telegram.sent) {
+    await prisma.auditLog.create({
+      data: {
+        action: BRIEFING_SENT_ACTION,
+        entityName: "ai_suggestions",
+        entityId: briefingId ?? "executive-briefing",
+        afterPayload: JSON.stringify({ periodName: period.name, reusedDraft: !!drafted }),
+      },
+    });
+  }
+
+  return { sent: telegram.sent, briefingId, telegram, reusedDraft: !!drafted };
+}
+
+/** Đọc lại bản giao ban đã lưu; hỏng/thiếu trường thì null (soạn lại). */
+function parseStoredBriefing(payload: string): BriefingForTelegram | null {
+  try {
+    const b = JSON.parse(payload) as Partial<BriefingForTelegram>;
+    if (
+      typeof b.healthScore !== "number" ||
+      typeof b.healthLabel !== "string" ||
+      typeof b.executiveSummary !== "string" ||
+      !Array.isArray(b.keyRisks) ||
+      !Array.isArray(b.recommendations)
+    ) {
+      return null;
+    }
+    return {
+      healthScore: b.healthScore,
+      healthLabel: b.healthLabel,
+      executiveSummary: b.executiveSummary,
+      keyRisks: b.keyRisks,
+      recommendations: b.recommendations,
+      engine: b.engine === "GEMINI" ? "GEMINI" : "RULE_BASED",
+    };
+  } catch {
+    return null;
+  }
 }
 
 /* ==================================================================== */
@@ -937,21 +1028,43 @@ export async function runMonthlyExecutiveBriefingIfDue(now = new Date()) {
  * Gọi từ bộ máy chạy nền: chấm dự báo cũ, dự báo mới, quét bất thường, và —
  * đúng ngày Ban Giám đốc chốt kỳ — tự soạn báo cáo giao ban gửi Telegram.
  */
-export async function runAnalyticsCycle(now = new Date()) {
-  const outcome = await scorePastPredictions(now);
-  const scan = await runPredictiveScan({ persist: true, now });
-  const anomaly = await runAnomalyScan(undefined, now);
-  const briefing = await runMonthlyExecutiveBriefingIfDue(now);
+export async function runAnalyticsCycle(
+  now = new Date(),
+  budget: TimeBudget = TimeBudget.unlimited()
+) {
+  // Mỗi phần tự hỏi ngân sách trước khi chạy; thiếu giờ thì bỏ phần còn lại,
+  // lượt cron sau (2 tiếng nữa) làm tiếp — mọi phần đều chạy lại an toàn.
+  const skipped: string[] = [];
+  const step = async <T>(name: string, reserveMs: number, fn: () => Promise<T>) => {
+    if (budget.expired(reserveMs)) {
+      skipped.push(name);
+      return null;
+    }
+    return fn();
+  };
+
+  const outcome = await step("scorePastPredictions", 5000, () => scorePastPredictions(now));
+  const scan = await step("predictiveScan", 5000, () =>
+    runPredictiveScan({ persist: true, now })
+  );
+  const anomaly = await step("anomalyScan", 5000, () =>
+    runAnomalyScan(undefined, now, budget)
+  );
+  const briefing = await step("executiveBriefing", 5000, () =>
+    runMonthlyExecutiveBriefingIfDue(now, budget)
+  );
+  if (skipped.length) logOutOfTime(`runAnalyticsCycle (bỏ: ${skipped.join(", ")})`);
 
   return {
-    predictionsScored: outcome.scored,
-    tasksPredicted: scan.scanned,
-    highRisk: scan.highRisk,
-    weakBasis: scan.weakBasis,
-    anomalyChecked: anomaly.checked,
-    anomalyFlagged: anomaly.flagged,
-    anomalySkippedThinHistory: anomaly.skippedThinHistory,
-    executiveBriefingSent: briefing.sent,
+    predictionsScored: outcome?.scored ?? null,
+    tasksPredicted: scan?.scanned ?? null,
+    highRisk: scan?.highRisk ?? null,
+    weakBasis: scan?.weakBasis ?? null,
+    anomalyChecked: anomaly?.checked ?? null,
+    anomalyFlagged: anomaly?.flagged ?? null,
+    anomalySkippedThinHistory: anomaly?.skippedThinHistory ?? null,
+    executiveBriefingSent: briefing?.sent ?? false,
+    skippedOutOfTime: skipped,
   };
 }
 

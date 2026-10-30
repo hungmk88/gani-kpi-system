@@ -9,6 +9,12 @@ import { riskContextFor } from "@/lib/services/risk-service";
 import { PUBLIC_USER_SELECT } from "@/lib/services/task-service";
 import { formatVnDateTime } from "@/lib/vn-time";
 import {
+  canCommentTask,
+  canEditTask,
+  canViewTask,
+  taskAccessFor,
+} from "@/lib/task-access";
+import {
   ERR,
   TASK_PRIORITIES,
   TASK_STATUSES,
@@ -31,8 +37,17 @@ const patchSchema = z.object({
   note: z.string().max(1000).optional(),
 });
 
-/** Nhân viên chỉ được đụng vào việc của mình; trưởng phòng đụng trong phòng. */
-async function loadAndAuthorize(taskId: string, user: Awaited<ReturnType<typeof requireUser>>) {
+/**
+ * Nhân viên chỉ được đụng vào việc của mình; trưởng phòng đụng trong phòng.
+ * Người gửi Yêu cầu liên phòng ban đã sinh ra việc này được XEM (và trao đổi
+ * ở route comments) nhưng không sửa; Quản trị hệ thống chỉ xem — luật chung ở
+ * lib/task-access.ts, dùng chung với trang chi tiết và route comments.
+ */
+async function loadAndAuthorize(
+  taskId: string,
+  user: Awaited<ReturnType<typeof requireUser>>,
+  need: "view" | "edit"
+) {
   const task = await prisma.task.findUnique({
     where: { id: taskId },
     include: {
@@ -45,16 +60,15 @@ async function loadAndAuthorize(taskId: string, user: Awaited<ReturnType<typeof 
     throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy công việc.", 404);
   }
 
-  const isOwner = task.assigneeId === user.id || task.creatorId === user.id;
-  const sameDept = task.departmentId === user.departmentId;
-
-  if (user.role === "CEO") return task;
-  if (user.role === "MANAGER" && (sameDept || isOwner)) return task;
-  if (user.role === "EMPLOYEE" && isOwner) return task;
+  const access = await taskAccessFor(task, user);
+  if (need === "view" && canViewTask(access)) return { task, access };
+  if (need === "edit" && canEditTask(access)) return { task, access };
 
   throw new BusinessError(
     ERR.FORBIDDEN,
-    "Bạn không có quyền xem hoặc sửa công việc này.",
+    canViewTask(access)
+      ? "Bạn chỉ có quyền xem công việc này, không sửa được."
+      : "Bạn không có quyền xem hoặc sửa công việc này.",
     403
   );
 }
@@ -66,13 +80,17 @@ export async function GET(
   return handle(async () => {
     const { id } = await ctx.params;
     const user = await requireUser();
-    const task = await loadAndAuthorize(id, user);
+    const { task, access } = await loadAndAuthorize(id, user, "view");
     const comments = await prisma.taskComment.findMany({
       where: { taskId: id },
       include: { user: { select: PUBLIC_USER_SELECT } },
       orderBy: { createdAt: "asc" },
     });
-    return ok({ task, comments });
+    return ok({
+      task,
+      comments,
+      access: { canEdit: canEditTask(access), canComment: canCommentTask(access) },
+    });
   });
 }
 
@@ -83,7 +101,7 @@ export async function PATCH(
   return handle(async () => {
     const { id } = await ctx.params;
     const user = await requireUser();
-    const task = await loadAndAuthorize(id, user);
+    const { task } = await loadAndAuthorize(id, user, "edit");
     const body = patchSchema.parse(await req.json());
 
     // Người "quản" việc: BGĐ, người giao việc, hoặc trưởng phòng của chính

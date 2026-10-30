@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   allocateLeaveDays,
+  canReviewLeave,
   leaveDaysBetween,
+  leaveReviewerKind,
+  leaveVisibleWhere,
   matchTasksToLeaves,
+  pendingLeaveForReviewerWhere,
 } from "@/lib/services/leave-service";
 import { parseVnDate } from "@/lib/vn-time";
 
@@ -64,5 +68,52 @@ describe("việc có hạn trong thời gian nghỉ", () => {
     );
     expect(m.has("L1")).toBe(false);
     expect(m.get("L2")?.length).toBe(1);
+  });
+});
+
+describe("đơn nghỉ đi tới ai duyệt", () => {
+  it("phòng chưa có trưởng phòng thì Ban Giám đốc duyệt — và nằm trong hộp chờ của BGĐ", () => {
+    expect(leaveReviewerKind({ requesterRole: "EMPLOYEE", deptHasActiveManager: true })).toBe("MANAGER");
+    expect(leaveReviewerKind({ requesterRole: "EMPLOYEE", deptHasActiveManager: false })).toBe("CEO");
+    expect(leaveReviewerKind({ requesterRole: "MANAGER", deptHasActiveManager: true })).toBe("CEO");
+    expect(leaveReviewerKind({ requesterRole: "ADMIN", deptHasActiveManager: true })).toBe("CEO");
+
+    const ceoInbox = pendingLeaveForReviewerWhere({ id: "ceo", role: "CEO", departmentId: null });
+    expect(ceoInbox).toMatchObject({
+      status: "PENDING",
+      OR: expect.arrayContaining([
+        { departmentId: null },
+        { department: { users: { none: { role: "MANAGER", isActive: true } } } },
+      ]),
+    });
+    // BGĐ vẫn có QUYỀN duyệt đơn đó (canReviewLeave là luật quyền)
+    expect(
+      canReviewLeave(
+        { id: "ceo", role: "CEO", departmentId: null },
+        { employeeId: "nv", departmentId: "KHO", employee: { role: "EMPLOYEE" } }
+      )
+    ).toBe(true);
+  });
+
+  it("hộp chờ trưởng phòng: chỉ nhân viên thường phòng mình", () => {
+    expect(pendingLeaveForReviewerWhere({ id: "tp", role: "MANAGER", departmentId: "SALES" })).toEqual({
+      status: "PENDING",
+      employeeId: { not: "tp" },
+      departmentId: "SALES",
+      employee: { role: { notIn: ["MANAGER", "ADMIN"] } },
+    });
+    expect(pendingLeaveForReviewerWhere({ id: "nv", role: "EMPLOYEE", departmentId: "SALES" })).toBeNull();
+    expect(pendingLeaveForReviewerWhere({ id: "ad", role: "ADMIN", departmentId: null })).toBeNull();
+  });
+
+  it("Quản trị hệ thống chỉ xem đơn của chính mình (lý do nghỉ là riêng tư)", () => {
+    expect(leaveVisibleWhere({ id: "ad", role: "ADMIN", departmentId: null })).toEqual({ employeeId: "ad" });
+    expect(leaveVisibleWhere({ id: "ceo", role: "CEO", departmentId: null })).toEqual({});
+    expect(leaveVisibleWhere({ id: "tp", role: "MANAGER", departmentId: "SALES" })).toEqual({
+      OR: [
+        { employeeId: "tp" },
+        { departmentId: "SALES", employee: { role: { notIn: ["MANAGER", "ADMIN"] } } },
+      ],
+    });
   });
 });

@@ -304,6 +304,24 @@ export async function PATCH(
       );
     }
 
+    // Chuyển trưởng phòng sang phòng khác = trao quyền duyệt KPI của cả phòng
+    // mới (và bỏ trống phòng cũ) — phải báo như đổi vai trò.
+    if (
+      updated.departmentId !== target.departmentId &&
+      (target.role === "MANAGER" || updated.role === "MANAGER")
+    ) {
+      const ids = [target.departmentId, updated.departmentId].filter((x): x is string => !!x);
+      const depts = ids.length
+        ? await prisma.department.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })
+        : [];
+      const nameOf = (id: string | null) =>
+        (id && depts.find((d) => d.id === id)?.name) || "(không phòng ban)";
+      await alertCeos(
+        `Chuyển trưởng phòng ${updated.email}: ${nameOf(target.departmentId)} → ${nameOf(updated.departmentId)}`,
+        `Người thực hiện: ${actor.email}. Trưởng phòng duyệt KPI của cả phòng mới — nếu không phải chủ ý của Ban Giám đốc, kiểm tra lại ngay.`
+      );
+    }
+
     if (body.newPassword && SENSITIVE_ROLES.has(target.role)) {
       await alertCeos(
         `Mật khẩu của ${updated.email} (${ROLE_LABEL[target.role] ?? target.role}) vừa bị đặt lại`,

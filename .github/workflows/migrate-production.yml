@@ -38,20 +38,47 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Prisma luôn in dòng `Datasource "db": ... at "<host>:<port>"` — không tắt
+      # được bằng cờ. Repo công khai -> log Actions công khai, nên lọc host đi
+      # bằng sed (pipefail giữ mã thoát thật của prisma).
       - name: Migration còn thiếu
-        run: npx prisma migrate status || true
-      - name: Kiểm dữ liệu trước khi migrate (chỉ đọc)
+        shell: bash
         run: |
-          node scripts/validate-db-checks.mjs --preflight | tee preflight.log || true
+          set -o pipefail
+          # migrate status thoát 1 khi CÒN migration chưa chạy — đó là thông tin,
+          # không phải lỗi; lỗi kết nối thật sẽ lộ ở bước preflight ngay sau.
+          npx prisma migrate status 2>&1 | sed -E 's/ at "[^"]*"/ at "***"/' || true
+      - name: Kiểm dữ liệu trước khi migrate (chỉ đọc)
+        shell: bash
+        run: |
+          set -o pipefail
+          rc=0
+          node scripts/validate-db-checks.mjs --preflight 2>&1 | tee preflight.log || rc=$?
           # Chỉ cột tiền vượt giới hạn INTEGER làm migration hỏng. Giá trị lạ ở
           # cột trạng thái/vai trò không chặn (CHECK thêm ở chế độ NOT VALID).
           if grep -q "migration tiền sẽ hỏng" preflight.log; then
             echo "::error::Có cột tiền vượt giới hạn INTEGER — sửa dữ liệu trước khi migrate."
             exit 1
           fi
+          # Mục "không kiểm được" = chưa biết dữ liệu có sạch không -> coi là hỏng
+          # (dòng tổng kết cũng có cụm này nên khớp kèm dấu "(" của từng mục).
+          if grep -q "không kiểm được (" preflight.log; then
+            echo "::error::Có mục không kiểm được — không đủ căn cứ để migrate an toàn."
+            exit 1
+          fi
+          # Script thoát lỗi mà không in dòng tổng kết = chết giữa chừng (mất
+          # kết nối, sai URL...) -> hỏng. Có dòng tổng kết + mã 1 = chỉ có giá
+          # trị lạ ở cột trạng thái (không chặn, xem trên).
+          if [ "$rc" -ne 0 ] && ! grep -q "mục có dữ liệu sai" preflight.log; then
+            echo "::error::Script kiểm dữ liệu lỗi (mã $rc) — xem log ở trên."
+            exit 1
+          fi
       - name: Chạy migration
         if: ${{ inputs.confirm == 'MIGRATE' }}
-        run: npx prisma migrate deploy
+        shell: bash
+        run: |
+          set -o pipefail
+          npx prisma migrate deploy 2>&1 | sed -E 's/ at "[^"]*"/ at "***"/'
       - name: Kiểm CHECK constraint sau migrate (chỉ báo, không ghi)
         if: ${{ inputs.confirm == 'MIGRATE' }}
         run: node scripts/validate-db-checks.mjs || echo "::warning::Còn dữ liệu cũ sai giá trị — xem log, sửa tay rồi chạy npm run db:validate-checks -- --apply."

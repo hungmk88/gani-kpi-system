@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Check, Circle, CircleCheck, CircleX, Plus, Search } from "lucide-react";
-import { Avatar, Badge, formatDateTime } from "@/components/ui";
+import { Avatar, Badge } from "@/components/ui";
 import StickyActions from "@/components/sticky-actions";
 import VnNumberInput from "@/components/vn-number-input";
 import { toast } from "@/components/toast";
-import { fmtNum } from "@/lib/format";
+import { fmtDateTime, fmtNum } from "@/lib/format";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 import {
   DATA_SOURCES,
   ROLE_LABEL,
@@ -194,6 +195,7 @@ function UsersTab({
   departments: DeptRow[];
 }) {
   const router = useRouter();
+  const fid = useId();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -240,20 +242,18 @@ function UsersTab({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const res = await fetchJson(
+        "/api/admin/users",
+        jsonInit("POST", {
           ...form,
           departmentId: form.departmentId || null,
           jobTitle: form.jobTitle || undefined,
           employeeCode: form.employeeCode.trim() || null,
           productionRole: form.productionRole || null,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
+        })
+      );
       if (!res.ok) {
-        setError(apiError(data, "Không tạo được tài khoản."));
+        setError(apiError(res.data, res.message || "Không tạo được tài khoản."));
         return;
       }
       setAdding(false);
@@ -275,14 +275,9 @@ function UsersTab({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/users/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
+      const res = await fetchJson(`/api/admin/users/${id}`, jsonInit("PATCH", payload));
       if (!res.ok) {
-        return apiError(data, "Không cập nhật được.");
+        return apiError(res.data, res.message || "Không cập nhật được.");
       }
       router.refresh();
       return null;
@@ -625,8 +620,9 @@ function UsersTab({
       {adding && (
         <div className="card mb-4 grid gap-3 p-4 sm:grid-cols-2">
           <div>
-            <label className="label">Email công ty</label>
+            <label className="label" htmlFor={`${fid}-email`}>Email công ty</label>
             <input
+              id={`${fid}-email`}
               className="input"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
@@ -634,16 +630,18 @@ function UsersTab({
             />
           </div>
           <div>
-            <label className="label">Họ tên</label>
+            <label className="label" htmlFor={`${fid}-fullName`}>Họ tên</label>
             <input
+              id={`${fid}-fullName`}
               className="input"
               value={form.fullName}
               onChange={(e) => setForm({ ...form, fullName: e.target.value })}
             />
           </div>
           <div>
-            <label className="label">Mã NV (tuỳ chọn)</label>
+            <label className="label" htmlFor={`${fid}-employeeCode`}>Mã NV (tuỳ chọn)</label>
             <input
+              id={`${fid}-employeeCode`}
               className="input uppercase"
               value={form.employeeCode}
               onChange={(e) => setForm({ ...form, employeeCode: e.target.value })}
@@ -653,16 +651,18 @@ function UsersTab({
             />
           </div>
           <div>
-            <label className="label">Chức danh</label>
+            <label className="label" htmlFor={`${fid}-jobTitle`}>Chức danh</label>
             <input
+              id={`${fid}-jobTitle`}
               className="input"
               value={form.jobTitle}
               onChange={(e) => setForm({ ...form, jobTitle: e.target.value })}
             />
           </div>
           <div>
-            <label className="label">Vai trò</label>
+            <label className="label" htmlFor={`${fid}-role`}>Vai trò</label>
             <select
+              id={`${fid}-role`}
               className="input"
               value={form.role}
               onChange={(e) => setForm({ ...form, role: e.target.value })}
@@ -676,8 +676,9 @@ function UsersTab({
             </select>
           </div>
           <div>
-            <label className="label">Phòng ban</label>
+            <label className="label" htmlFor={`${fid}-departmentId`}>Phòng ban</label>
             <select
+              id={`${fid}-departmentId`}
               className="input"
               value={form.departmentId}
               onChange={(e) =>
@@ -693,8 +694,9 @@ function UsersTab({
             </select>
           </div>
           <div>
-            <label className="label">Vai trò sản xuất</label>
+            <label className="label" htmlFor={`${fid}-productionRole`}>Vai trò sản xuất</label>
             <select
+              id={`${fid}-productionRole`}
               className="input"
               value={form.productionRole}
               onChange={(e) =>
@@ -713,8 +715,9 @@ function UsersTab({
             </p>
           </div>
           <div>
-            <label className="label">Mật khẩu khởi tạo</label>
+            <label className="label" htmlFor={`${fid}-password`}>Mật khẩu khởi tạo</label>
             <input
+              id={`${fid}-password`}
               className="input"
               type="text"
               value={form.password}
@@ -909,7 +912,7 @@ function UsersTab({
                   )}
                 </td>
                 <td data-label="Đăng nhập gần nhất" className="text-xs text-ink-500">
-                  {u.lastLoginAt ? formatDateTime(u.lastLoginAt) : "chưa bao giờ"}
+                  {u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : "chưa bao giờ"}
                 </td>
                 <td data-label="Trạng thái">
                   {u.isActive ? (
@@ -971,6 +974,7 @@ function UsersTab({
 
 function DepartmentsTab({ departments }: { departments: DeptRow[] }) {
   const router = useRouter();
+  const fid = useId();
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -980,14 +984,12 @@ function DepartmentsTab({ departments }: { departments: DeptRow[] }) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/departments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: code.toUpperCase(), name }),
-      });
-      const data = await res.json().catch(() => ({}));
+      const res = await fetchJson(
+        "/api/admin/departments",
+        jsonInit("POST", { code: code.toUpperCase(), name })
+      );
       if (!res.ok) {
-        setError(apiError(data, "Không tạo được phòng ban."));
+        setError(apiError(res.data, res.message || "Không tạo được phòng ban."));
         return;
       }
       toast(`Đã thêm phòng ban ${name}.`);
@@ -1005,8 +1007,9 @@ function DepartmentsTab({ departments }: { departments: DeptRow[] }) {
     <>
       <div className="card mb-4 flex flex-wrap items-end gap-3 p-4">
         <div className="w-40">
-          <label className="label">Mã phòng</label>
+          <label className="label" htmlFor={`${fid}-code`}>Mã phòng</label>
           <input
+            id={`${fid}-code`}
             className="input uppercase"
             value={code}
             onChange={(e) => setCode(e.target.value.toUpperCase())}
@@ -1014,8 +1017,9 @@ function DepartmentsTab({ departments }: { departments: DeptRow[] }) {
           />
         </div>
         <div className="min-w-52 flex-1">
-          <label className="label">Tên phòng ban</label>
+          <label className="label" htmlFor={`${fid}-name`}>Tên phòng ban</label>
           <input
+            id={`${fid}-name`}
             className="input"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -1073,6 +1077,7 @@ function KpisTab({
   departments: DeptRow[];
 }) {
   const router = useRouter();
+  const fid = useId();
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1090,19 +1095,17 @@ function KpisTab({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/kpi-definitions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const res = await fetchJson(
+        "/api/admin/kpi-definitions",
+        jsonInit("POST", {
           ...f,
           code: f.code.toUpperCase(),
           departmentId: f.departmentId || null,
           defaultWeight: f.defaultWeight ?? 0,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
+        })
+      );
       if (!res.ok) {
-        setError(apiError(data, "Không tạo được chỉ tiêu."));
+        setError(apiError(res.data, res.message || "Không tạo được chỉ tiêu."));
         return;
       }
       setAdding(false);
@@ -1119,18 +1122,13 @@ function KpisTab({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await fetchJson(
         `/api/admin/kpi-definitions?id=${encodeURIComponent(id)}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ isActive }),
-        }
+        jsonInit("PATCH", { isActive })
       );
       if (!res.ok) {
         // Báo đúng lý do server trả về thay vì im lặng như đã thành công
-        const data = await res.json().catch(() => null);
-        setError(data?.message || "Không cập nhật được trạng thái chỉ tiêu.");
+        setError(res.message || "Không cập nhật được trạng thái chỉ tiêu.");
         return;
       }
       router.refresh();
@@ -1168,8 +1166,9 @@ function KpisTab({
       {adding && (
         <div className="card mb-4 grid gap-3 p-4 sm:grid-cols-3">
           <div>
-            <label className="label">Mã chỉ tiêu</label>
+            <label className="label" htmlFor={`${fid}-kcode`}>Mã chỉ tiêu</label>
             <input
+              id={`${fid}-kcode`}
               className="input uppercase"
               value={f.code}
               onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })}
@@ -1177,8 +1176,9 @@ function KpisTab({
             />
           </div>
           <div className="sm:col-span-2">
-            <label className="label">Tên chỉ tiêu</label>
+            <label className="label" htmlFor={`${fid}-kname`}>Tên chỉ tiêu</label>
             <input
+              id={`${fid}-kname`}
               className="input"
               value={f.name}
               onChange={(e) => setF({ ...f, name: e.target.value })}
@@ -1186,16 +1186,18 @@ function KpisTab({
             />
           </div>
           <div>
-            <label className="label">Đơn vị</label>
+            <label className="label" htmlFor={`${fid}-unit`}>Đơn vị</label>
             <input
+              id={`${fid}-unit`}
               className="input"
               value={f.unit}
               onChange={(e) => setF({ ...f, unit: e.target.value })}
             />
           </div>
           <div>
-            <label className="label">Phòng ban</label>
+            <label className="label" htmlFor={`${fid}-kdept`}>Phòng ban</label>
             <select
+              id={`${fid}-kdept`}
               className="input"
               value={f.departmentId}
               onChange={(e) => setF({ ...f, departmentId: e.target.value })}
@@ -1209,16 +1211,18 @@ function KpisTab({
             </select>
           </div>
           <div>
-            <label className="label">Trọng số mặc định (%)</label>
+            <label className="label" htmlFor={`${fid}-weight`}>Trọng số mặc định (%)</label>
             <VnNumberInput
+              id={`${fid}-weight`}
               value={f.defaultWeight}
               min={0}
               onValue={(n) => setF({ ...f, defaultWeight: n })}
             />
           </div>
           <div>
-            <label className="label">Chiều tốt</label>
+            <label className="label" htmlFor={`${fid}-better`}>Chiều tốt</label>
             <select
+              id={`${fid}-better`}
               className="input"
               value={f.isHigherBetter ? "1" : "0"}
               onChange={(e) =>
@@ -1230,8 +1234,9 @@ function KpisTab({
             </select>
           </div>
           <div>
-            <label className="label">Nguồn số liệu</label>
+            <label className="label" htmlFor={`${fid}-source`}>Nguồn số liệu</label>
             <select
+              id={`${fid}-source`}
               className="input"
               value={f.dataSource}
               onChange={(e) => setF({ ...f, dataSource: e.target.value })}
@@ -1336,12 +1341,13 @@ function SystemTab({
     setBusy(true);
     setResult(null);
     try {
-      const res = await fetch("/api/admin/telegram-test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chatId }),
-      });
-      const data = await res.json().catch(() => ({}));
+      // fetchJson không throw: mất mạng cũng ra dòng "Gửi thất bại" có lý do,
+      // không để nút kẹt ở "Đang gửi..." mà không báo gì.
+      const res = await fetchJson<{ ok?: boolean; error?: string }>(
+        "/api/admin/telegram-test",
+        jsonInit("POST", { chatId })
+      );
+      const data = res.data;
       setResult(
         res.ok && data.ok ? (
           <span className="inline-flex items-center gap-1.5">
@@ -1350,7 +1356,7 @@ function SystemTab({
         ) : (
           <span className="inline-flex items-center gap-1.5">
             <CircleX size={14} strokeWidth={2} />{" "}
-            {data.error || data.message || "Gửi thất bại."}
+            {data.error || res.message || "Gửi thất bại."}
           </span>
         )
       );
@@ -1371,6 +1377,7 @@ function SystemTab({
         <div className="flex flex-wrap gap-2">
           <input
             className="input max-w-xs"
+            aria-label="Chat ID Telegram để gửi tin thử"
             placeholder="Chat ID, ví dụ 123456789"
             value={chatId}
             onChange={(e) => setChatId(e.target.value)}
@@ -1420,7 +1427,7 @@ function SystemTab({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-medium text-ink-800">{l.fileName}</span>
                   <span className="text-xs text-ink-500">
-                    {formatDateTime(l.createdAt)} · {l.uploadedBy}
+                    {fmtDateTime(l.createdAt)} · {l.uploadedBy}
                   </span>
                 </div>
                 <div className="mt-1 text-xs tabular-nums">
@@ -1545,14 +1552,17 @@ function foldVn(s: string) {
  * Lỗi API → câu cụ thể. Lỗi validate (zod) thì nêu đúng từng trường sai thay
  * vì "Dữ liệu gửi lên không hợp lệ" chung chung.
  */
-function apiError(
-  data: { message?: string; issues?: { message: string }[] },
-  fallback: string
-) {
-  if (Array.isArray(data.issues) && data.issues.length > 0) {
-    return data.issues.map((i) => i.message).join(" ");
+function apiError(data: Record<string, unknown>, fallback: string) {
+  // Lỗi validate (422) có danh sách issues chi tiết từng ô — hiện cả, rõ hơn
+  // câu chung "Dữ liệu gửi lên không hợp lệ."
+  const issues = data.issues;
+  if (Array.isArray(issues) && issues.length > 0) {
+    return issues
+      .map((i) => (i && typeof i === "object" ? String((i as { message?: unknown }).message ?? "") : ""))
+      .filter(Boolean)
+      .join(" ") || fallback;
   }
-  return data.message || fallback;
+  return (typeof data.message === "string" && data.message) || fallback;
 }
 
 /**

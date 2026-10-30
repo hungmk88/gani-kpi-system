@@ -1,4 +1,3 @@
-import { formatVnDate, formatVnDateTime } from "@/lib/vn-time";
 import Link from "next/link";
 import { Inbox, Lock, Flame } from "lucide-react";
 import {
@@ -8,7 +7,7 @@ import {
   PERIOD_STATUS_LABEL,
 } from "@/lib/constants";
 import { RISK_LEVEL_LABEL, riskLevel } from "@/lib/risk";
-import { fmtNum, fmtScore } from "@/lib/format";
+import { fmtDate, fmtNum, fmtScore } from "@/lib/format";
 
 export { fmtScore };
 
@@ -529,22 +528,14 @@ export function ScoreBadge({
 
 /* ------------------------------------------------------------------ ngày giờ */
 
-export function formatDate(d: Date | string | null | undefined) {
-  if (!d) return "—";
-  return formatVnDate(d);
-}
-
-/** Ngày giờ theo giờ Việt Nam, đúng ở cả server (UTC) lẫn trình duyệt. */
-export function formatDateTime(d: Date | string | null | undefined) {
-  return formatVnDateTime(d);
-}
-
+// formatDate/formatDateTime cũ đã gộp vào fmtDate/fmtDateTime của lib/format
+// (một cách viết ngày cho toàn hệ thống).
 export function DueDate({ date, done }: { date: Date | string; done?: boolean }) {
   const d = new Date(date);
   const late = !done && d.getTime() < Date.now();
   return (
     <span className={late ? "font-medium text-red-600" : "text-ink-600"}>
-      {formatDate(d)}
+      {fmtDate(d)}
       {late && " · trễ"}
     </span>
   );

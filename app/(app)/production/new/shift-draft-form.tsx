@@ -1,5 +1,6 @@
 "use client";
 
+import { fetchJson } from "@/lib/fetch-json";
 import { useRef, useState } from "react";
 import { vnDateKey } from "@/lib/vn-time";
 import { useRouter } from "next/navigation";
@@ -177,7 +178,7 @@ export default function ShiftDraftForm({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await fetchJson<{ shift?: { id: string } }>(
         editing ? `/api/production/shifts/${initial!.shiftId}` : "/api/production/shifts",
         {
           method: editing ? "PUT" : "POST",
@@ -201,9 +202,8 @@ export default function ShiftDraftForm({
           }),
         }
       );
-      const data = await res.json();
       if (!res.ok) {
-        setError(data.message || "Không lưu được ca.");
+        setError(res.message ?? "Không lưu được ca.");
         return;
       }
       toast(
@@ -211,7 +211,7 @@ export default function ShiftDraftForm({
           ? "Đã gửi lại ca — KCS nhận thông báo xác nhận lại."
           : "Đã khai ca — KCS nhận thông báo vào xác nhận."
       );
-      router.push(`/production/${editing ? initial!.shiftId : data.shift.id}`);
+      router.push(`/production/${editing ? initial!.shiftId : res.data.shift!.id}`);
       router.refresh();
     } catch {
       setError("Mất kết nối tới máy chủ.");

@@ -14,24 +14,34 @@ import {
   runDeadlineReminders,
 } from "@/lib/services/reminder-service";
 import { writeAudit } from "@/lib/audit";
+import { logOutOfTime, TimeBudget } from "@/lib/time-budget";
 
 export const runtime = "nodejs";
-// Bảy bước chạy tuần tự, mỗi bước gọi Postgres qua pooler — vượt quá 10s mặc
-// định của Vercel. 60s là trần cho phép của gói Hobby.
+// Tám bước chạy tuần tự, mỗi bước gọi Postgres qua pooler — vượt quá 10s mặc
+// định của Vercel. 60s là trần cho phép của gói Hobby (xem STEP_BUDGET_MS).
 export const maxDuration = 60;
 
 /**
- * Bộ máy chạy nền. Năm việc, chạy theo đúng thứ tự này vì việc sau cần kết quả
- * của việc trước:
+ * Bộ máy chạy nền. Các việc chạy theo đúng thứ tự này:
  *
  *   1. Khoá KPI theo lịch 2-4-5
  *   2. Gộp ca sản xuất đã khoá thành số liệu KPI tháng
  *   3. Đối soát dữ liệu đa nguồn (khớp thì đồng bộ, lệch thì treo lại)
  *   4. Tính lại điểm các dòng chưa chốt
- *   5. Quét rủi ro toàn bộ công việc
- *   6. Chấm lại dự báo cũ, dự báo mới, quét bất thường KPI, và đúng ngày chốt
+ *   5. Nhắc hạn cho người còn việc chưa làm (cần kết quả bước 1)
+ *   6. Nhắc Ban Giám đốc ô KPI treo vì lệch số (cần kết quả bước 3)
+ *   7. Quét rủi ro toàn bộ công việc
+ *   8. Chấm lại dự báo cũ, dự báo mới, quét bất thường KPI, và đúng ngày chốt
  *      kỳ (ngày 5) thì tự soạn báo cáo giao ban gửi Telegram Ban Giám đốc
- *   7. Nhắc hạn cho người còn việc chưa làm
+ *
+ * Nhắc hạn (5, 6) chạy TRƯỚC các bước chậm (7, 8 — nhiều Telegram, gọi
+ * Gemini): nhắc hạn là việc có giờ giấc, trễ một lượt là người ta lỡ hạn; còn
+ * quét rủi ro/phân tích trễ 2 tiếng không sao.
+ *
+ * NGÂN SÁCH THỜI GIAN: Vercel giết hàm ở giây 60 — không kịp ghi nhật ký,
+ * không kịp mở khoá. Mỗi bước (và vòng lặp gửi tin bên trong) tự kiểm hạn
+ * chót; hết giờ thì bỏ phần còn lại, log "hết thời gian, lượt sau làm tiếp".
+ * Mọi bước đều chạy lại an toàn nên lượt sau làm nốt.
  *
  * Hai cách gọi:
  *   - Từ scheduler:  POST /api/cron/run  header  x-cron-secret: <CRON_SECRET>
@@ -40,20 +50,31 @@ export const maxDuration = 60;
  *
  * Chạy lại nhiều lần vẫn an toàn, không tạo dữ liệu trùng và không nhắc lặp.
  */
-type Step = { name: string; run: () => Promise<unknown> };
+type Step = {
+  name: string;
+  /** Còn dưới chừng này mili-giây thì không bắt đầu bước này */
+  minMs: number;
+  run: (budget: TimeBudget) => Promise<unknown>;
+};
+
+/**
+ * Ngân sách cho các bước: chừa ~20s dưới trần 60s cho một lệnh gọi ngoài đang
+ * dở (Telegram tối đa 15s), ghi nhật ký và mở khoá.
+ */
+const STEP_BUDGET_MS = 40_000;
 
 const STEPS: Step[] = [
-  { name: "kpiLock", run: runKpiLockCycle },
+  { name: "kpiLock", minMs: 3000, run: () => runKpiLockCycle() },
   // Gộp ca sản xuất đã khoá thành số liệu KPI tháng TRƯỚC khi đối soát,
   // để số của xưởng cũng phải đi qua bộ đối soát như iPOS và file Excel.
-  { name: "productionSync", run: runProductionKpiSyncRecent },
-  { name: "reconciliation", run: runReconciliation },
-  { name: "kpiRecalculated", run: recalcOpenResults },
-  { name: "riskScan", run: runRiskScan },
+  { name: "productionSync", minMs: 3000, run: () => runProductionKpiSyncRecent() },
+  { name: "reconciliation", minMs: 3000, run: () => runReconciliation() },
+  { name: "kpiRecalculated", minMs: 3000, run: () => recalcOpenResults() },
+  { name: "reminders", minMs: 3000, run: (b) => runDeadlineReminders(new Date(), b) },
+  { name: "staleMismatch", minMs: 3000, run: () => remindStaleMismatches() },
+  { name: "riskScan", minMs: 5000, run: (b) => runRiskScan(new Date(), b) },
   // Phân tích chạy SAU cùng: nó đọc kết quả của mọi bước trên
-  { name: "analytics", run: runAnalyticsCycle },
-  { name: "reminders", run: runDeadlineReminders },
-  { name: "staleMismatch", run: remindStaleMismatches },
+  { name: "analytics", minMs: 5000, run: (b) => runAnalyticsCycle(new Date(), b) },
 ];
 
 const LOCK_NAME = "cron:run";
@@ -76,7 +97,9 @@ async function execute(req: Request) {
     actorLabel = `MANUAL:${user.email}`;
   }
 
-  if (!(await acquireJobLock(LOCK_NAME, maxDuration + 30))) {
+  const budget = TimeBudget.fromNow(STEP_BUDGET_MS);
+  const lock = await acquireJobLock(LOCK_NAME, maxDuration + 30);
+  if (!lock) {
     return fail(
       "CRON_BUSY",
       "Một lượt chạy nền khác đang diễn ra, thử lại sau ít phút.",
@@ -86,19 +109,24 @@ async function execute(req: Request) {
 
   const results: Record<string, unknown> = {};
   const errors: Record<string, string> = {};
+  const skipped: string[] = [];
   try {
-    // Mỗi bước tự bắt lỗi: một bước hỏng không được làm mất các bước sau
-    // (nhất là nhắc hạn ở cuối).
+    // Mỗi bước tự bắt lỗi: một bước hỏng không được làm mất các bước sau.
     for (const step of STEPS) {
+      if (budget.expired(step.minMs)) {
+        skipped.push(step.name);
+        continue;
+      }
       try {
-        results[step.name] = await step.run();
+        results[step.name] = await step.run(budget);
       } catch (e) {
         console.error(`[CRON] Bước ${step.name} lỗi:`, e);
         errors[step.name] = e instanceof Error ? e.message : String(e);
       }
     }
+    if (skipped.length) logOutOfTime(`bỏ các bước ${skipped.join(", ")}`);
   } finally {
-    await releaseJobLock(LOCK_NAME);
+    await releaseJobLock(lock);
   }
 
   await writeAudit({
@@ -106,7 +134,7 @@ async function execute(req: Request) {
     action: "CRON_RUN",
     entityName: "system",
     entityId: actorLabel,
-    after: { ...results, errors },
+    after: { ...results, errors, skippedOutOfTime: skipped },
   });
 
   return ok({
@@ -114,6 +142,7 @@ async function execute(req: Request) {
     triggeredBy: actorLabel,
     ...results,
     errors,
+    skippedOutOfTime: skipped,
   });
 }
 

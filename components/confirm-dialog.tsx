@@ -64,23 +64,38 @@ export default function ConfirmDialog({
     }
   }, [open]);
 
-  // Esc để đóng, Tab không chạy ra ngoài hộp, focus vào phần tử đầu tiên
+  // onClose thường là arrow function viết inline ở component cha → mỗi lần cha
+  // render lại là một hàm mới. Nếu effect bên dưới phụ thuộc onClose/busy thì
+  // nó chạy lại sau MỖI lần cha render và kéo focus về phần tử đầu tiên — bấm
+  // "Hiện"/"Tạo ngẫu nhiên" trong hộp đổi mật khẩu là focus nhảy mất. Giữ bản
+  // mới nhất trong ref để effect chỉ chạy khi hộp mở/đóng.
+  const onCloseRef = useRef(onClose);
+  const busyRef = useRef(busy);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    busyRef.current = busy;
+  });
+
+  // Esc để đóng, Tab không chạy ra ngoài hộp, focus vào phần tử đầu tiên;
+  // đóng hộp thì trả focus về chỗ cũ (nút đã mở hộp) cho người dùng bàn phím.
   useEffect(() => {
     if (!open) return;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const panel = panelRef.current;
     const focusables = () =>
       Array.from(
         panel?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), textarea, input, select, [href], [tabindex]:not([tabindex="-1"])'
+          'button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
         ) ?? []
       );
     const first = focusables()[0];
     first?.focus();
 
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !busy) {
+      if (e.key === "Escape" && !busyRef.current) {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -94,11 +109,19 @@ export default function ConfirmDialog({
       } else if (!e.shiftKey && document.activeElement === z) {
         e.preventDefault();
         a.focus();
+      } else if (!panel?.contains(document.activeElement)) {
+        // Focus đã lọt ra ngoài (vd nút vừa bị disable khi busy) → kéo về hộp
+        e.preventDefault();
+        a.focus();
       }
     }
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, busy, onClose]);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      // Phần tử cũ có thể đã bị gỡ khỏi DOM (vd dòng vừa xoá) → bỏ qua
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [open]);
 
   if (!open) return null;
 

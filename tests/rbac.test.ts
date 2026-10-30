@@ -47,6 +47,15 @@ describe("can() — ma trận phân quyền", () => {
     expect(can(user("ADMIN"), "kpi.manager_review")).toBe(false);
   });
 
+  it("ADMIN không chạm vào điểm KPI: không đặt mục tiêu, không nạp số", () => {
+    expect(can(user("ADMIN"), "kpi.target.assign")).toBe(false);
+    expect(can(user("ADMIN"), "kpi.import")).toBe(false);
+    expect(can(user("MANAGER"), "kpi.target.assign")).toBe(true);
+    expect(can(user("MANAGER"), "kpi.import")).toBe(true);
+    expect(can(user("CEO"), "kpi.target.assign")).toBe(true);
+    expect(can(user("CEO"), "kpi.import")).toBe(true);
+  });
+
   it("nhân viên chỉ xem việc của mình, tự đánh giá KPI", () => {
     const e = user("EMPLOYEE");
     expect(can(e, "task.view.own")).toBe(true);

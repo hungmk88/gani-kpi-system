@@ -50,7 +50,12 @@ vi.mock("@/lib/telegram", () => ({
   sendCeoAlert: vi.fn(async () => {}),
 }));
 
-import { ceoApprove, planCeoApproval } from "@/lib/services/kpi-service";
+import {
+  ceoApprove,
+  needsAdjustReason,
+  planCeoApproval,
+} from "@/lib/services/kpi-service";
+import { notify } from "@/lib/telegram";
 
 const actor = {
   id: "ceo",
@@ -143,6 +148,23 @@ describe("planCeoApproval — phần thuần", () => {
     expect(plan.eligible[1].derived).toMatchObject({ isCapped: false, weightedScore: -5 });
   });
 
+  it("gatekeeper chưa có số thì KHÔNG khoá — khoá lúc này là bỏ qua khoản trừ 5 điểm", () => {
+    const gate = { code: "SALES_RETURN", isHigherBetter: false, department: { code: "SALES" } };
+    const base = { kpiDefinition: gate, weightPercent: 0, targetValue: 2 };
+    const plan = planCeoApproval(
+      [
+        row("none", { ...base, actualFinal: null, actualSelf: null, actualSystem: null }),
+        // Số chốt trống nhưng có số hệ thống → vẫn khoá được
+        row("sys", { ...base, actualFinal: null, actualSelf: null, actualSystem: 1 }),
+      ],
+      new Set()
+    );
+    expect(plan.eligible.map((e) => e.id)).toEqual(["sys"]);
+    expect(plan.skipped).toEqual([
+      { id: "none", reason: "Chỉ tiêu ngưỡng (Gatekeeper) chưa có số" },
+    ]);
+  });
+
   it("chỉ tiêu Sales chặn ở trần 120%, phòng khác 150%", () => {
     const sales = { ...def, department: { code: "SALES" } };
     const plan = planCeoApproval(
@@ -225,11 +247,32 @@ describe("ceoApprove — một giao dịch, ghi theo tập", () => {
     expect(res.periodFinalized).toBe(true);
   });
 
+  it("gửi thông báo lỗi ở một người không làm hỏng lượt chốt đã ghi xong", async () => {
+    h.state.rows = [row("a"), row("b")];
+    vi.mocked(notify).mockRejectedValueOnce(new Error("Telegram chậm"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await ceoApprove(actor, ["a", "b"]);
+    spy.mockRestore();
+    expect(res.finalized).toBe(2);
+    expect(notify).toHaveBeenCalledTimes(2);
+  });
+
   it("còn dòng chưa chốt thì không khoá kỳ", async () => {
     h.state.rows = [row("a")];
     h.state.remaining = 2;
     const res = await ceoApprove(actor, ["a"], { finalizePeriodId: "p1" });
     expect(h.tx.kpiPeriod.updateMany).not.toHaveBeenCalled();
     expect(res.periodFinalized).toBe(false);
+  });
+});
+
+describe("điều chỉnh số chốt phải có lý do", () => {
+  it("so với số tự khai; nhân viên chưa khai thì so với số hệ thống", () => {
+    expect(needsAdjustReason({ actualSelf: 90, actualSystem: 80 }, 90)).toBe(false);
+    expect(needsAdjustReason({ actualSelf: 90, actualSystem: 80 }, 80)).toBe(true);
+    // Trước đây sửa số hệ thống khi nhân viên chưa khai thì không cần lý do
+    expect(needsAdjustReason({ actualSelf: null, actualSystem: 80 }, 100)).toBe(true);
+    expect(needsAdjustReason({ actualSelf: null, actualSystem: 80 }, 80)).toBe(false);
+    expect(needsAdjustReason({ actualSelf: null, actualSystem: null }, 100)).toBe(false);
   });
 });

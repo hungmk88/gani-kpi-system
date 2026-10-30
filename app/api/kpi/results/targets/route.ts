@@ -4,6 +4,7 @@ import { handle, ok, requireUser } from "@/lib/api";
 import { assertPermission, BusinessError } from "@/lib/rbac";
 import { clientMeta, writeAudit } from "@/lib/audit";
 import { ERR } from "@/lib/constants";
+import { kpiOversightDenial } from "@/lib/kpi";
 import { recalcResult } from "@/lib/services/kpi-service";
 
 const schema = z.object({
@@ -45,7 +46,7 @@ export async function POST(req: Request) {
       );
     }
     // Trưởng phòng chỉ đặt mục tiêu khi kỳ còn mở; sau mốc khoá thì chỉ Ban
-    // Giám đốc / quản trị chỉnh (và mọi lần chỉnh đều vào nhật ký).
+    // Giám đốc chỉnh (và mọi lần chỉnh đều vào nhật ký).
     if (user.role === "MANAGER" && period.status !== "OPEN") {
       throw new BusinessError(
         ERR.SLA_LOCKED,
@@ -67,19 +68,13 @@ export async function POST(req: Request) {
         404
       );
     }
+    const isCeo = user.role === "CEO";
     for (const r of rows) {
       if (r.status === "FINALIZED") {
         throw new BusinessError(
           ERR.KPI_FINALIZED,
           `Dòng KPI của ${r.employee.fullName} đã chốt — không sửa mục tiêu được.`,
           409
-        );
-      }
-      if (user.role === "MANAGER" && r.employeeId === user.id) {
-        throw new BusinessError(
-          ERR.FORBIDDEN,
-          "Không tự đặt mục tiêu cho chính mình — Ban Giám đốc đặt mục tiêu của trưởng phòng.",
-          403
         );
       }
       if (r.periodId !== body.periodId) {
@@ -89,27 +84,65 @@ export async function POST(req: Request) {
           400
         );
       }
-      if (
-        user.role === "MANAGER" &&
-        r.employee.departmentId !== user.departmentId
-      ) {
+      // Trưởng phòng: chỉ nhân viên thường cùng phòng. Mục tiêu của chính
+      // mình và của trưởng phòng khác (kể cả cùng phòng) do Ban Giám đốc đặt.
+      const denial = kpiOversightDenial(user, r.employee, "target");
+      if (denial) {
         throw new BusinessError(
           ERR.FORBIDDEN,
-          `Trưởng phòng chỉ đặt mục tiêu cho nhân sự phòng mình (${r.employee.fullName} thuộc phòng khác).`,
+          `${denial} (${r.employee.fullName})`,
           403
+        );
+      }
+      // Đổi mục tiêu của dòng trưởng phòng ĐÃ DUYỆT là đổi điểm sau lưng
+      // người duyệt — chỉ Ban Giám đốc (mọi lần đổi đều vào nhật ký).
+      if (!isCeo && r.status === "MANAGER_REVIEWED") {
+        throw new BusinessError(
+          ERR.SLA_LOCKED,
+          `Dòng KPI của ${r.employee.fullName} đã được duyệt — muốn đổi mục tiêu thì liên hệ Ban Giám đốc.`,
+          409
         );
       }
     }
 
-    const byId = new Map(body.updates.map((u) => [u.resultId, u.targetValue]));
-    await prisma.$transaction(
-      rows.map((r) =>
-        prisma.kpiResult.update({
-          where: { id: r.id },
-          data: { targetValue: byId.get(r.id)! },
-        })
-      )
-    );
+    // Ghi CÓ ĐIỀU KIỆN theo trạng thái: kiểm ở trên là đọc trong bộ nhớ, Ban
+    // Giám đốc có thể khoá (hoặc trưởng phòng duyệt) đúng lúc này. Gom theo
+    // giá trị mục tiêu để mỗi giá trị một lệnh; thiếu dòng nào thì huỷ cả lượt.
+    const allowedStatuses = isCeo
+      ? ["DRAFT", "SELF_REVIEWED", "MANAGER_REVIEWED"]
+      : ["DRAFT", "SELF_REVIEWED"];
+    const idsByValue = new Map<number, string[]>();
+    for (const u of body.updates) {
+      if (!ids.includes(u.resultId)) continue;
+      // Trùng resultId: lần cuối thắng — bỏ id khỏi nhóm cũ
+      for (const list of idsByValue.values()) {
+        const i = list.indexOf(u.resultId);
+        if (i >= 0) list.splice(i, 1);
+      }
+      idsByValue.set(u.targetValue, [...(idsByValue.get(u.targetValue) ?? []), u.resultId]);
+    }
+    await prisma.$transaction(async (tx) => {
+      let written = 0;
+      for (const [targetValue, group] of idsByValue) {
+        if (group.length === 0) continue;
+        const res = await tx.kpiResult.updateMany({
+          where: {
+            id: { in: group },
+            periodId: body.periodId,
+            status: { in: allowedStatuses },
+          },
+          data: { targetValue },
+        });
+        written += res.count;
+      }
+      if (written !== rows.length) {
+        throw new BusinessError(
+          ERR.KPI_FINALIZED,
+          "Có dòng KPI vừa được duyệt hoặc chốt trong lúc lưu — chưa lưu dòng nào. Tải lại trang và thử lại.",
+          409
+        );
+      }
+    });
 
     // Mục tiêu đổi thì điểm phải tính lại ngay, không để điểm và mục tiêu lệch nhau
     for (const r of rows) await recalcResult(r.id);

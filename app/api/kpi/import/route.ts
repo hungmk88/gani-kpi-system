@@ -9,6 +9,7 @@ import {
 } from "@/lib/excel";
 import { reconcileCell } from "@/lib/services/reconciliation-service";
 import { ERR, PERIOD_STATUS_LABEL } from "@/lib/constants";
+import { kpiOversightDenial } from "@/lib/kpi";
 
 export const runtime = "nodejs";
 
@@ -83,7 +84,7 @@ export async function POST(req: Request) {
       }),
       prisma.user.findMany({
         where: { email: { in: [...new Set(rows.map((r) => r.email))] } },
-        select: { id: true, email: true, departmentId: true },
+        select: { id: true, email: true, departmentId: true, role: true },
       }),
       prisma.kpiResult.findMany({
         where: { periodId },
@@ -124,13 +125,12 @@ export async function POST(req: Request) {
         rowErrors.push(`Dòng ${r.rowNumber}: không có nhân sự "${r.email}".`);
         continue;
       }
-      if (
-        user.role === "MANAGER" &&
-        employee.departmentId !== user.departmentId
-      ) {
-        rowErrors.push(
-          `Dòng ${r.rowNumber}: ${r.email} không thuộc phòng ban của bạn.`
-        );
+      // Số nạp từ Excel thành "số hệ thống" — nguồn đối chiếu với số tự khai.
+      // Trưởng phòng tự nạp số cho chính mình (hoặc cho trưởng phòng khác) là
+      // tự chấm điểm: KPI trưởng phòng do Ban Giám đốc duyệt, nên BGĐ nạp.
+      const denial = kpiOversightDenial(user, employee, "import");
+      if (denial) {
+        rowErrors.push(`Dòng ${r.rowNumber}: ${r.email} — ${denial}`);
         continue;
       }
 

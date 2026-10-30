@@ -9,21 +9,48 @@ import {
   kpiCapFor,
   isManagerReviewOpen,
   isSelfReviewOpen,
+  kpiOversightDenial,
   round2,
 } from "../kpi";
 import { auditRecord, writeAudit } from "../audit";
 import { vnParts } from "../vn-time";
 import { notify, sendCeoAlert } from "../telegram";
+import { forEachLimit } from "../concurrency";
 import type { SessionUser } from "../auth";
 
 type Meta = { ip?: string | null; userAgent?: string | null };
+
+/** Số thông báo gửi song song sau khi ghi xong (xem forEachLimit). */
+export const NOTIFY_CONCURRENCY = 5;
+
+/**
+ * Trưởng phòng / BGĐ chốt số có phải là ĐIỀU CHỈNH (bắt buộc lý do) không:
+ * khác số nhân viên khai, nhân viên chưa khai thì khác số hệ thống. Chưa có
+ * số nào để so thì không phải điều chỉnh. Thuần — giao diện dùng cùng luật.
+ */
+export function needsAdjustReason(
+  r: { actualSelf: number | null; actualSystem: number | null },
+  actualFinal: number
+) {
+  const baseline = r.actualSelf ?? r.actualSystem;
+  return baseline !== null && round2(actualFinal) !== round2(baseline);
+}
 
 /**
  * Tính lại toàn bộ số liệu dẫn xuất của 1 dòng KPI và ghi xuống DB.
  * Đây là NƠI DUY NHẤT được phép ghi achievementPercent / weightedScore,
  * để không bao giờ có chuyện điểm bị gõ tay từ ngoài vào.
  */
-export async function recalcResult(resultId: string) {
+export async function recalcResult(
+  resultId: string,
+  opts: {
+    /**
+     * Chỉ đường "Sửa KPI sau khi khoá" (editAfterLock) mới được tính lại dòng
+     * đã FINALIZED. Mọi nơi khác: dòng đã khoá thì điểm đã khoá — không ghi.
+     */
+    allowFinalized?: boolean;
+  } = {}
+) {
   const r = await prisma.kpiResult.findUnique({
     where: { id: resultId },
     include: { kpiDefinition: { include: { department: true } } },
@@ -32,11 +59,20 @@ export async function recalcResult(resultId: string) {
 
   // Công thức nằm MỘT chỗ (computeDerivedFields) — quét hàng loạt dùng chung,
   // không có chuyện hai nơi tính lệch nhau.
-  return prisma.kpiResult.update({
-    where: { id: resultId },
+  // Ghi có điều kiện: Ban Giám đốc khoá dòng giữa lúc đọc và lúc ghi thì
+  // không đè điểm đã khoá.
+  await prisma.kpiResult.updateMany({
+    where: opts.allowFinalized
+      ? { id: resultId }
+      : { id: resultId, status: { not: "FINALIZED" } },
     data: computeDerivedFields(r),
+  });
+  const fresh = await prisma.kpiResult.findUnique({
+    where: { id: resultId },
     include: { kpiDefinition: true, employee: true, period: true },
   });
+  if (!fresh) throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy dòng KPI.", 404);
+  return fresh;
 }
 
 /** BƯỚC 1 — Nhân viên tự khai + tự nhận xét, hạn chót 23:59 ngày 2. */
@@ -157,19 +193,17 @@ export async function managerReview(
     throw new BusinessError(ERR.KPI_FINALIZED, "KPI đã chốt. Chỉ Ban Giám đốc mới mở lại được.", 409);
   }
   if (actor.role === "MANAGER") {
-    // KPI của chính trưởng phòng do Ban Giám đốc duyệt, không tự duyệt mình
-    if (r.employeeId === actor.id) {
+    // KPI của chính trưởng phòng — và của trưởng phòng khác, kể cả cùng
+    // phòng — do Ban Giám đốc duyệt (cùng luật với duyệt nghỉ phép).
+    const denial = kpiOversightDenial(actor, r.employee, "review");
+    if (denial) throw new BusinessError(ERR.FORBIDDEN, denial, 403);
+    // Nhân viên chưa khai mà còn hạn tự khai: trưởng phòng chưa vào cuộc —
+    // duyệt lúc này là cướp lượt khai của nhân viên (giao diện cũng ẩn nút).
+    if (r.status === "DRAFT" && isSelfReviewOpen(r.period)) {
       throw new BusinessError(
-        ERR.FORBIDDEN,
-        "Không thể tự duyệt KPI của chính bạn — Ban Giám đốc sẽ duyệt.",
-        403
-      );
-    }
-    if (r.employee.departmentId !== actor.departmentId) {
-      throw new BusinessError(
-        ERR.FORBIDDEN,
-        "Bạn chỉ được duyệt KPI của nhân sự trong phòng ban mình.",
-        403
+        ERR.SLA_LOCKED,
+        "Nhân viên chưa tự khai và vẫn còn hạn khai — chờ nhân viên gửi số rồi mới duyệt.",
+        409
       );
     }
     if (!isManagerReviewOpen(r.period)) {
@@ -181,13 +215,17 @@ export async function managerReview(
     }
   }
 
-  // Điều chỉnh khác số nhân viên khai thì bắt buộc có lý do
-  const changed =
-    r.actualSelf !== null && round2(input.actualFinal) !== round2(r.actualSelf);
+  // Điều chỉnh khác số đang có thì bắt buộc có lý do — số nhân viên khai,
+  // nhân viên chưa khai thì so với số hệ thống (sửa số iPOS/Excel cũng là
+  // điều chỉnh, không được lặng lẽ).
+  const baseline = r.actualSelf ?? r.actualSystem;
+  const changed = needsAdjustReason(r, input.actualFinal);
   if (changed && !input.reason?.trim()) {
     throw new BusinessError(
       ERR.REASON_REQUIRED,
-      "Bạn sửa khác số nhân viên đã khai — bắt buộc nhập lý do điều chỉnh.",
+      r.actualSelf !== null
+        ? "Bạn sửa khác số nhân viên đã khai — bắt buộc nhập lý do điều chỉnh."
+        : "Bạn sửa khác số hệ thống — bắt buộc nhập lý do điều chỉnh.",
       400
     );
   }
@@ -223,7 +261,7 @@ export async function managerReview(
       reviewerId: actor.id,
       stage: "MANAGER",
       action: changed ? "ADJUST" : "APPROVE",
-      valueBefore: r.actualSelf,
+      valueBefore: baseline,
       valueAfter: input.actualFinal,
       scoreBefore: r.weightedScore,
       scoreAfter: updated.weightedScore,
@@ -250,7 +288,9 @@ export async function managerReview(
     await notify({
       userId: r.employeeId,
       title: "Trưởng phòng đã điều chỉnh KPI của bạn",
-      body: `Chỉ tiêu "${r.kpiDefinition?.name ?? "—"}": số bạn khai ${r.actualSelf} → số chốt ${input.actualFinal}. Lý do: ${input.reason}`,
+      body: `Chỉ tiêu "${r.kpiDefinition?.name ?? "—"}": ${
+        r.actualSelf !== null ? "số bạn khai" : "số hệ thống"
+      } ${baseline} → số chốt ${input.actualFinal}. Lý do: ${input.reason}`,
       level: "WARNING",
       linkUrl: `/kpi/${r.periodId}`,
     });
@@ -398,17 +438,20 @@ export async function ceoApprove(
   );
 
   // Báo cho từng nhân viên có KPI vừa được chốt — SAU giao dịch: tin nhắn đã
-  // gửi thì không rút lại được nếu giao dịch phải huỷ.
+  // gửi thì không rút lại được nếu giao dịch phải huỷ. Dữ liệu đã khoá rồi,
+  // nên gửi song song có giới hạn và lỗi từng người chỉ ghi log: Telegram
+  // chậm không được làm request quá hạn, báo "thất bại" cho một lượt đã chốt.
   const employees = [...new Set(outcome.claimed.map((e) => e.employeeId))];
-  for (const empId of employees) {
-    await notify({
+  await forEachLimit(employees, NOTIFY_CONCURRENCY, (empId) =>
+    notify({
       userId: empId,
       title: "KPI của bạn đã được Ban Giám đốc chốt",
       body: "Điểm KPI kỳ này đã khoá. Bạn có thể xem phiếu KPI trong hệ thống.",
       level: "INFO",
       linkUrl: "/kpi",
-    });
-  }
+    }),
+    "KPI ceoApprove notify"
+  );
 
   return {
     finalized: outcome.claimed.length,
@@ -491,7 +534,17 @@ export function planCeoApproval(rows: ApprovalRow[], openMismatch: Set<string>) 
       continue;
     }
 
-    eligible.push(approvalEntry(r));
+    const entry = approvalEntry(r);
+    // Gatekeeper (trả hàng/khiếu nại) chưa có số: khoá lúc này là âm thầm bỏ
+    // qua khoản trừ 5 điểm nếu thực tế vượt ngưỡng. Để lại chờ có số (BGĐ
+    // vẫn sửa sau khoá được nếu cần).
+    const gate = gatekeeperRuleFor(r.kpiDefinition?.code);
+    if (gate && gatekeeperOutcome(gate, entry.actualFinal) === "NO_DATA") {
+      skipped.push({ id: r.id, reason: "Chỉ tiêu ngưỡng (Gatekeeper) chưa có số" });
+      continue;
+    }
+
+    eligible.push(entry);
   }
   return { eligible, skipped };
 }
@@ -548,7 +601,8 @@ export async function editAfterLock(
     where: { id: resultId },
     data: { actualFinal: input.actualFinal },
   });
-  const updated = await recalcResult(resultId);
+  // Đường DUY NHẤT được tính lại dòng đã khoá
+  const updated = await recalcResult(resultId, { allowFinalized: true });
 
   await prisma.kpiReview.create({
     data: {
@@ -718,18 +772,23 @@ export async function runKpiLockCycle(now = new Date()) {
         where: { periodId: p.id, status: "DRAFT" },
         data: { status: "SELF_REVIEWED", selfSubmittedAt: now },
       });
-      await prisma.kpiPeriod.update({
-        where: { id: p.id },
+      // Đổi trạng thái kỳ CÓ ĐIỀU KIỆN: chỉ từ OPEN. Ban Giám đốc chốt kỳ
+      // (hoặc lượt cron khác đã khoá) giữa lúc đọc và lúc ghi thì không được
+      // kéo kỳ lùi về SELF_LOCKED — kỳ đã FINALIZED mà mở lại là thảm hoạ.
+      const moved = await prisma.kpiPeriod.updateMany({
+        where: { id: p.id, status: "OPEN" },
         data: { status: "SELF_LOCKED" },
       });
-      report.push(
-        `[${p.name}] Khoá tự khai của nhân viên. ${n.count} dòng chưa khai bị đẩy sang bước duyệt.`
-      );
-      await sendCeoAlert({
-        title: `Đã khoá bước tự khai KPI ${p.name}`,
-        details: `${n.count} dòng KPI nhân viên không khai kịp hạn đã bị đẩy sang trưởng phòng.`,
-        actionPath: `/kpi/${p.id}`,
-      });
+      if (moved.count === 1) {
+        report.push(
+          `[${p.name}] Khoá tự khai của nhân viên. ${n.count} dòng chưa khai bị đẩy sang bước duyệt.`
+        );
+        await sendCeoAlert({
+          title: `Đã khoá bước tự khai KPI ${p.name}`,
+          details: `${n.count} dòng KPI nhân viên không khai kịp hạn đã bị đẩy sang trưởng phòng.`,
+          actionPath: `/kpi/${p.id}`,
+        });
+      }
     }
 
     const fresh = await prisma.kpiPeriod.findUnique({ where: { id: p.id } });
@@ -760,18 +819,21 @@ export async function runKpiLockCycle(now = new Date()) {
           `[${p.name}] ${mismatched} dòng còn lệch số chưa chốt — đẩy lên Ban Giám đốc nhưng KHÔNG tự chọn số, chờ chốt ở trang Đối soát.`
         );
       }
-      await prisma.kpiPeriod.update({
-        where: { id: p.id },
+      // Có điều kiện: chỉ từ OPEN / SELF_LOCKED — không bao giờ đè FINALIZED
+      const locked = await prisma.kpiPeriod.updateMany({
+        where: { id: p.id, status: { in: ["OPEN", "SELF_LOCKED"] } },
         data: { status: "MANAGER_LOCKED" },
       });
-      report.push(
-        `[${p.name}] Khoá duyệt của trưởng phòng. ${pending.length} dòng tự động đẩy lên hàng chờ Ban Giám đốc.`
-      );
-      await sendCeoAlert({
-        title: `KPI ${p.name} đã sẵn sàng để Ban Giám đốc duyệt`,
-        details: `${pending.length} dòng trưởng phòng chưa xử lý kịp đã tự động chuyển lên. Hạn duyệt của BGĐ là ngày ${vnParts(fresh.ceoApprovalDeadline).day}.`,
-        actionPath: `/kpi/${p.id}`,
-      });
+      if (locked.count === 1) {
+        report.push(
+          `[${p.name}] Khoá duyệt của trưởng phòng. ${pending.length} dòng tự động đẩy lên hàng chờ Ban Giám đốc.`
+        );
+        await sendCeoAlert({
+          title: `KPI ${p.name} đã sẵn sàng để Ban Giám đốc duyệt`,
+          details: `${pending.length} dòng trưởng phòng chưa xử lý kịp đã tự động chuyển lên. Hạn duyệt của BGĐ là ngày ${vnParts(fresh.ceoApprovalDeadline).day}.`,
+          actionPath: `/kpi/${p.id}`,
+        });
+      }
     }
   }
 

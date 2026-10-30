@@ -9,6 +9,7 @@ import { toast } from "@/components/toast";
 import { Avatar, ScoreBadge } from "@/components/ui";
 import { fmtNum, fmtPct, fmtScore } from "@/lib/format";
 import { formatVnDate } from "@/lib/vn-time";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 import type { GateState } from "@/lib/services/dashboard-service";
 import type {
   KpiPayslip,
@@ -229,14 +230,9 @@ export function QuickApprovals({
         ? { action: approve ? "APPROVE" : "REJECT", note: reason }
         : { action: approve ? "ACCEPT" : "REJECT", rejectReason: reason };
     try {
-      const res = await fetch(url, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
+      const res = await fetchJson(url, jsonInit("PATCH", body));
       if (!res.ok) {
-        const message = data.message || "Không xử lý được.";
+        const message = res.message || "Không xử lý được.";
         if (reason !== undefined) setDialogError(message);
         else setError({ id: item.id, message });
         return;

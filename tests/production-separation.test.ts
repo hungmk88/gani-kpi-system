@@ -2,11 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   CEO_QC_OVERRIDE_PREFIX,
   assertCanReviewAudit,
+  assertParticipantDefectsValid,
   buildCeoOverrideQcNote,
   canExplainAudit,
+  canOpenAuditPortal,
+  canSeeAuditDetails,
   extractCeoQcOverrideReason,
+  redactAuditForViewer,
   resolveQcApproval,
+  sanitizeQcNoteInput,
 } from "@/lib/services/production-service";
+import { SHIFT_RETURN_PREFIX, isShiftReturned } from "@/lib/production/shift-flow";
 import { BusinessError } from "@/lib/rbac";
 
 // TÁCH BẠCH TRÁCH NHIỆM trong luồng 3 bước của xưởng: khai → KCS → BGĐ khoá.
@@ -165,5 +171,133 @@ describe("ghi chú KCS — tiền tố vượt quyền chỉ máy chủ được
       ceoOverrideReason: "KCS ca đêm nghỉ ốm đột xuất",
     });
     expect(r).toEqual({ mode: "CEO_OVERRIDE", reason: "KCS ca đêm nghỉ ốm đột xuất" });
+  });
+});
+
+describe("bước 2 — người có tên làm ca không được xác nhận KCS", () => {
+  const shift = { createdById: "w1", participantUserIds: ["w1", "w2", "qc1"] };
+
+  it("KCS có tên trong ca: chặn (tự chấm lỗi công đoạn của mình)", () => {
+    expect(statusOf(() => resolveQcApproval(qc, shift, {}))).toBe(403);
+  });
+
+  it("KCS không làm ca: duyệt bình thường", () => {
+    expect(
+      resolveQcApproval(qc, { createdById: "w1", participantUserIds: ["w1", "w2"] }, {})
+    ).toEqual({ mode: "QC" });
+  });
+
+  it("BGĐ có tên trong ca: vượt quyền cũng bị chặn", () => {
+    expect(
+      statusOf(() =>
+        resolveQcApproval(
+          ceo,
+          { createdById: "w1", participantUserIds: ["ceo1"] },
+          { ceoOverrideReason: "KCS nghỉ phép cả tuần" }
+        )
+      )
+    ).toBe(403);
+  });
+
+  it("BGĐ không làm ca vẫn vượt quyền được (ca có KCS duy nhất là người làm ca)", () => {
+    expect(
+      resolveQcApproval(ceo, shift, { ceoOverrideReason: "KCS duy nhất có tên làm ca" })
+    ).toEqual({ mode: "CEO_OVERRIDE", reason: "KCS duy nhất có tên làm ca" });
+  });
+});
+
+describe("ghi chú KCS — không giả được tiền tố trạng thái", () => {
+  it("gỡ tiền tố vượt quyền ở mọi vị trí, kể cả có dấu cách phía trước", () => {
+    const forged = sanitizeQcNoteInput(` ${CEO_QC_OVERRIDE_PREFIX} giả làm BGĐ\nviên nứt`);
+    expect(forged).toBe("giả làm BGĐ\nviên nứt");
+    expect(extractCeoQcOverrideReason(forged)).toBeNull();
+  });
+
+  it("gỡ tiền tố 'KCS trả về' — không giả được ca bị trả về", () => {
+    const n = sanitizeQcNoteInput(`  ${SHIFT_RETURN_PREFIX} ai đó\nlý do`);
+    expect(n).toBe("ai đó\nlý do");
+    expect(isShiftReturned({ status: "DRAFT", qcNote: n })).toBe(false);
+  });
+
+  it("ghi chú rỗng / chỉ có tiền tố → null", () => {
+    expect(sanitizeQcNoteInput("   ")).toBeNull();
+    expect(sanitizeQcNoteInput(CEO_QC_OVERRIDE_PREFIX)).toBeNull();
+    expect(sanitizeQcNoteInput(undefined)).toBeNull();
+  });
+
+  it("BGĐ vượt quyền: ghi chú phía sau không mang thêm tiền tố nào", () => {
+    const note = buildCeoOverrideQcNote(
+      "KCS nghỉ ốm cả ca",
+      `${CEO_QC_OVERRIDE_PREFIX} KCS nghỉ ốm cả ca\n${SHIFT_RETURN_PREFIX} viên nứt`
+    );
+    expect(note).toBe(`${CEO_QC_OVERRIDE_PREFIX} KCS nghỉ ốm cả ca\nviên nứt`);
+    expect(note.split(CEO_QC_OVERRIDE_PREFIX).length).toBe(2);
+  });
+});
+
+describe("lỗi công đoạn KCS gán cho từng người", () => {
+  it("đúng người trong ca, mỗi người một dòng: được", () => {
+    expect(statusOf(() => assertParticipantDefectsValid([{ userId: "a" }], ["a", "b"]))).toBe(
+      200
+    );
+    expect(statusOf(() => assertParticipantDefectsValid(undefined, ["a"]))).toBe(200);
+  });
+
+  it("trùng người: chặn", () => {
+    expect(
+      statusOf(() => assertParticipantDefectsValid([{ userId: "a" }, { userId: "a" }], ["a"]))
+    ).toBe(400);
+  });
+
+  it("người ngoài ca: chặn thay vì bỏ qua im lặng", () => {
+    expect(
+      statusOf(() => assertParticipantDefectsValid([{ userId: "x" }], ["a", "b"]))
+    ).toBe(400);
+  });
+});
+
+describe("một luật xem cảnh báo cho trang và API chi tiết ca", () => {
+  const audit = {
+    id: "a1",
+    behaviorType: "MATERIAL_OVERRUN",
+    severity: "CRITICAL",
+    status: "CEO_APPROVED",
+    createdAt: new Date("2026-10-01T00:00:00Z"),
+    auditNote: "NVL vượt định mức 12%",
+    explanationText: "Lô thịt rã đông hao nước",
+    explainedById: "sup1",
+    explainedBy: { id: "sup1", fullName: "Quản đốc" },
+    ceoReviewNote: "Chấp nhận, theo dõi tuần sau",
+    reviewedBy: { id: "ceo1", fullName: "BGĐ" },
+  };
+
+  it("cấp quản lý xưởng (vào được cổng cảnh báo) thấy đủ", () => {
+    const sup = { id: "s9", role: "STAFF", productionRole: "SUPERVISOR" };
+    expect(canOpenAuditPortal(sup)).toBe(true);
+    const r = redactAuditForViewer(audit, sup);
+    expect(r.detailed).toBe(true);
+    expect(r.auditNote).toBe(audit.auditNote);
+    expect(r.explanationText).toBe(audit.explanationText);
+  });
+
+  it("công nhân làm ca: biết có cảnh báo + kết luận BGĐ, không thấy nội dung / giải trình người khác", () => {
+    expect(canOpenAuditPortal(worker)).toBe(false);
+    const r = redactAuditForViewer(audit, worker);
+    expect(r.detailed).toBe(false);
+    expect(r.behaviorType).toBe("MATERIAL_OVERRUN");
+    expect(r.status).toBe("CEO_APPROVED");
+    expect(r.auditNote).toBeNull();
+    expect(r.explanationText).toBeNull();
+    expect(r.ceoReviewNote).toBe(audit.ceoReviewNote);
+  });
+
+  it("người không vào được cổng nhưng chính mình viết giải trình: thấy giải trình của mình", () => {
+    const r = redactAuditForViewer({ ...audit, explainedById: "w1" }, worker);
+    expect(r.explanationText).toBe(audit.explanationText);
+  });
+
+  it("ADMIN không vào được cổng cảnh báo — không hiện liên kết", () => {
+    expect(canOpenAuditPortal({ role: "ADMIN", productionRole: null })).toBe(false);
+    expect(canSeeAuditDetails({ role: "ADMIN", productionRole: null })).toBe(false);
   });
 });

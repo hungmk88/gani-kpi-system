@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { Badge } from "@/components/ui";
@@ -8,6 +8,7 @@ import ConfirmDialog from "@/components/confirm-dialog";
 import VnNumberInput from "@/components/vn-number-input";
 import { toast } from "@/components/toast";
 import { fmtKg, fmtNum, fmtPct, fmtVnd } from "@/lib/format";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 
 type Sku = {
   id: string;
@@ -38,6 +39,8 @@ export default function SkuManager({
   rawMaterials: RawMaterialOption[];
 }) {
   const router = useRouter();
+  // Nhãn gắn với ô nhập (htmlFor) — bấm nhãn vào ô, trình đọc màn hình đọc đúng tên
+  const fid = useId();
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,20 +83,18 @@ export default function SkuManager({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/production/skus", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const res = await fetchJson(
+        "/api/production/skus",
+        jsonInit("POST", {
           ...f,
           skuCode: f.skuCode.toUpperCase(),
           targetOutputKg: f.targetOutputKg ?? 0,
           stdMaterialLossRate: f.stdMaterialLossRate ?? 0,
           unitPriceVnd: Math.round(f.unitPriceVnd ?? 0),
-        }),
-      });
-      const data = await res.json();
+        })
+      );
       if (!res.ok) {
-        setError(data.message);
+        setError(res.message);
         return;
       }
       setAdding(false);
@@ -263,8 +264,9 @@ export default function SkuManager({
       {adding && (
         <div className="card mb-4 grid gap-3 p-4 sm:grid-cols-3">
           <div>
-            <label className="label">Mã SKU</label>
+            <label className="label" htmlFor={`${fid}-code`}>Mã SKU</label>
             <input
+              id={`${fid}-code`}
               className="input uppercase"
               value={f.skuCode}
               onChange={(e) =>
@@ -274,8 +276,9 @@ export default function SkuManager({
             />
           </div>
           <div className="sm:col-span-2">
-            <label className="label">Tên sản phẩm</label>
+            <label className="label" htmlFor={`${fid}-name`}>Tên sản phẩm</label>
             <input
+              id={`${fid}-name`}
               className="input"
               value={f.skuName}
               onChange={(e) => setF({ ...f, skuName: e.target.value })}

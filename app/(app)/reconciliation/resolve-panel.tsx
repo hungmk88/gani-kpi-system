@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import VnNumberInput from "@/components/vn-number-input";
 import { toast } from "@/components/toast";
@@ -33,6 +33,7 @@ export default function ResolvePanel({
   allowCustom?: boolean;
 }) {
   const router = useRouter();
+  const reasonId = useId();
   const [picked, setPicked] = useState<string>("");
   // Ô nhập kiểu Việt: "1.250,5" đọc đúng; ô trống là null, không tự thành 0
   const [custom, setCustom] = useState<number | null>(null);
@@ -83,6 +84,8 @@ export default function ResolvePanel({
           return (
             <button
               key={s.code}
+              type="button"
+              aria-pressed={active}
               onClick={() => setPicked(s.code)}
               className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
                 active
@@ -128,6 +131,8 @@ export default function ResolvePanel({
 
         {allowCustom && (
         <button
+          type="button"
+          aria-pressed={isCustom}
           onClick={() => setPicked("__custom__")}
           className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
             isCustom
@@ -159,10 +164,11 @@ export default function ResolvePanel({
       </div>
 
       <div className="mb-3">
-        <label className="label">
+        <label className="label" htmlFor={reasonId}>
           Vì sao chọn số này? (bắt buộc, tối thiểu 10 ký tự)
         </label>
         <input
+          id={reasonId}
           className="input"
           placeholder="Ví dụ: đã đối chiếu hoá đơn giấy với kế toán, số iPOS đúng"
           value={reason}

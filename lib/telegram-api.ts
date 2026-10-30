@@ -24,7 +24,18 @@ export type TelegramResult = {
   ok: boolean;
   data?: unknown;
   error?: string;
+  /** Mã HTTP Telegram trả về (400 = tin sai định dạng, vd HTML hỏng) */
+  status?: number;
 };
+
+/** Telegram từ chối vì không đọc được HTML/entity trong tin (lỗi 400). */
+export function isParseError(res: TelegramResult) {
+  return (
+    !res.ok &&
+    res.status === 400 &&
+    /can't parse entities|unsupported start tag|can't find end tag/i.test(res.error ?? "")
+  );
+}
 
 /** Gọi một phương thức bất kỳ của Bot API. Không ném lỗi ra ngoài. */
 export async function callTelegram(
@@ -50,6 +61,7 @@ export async function callTelegram(
     if (!res.ok || body?.ok === false) {
       return {
         ok: false,
+        status: res.status,
         error: `Telegram ${method} lỗi ${res.status}: ${
           body?.description ?? "không rõ"
         }`,
@@ -83,6 +95,15 @@ export async function sendMessage(
     parse_mode: "HTML",
     disable_web_page_preview: true,
     ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+  });
+}
+
+/** Gửi tin chữ thường (không parse HTML) — đường lùi khi bản HTML bị từ chối. */
+export async function sendPlainMessage(chatId: string, text: string): Promise<TelegramResult> {
+  return callTelegram("sendMessage", {
+    chat_id: chatId,
+    text,
+    disable_web_page_preview: true,
   });
 }
 

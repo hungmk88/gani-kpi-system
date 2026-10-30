@@ -14,7 +14,7 @@ type LinkInfo = {
 };
 
 /**
- * Tự nối tài khoản Telegram bằng mã 6 số.
+ * Tự nối tài khoản Telegram bằng mã một lần (8 ký tự).
  *
  * Trước đây quản trị phải đi hỏi chat_id của từng người rồi chép tay vào hệ
  * thống — vừa mất công vừa dễ chép nhầm sang người khác, mà chép nhầm thì thông

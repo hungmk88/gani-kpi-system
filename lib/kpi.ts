@@ -297,3 +297,58 @@ export function classifyScore(score: number) {
   if (score >= 70) return { label: "Cần cải thiện", tone: "amber" as const };
   return { label: "Không đạt", tone: "red" as const };
 }
+
+/* ------------------------------------- AI ĐƯỢC ĐỤNG VÀO DÒNG KPI CỦA AI */
+
+export type KpiOversightAction = "review" | "target" | "import";
+
+const OVERSIGHT_MESSAGES: Record<
+  KpiOversightAction,
+  { self: string; otherDept: string; managerRow: string; forbidden: string }
+> = {
+  review: {
+    self: "Không thể tự duyệt KPI của chính bạn — Ban Giám đốc sẽ duyệt.",
+    otherDept: "Bạn chỉ được duyệt KPI của nhân sự trong phòng ban mình.",
+    managerRow:
+      "KPI của trưởng phòng do Ban Giám đốc duyệt — bạn không duyệt được dòng này.",
+    forbidden: "Bạn không có quyền duyệt KPI.",
+  },
+  target: {
+    self: "Không tự đặt mục tiêu cho chính mình — Ban Giám đốc đặt mục tiêu của trưởng phòng.",
+    otherDept: "Trưởng phòng chỉ đặt mục tiêu cho nhân sự phòng mình.",
+    managerRow: "Mục tiêu KPI của trưởng phòng do Ban Giám đốc đặt.",
+    forbidden: "Bạn không có quyền đặt mục tiêu KPI.",
+  },
+  import: {
+    self: "Không nạp số hệ thống cho KPI của chính bạn — Ban Giám đốc nạp.",
+    otherDept: "Không thuộc phòng ban của bạn.",
+    managerRow: "KPI của trưởng phòng do Ban Giám đốc nạp số và duyệt.",
+    forbidden: "Bạn không có quyền nạp số KPI.",
+  },
+};
+
+/**
+ * Người này có được duyệt / đặt mục tiêu / nạp "số hệ thống" cho dòng KPI
+ * của nhân sự kia không. Cùng luật với duyệt nghỉ phép (canReviewLeave):
+ * - Ban Giám đốc: toàn công ty.
+ * - Trưởng phòng: chỉ nhân viên thường CÙNG phòng. KPI của chính mình và của
+ *   trưởng phòng khác (kể cả cùng phòng) do Ban Giám đốc xử lý — nếu không,
+ *   hai trưởng phòng một phòng duyệt chéo cho nhau.
+ * - Vai trò khác: không.
+ * Trả về câu báo lỗi (tiếng Việt), hoặc null nếu được phép. Thuần.
+ */
+export function kpiOversightDenial(
+  actor: { id: string; role: string; departmentId: string | null },
+  employee: { id: string; role: string; departmentId: string | null },
+  action: KpiOversightAction
+): string | null {
+  const msg = OVERSIGHT_MESSAGES[action];
+  if (actor.role === "CEO") return null;
+  if (actor.role !== "MANAGER") return msg.forbidden;
+  if (employee.id === actor.id) return msg.self;
+  if (!actor.departmentId || employee.departmentId !== actor.departmentId) {
+    return msg.otherDept;
+  }
+  if (employee.role === "MANAGER" || employee.role === "ADMIN") return msg.managerRow;
+  return null;
+}

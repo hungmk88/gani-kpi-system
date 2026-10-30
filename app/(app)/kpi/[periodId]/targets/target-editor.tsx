@@ -14,8 +14,10 @@ export type TargetRow = {
   weightPercent: number;
   /** null = chưa đặt mục tiêu */
   targetValue: number | null;
-  /** Dòng KPI đã chốt — API không cho sửa mục tiêu nữa */
+  /** Dòng KPI đã chốt (hoặc đã duyệt, với trưởng phòng) — API không cho sửa mục tiêu nữa */
   locked: boolean;
+  /** Nhãn cạnh ô bị khoá: "Đã chốt" / "Đã duyệt" */
+  lockedLabel?: string;
   /** Khác null = chỉ tiêu ngưỡng (gatekeeper): hiện luật thay cho ô mục tiêu */
   gatekeeperText: string | null;
 };
@@ -60,15 +62,19 @@ function evaluate(raw: string, baseline: number | null): CellState {
 }
 
 /**
- * Trưởng phòng không tự đặt mục tiêu cho chính mình — Ban Giám đốc đặt.
- * Giữ đúng luật của API; CEO / ADMIN sửa được mọi dòng.
+ * Trưởng phòng không tự đặt mục tiêu cho chính mình, cũng không đặt cho
+ * trưởng phòng khác cùng phòng — Ban Giám đốc đặt. Giữ đúng luật của API
+ * (kpiOversightDenial); Ban Giám đốc sửa được mọi dòng.
  */
 function isOwnRowsLocked(
   g: TargetGroup,
   currentUserId: string,
   currentUserRole: string
 ) {
-  return currentUserRole === "MANAGER" && g.employeeId === currentUserId;
+  return (
+    currentUserRole === "MANAGER" &&
+    (g.employeeId === currentUserId || g.role === "MANAGER" || g.role === "ADMIN")
+  );
 }
 
 export default function TargetEditor({
@@ -364,7 +370,7 @@ export default function TargetEditor({
                                 <span className="text-xs text-ink-500">{r.unit}</span>
                                 {canEdit && r.locked && !ownLocked && (
                                   <span className="inline-flex items-center gap-1 text-xs text-ink-500">
-                                    <Lock size={12} strokeWidth={2} /> Đã chốt
+                                    <Lock size={12} strokeWidth={2} /> {r.lockedLabel ?? "Đã chốt"}
                                   </span>
                                 )}
                               </div>

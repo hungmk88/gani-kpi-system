@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -29,6 +29,7 @@ import ConfirmDialog from "@/components/confirm-dialog";
 import StickyActions from "@/components/sticky-actions";
 import VnNumberInput from "@/components/vn-number-input";
 import { toast } from "@/components/toast";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 
 type Shift = {
   id: string;
@@ -51,6 +52,8 @@ type Shift = {
   unitPriceVnd: number | null;
   /** KCS đã trả ca về sản xuất sửa (ca vẫn DRAFT) — người trả + lý do */
   returned: { by: string; reason: string } | null;
+  /** Người xem được sửa và gửi lại ca trả về (người khai, hoặc nhận thay) */
+  canResubmit?: boolean;
 };
 
 type Participant = {
@@ -86,26 +89,39 @@ export default function ShiftActions({
   // thì phải vượt quyền có ghi lý do (máy chủ kiểm tra lại). Người khai ca
   // không tự xác nhận ca của mình — kể cả BGĐ.
   const isCreator = shift.createdById === viewer.id;
+  // Người có tên làm ca cũng không xác nhận KCS được (KCS chấm lỗi công đoạn
+  // cho từng người, gồm cả chính mình) — máy chủ chặn, ở đây nói trước.
+  const isParticipant = participants.some((p) => p.userId === viewer.id);
 
-  async function call(payload: unknown) {
+  // Trên điện thoại nút xác nhận / khoá nằm ở thanh dính đáy màn hình, còn ô
+  // lỗi ở đầu thẻ thao tác — bấm xong không thấy gì xảy ra. Lỗi mới: báo
+  // toast (luôn hiện trong tầm mắt) và cuộn ô lỗi vào khung nhìn.
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [error]);
+  function fail(msg: string) {
+    setError(msg);
+    toast(msg, "error");
+  }
+
+  async function call<T = Record<string, unknown>>(payload: unknown): Promise<T | null> {
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      const res = await fetch(`/api/production/shifts/${shift.id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
+      const res = await fetchJson<T>(
+        `/api/production/shifts/${shift.id}`,
+        jsonInit("POST", payload)
+      );
       if (!res.ok) {
-        setError(data.message || "Thao tác thất bại.");
+        fail(res.message ?? "Thao tác thất bại.");
         return null;
       }
       router.refresh();
-      return data;
+      return res.data;
     } catch {
-      setError("Mất kết nối tới máy chủ.");
+      fail("Mất kết nối tới máy chủ.");
       return null;
     } finally {
       setBusy(false);
@@ -118,6 +134,7 @@ export default function ShiftActions({
 
       {error && (
         <div
+          ref={errorRef}
           role="alert"
           className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
         >
@@ -135,7 +152,7 @@ export default function ShiftActions({
           được cho tới khi gửi lại. */}
       {shift.status === "DRAFT" &&
         shift.returned &&
-        (isCreator ? (
+        (isCreator || shift.canResubmit ? (
           <div className="space-y-3">
             <p className="text-sm text-ink-700">
               KCS đã trả ca này về cho bạn sửa. Sửa số liệu theo lý do ở trên rồi
@@ -157,10 +174,12 @@ export default function ShiftActions({
 
       {shift.status === "DRAFT" &&
         !shift.returned &&
-        (isCreator && (isQcOfficer || isCeo) ? (
+        ((isCreator || isParticipant) && (isQcOfficer || isCeo) ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Bạn là người khai ca này nên không được tự xác nhận phẩm chất. Phải
-            là một KCS khác vào duyệt — đó là lý do có bước 2.
+            {isCreator
+              ? "Bạn là người khai ca này nên không được tự xác nhận phẩm chất."
+              : "Bạn có tên trong danh sách làm ca này nên không được xác nhận phẩm chất (KCS chấm lỗi công đoạn cho từng người, gồm cả bạn)."}{" "}
+            Phải là một KCS khác không làm ca vào duyệt — đó là lý do có bước 2.
           </div>
         ) : isQcOfficer ? (
           <QcForm
@@ -194,7 +213,11 @@ export default function ShiftActions({
             busy={busy}
             error={error}
             onCall={async (p) => {
-              const d = await call(p);
+              const d = await call<{
+                tier2Score: number;
+                scored: number;
+                findings?: unknown[];
+              }>(p);
               if (d) {
                 toast("Đã khoá số và chấm điểm ca.");
                 setMessage(
@@ -686,6 +709,8 @@ function CeoLockForm({
   const [nvlReason, setNvlReason] = useState("");
   const [ceoNote, setCeoNote] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Nhãn gắn với ô nhập (bấm nhãn vào ô, trình đọc màn hình đọc đúng tên ô)
+  const fid = useId();
 
   const targetKg = target ?? 0;
   const nvlKg = nvl ?? 0;
@@ -751,11 +776,12 @@ function CeoLockForm({
         />
         {targetChanged && (
           <div className="mt-2">
-            <p className="mb-1 text-xs text-amber-800">
+            <label htmlFor={`${fid}-target-reason`} className="mb-1 block text-xs text-amber-800">
               Khác chuẩn SKU — bắt buộc ghi lý do. Đặt chỉ tiêu sau khi đã biết
               kết quả là chỗ dễ bị nghi ngờ nhất, nên phải có dấu vết.
-            </p>
+            </label>
             <input
+              id={`${fid}-target-reason`}
               className="input"
               placeholder="Vì sao đặt khác chuẩn?"
               value={targetReason}
@@ -781,10 +807,11 @@ function CeoLockForm({
         />
         {nvlChanged && (
           <div className="mt-2">
-            <p className="mb-1 text-xs text-amber-800">
+            <label htmlFor={`${fid}-nvl-reason`} className="mb-1 block text-xs text-amber-800">
               Khác số kho đã khai — bắt buộc ghi lý do.
-            </p>
+            </label>
             <input
+              id={`${fid}-nvl-reason`}
               className="input"
               placeholder="Vì sao đính chính số kho?"
               value={nvlReason}
@@ -814,8 +841,11 @@ function CeoLockForm({
       </div>
 
       <div>
-        <label className="label">Ghi chú của Ban Giám đốc</label>
+        <label className="label" htmlFor={`${fid}-ceo-note`}>
+          Ghi chú của Ban Giám đốc
+        </label>
         <input
+          id={`${fid}-ceo-note`}
           className="input"
           value={ceoNote}
           onChange={(e) => setCeoNote(e.target.value)}

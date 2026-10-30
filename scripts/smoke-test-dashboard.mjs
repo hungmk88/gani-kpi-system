@@ -71,6 +71,11 @@ const FORBIDDEN = {
   CEO: ["/admin"],
 };
 
+// Trang con được mở riêng dù nhánh cha bị chặn (trang tự kiểm vai trò).
+const ALLOWED = {
+  CEO: ["/admin/kpi-dashboard"],
+};
+
 async function main() {
   console.log(`\n🔬 KIỂM THỬ BẢNG ĐIỀU HÀNH — ${BASE}\n`);
 
@@ -295,7 +300,10 @@ async function main() {
     ["Nhân viên", "EMPLOYEE", dEmp],
     ["Quản trị", "ADMIN", dAdmin],
   ]) {
-    const hrefs = [...d.html.matchAll(/href="(\/[^"#?]*)/g)].map((m) => m[1]);
+    const allowed = ALLOWED[role] ?? [];
+    const hrefs = [...d.html.matchAll(/href="(\/[^"#?]*)/g)]
+      .map((m) => m[1])
+      .filter((h) => !allowed.some((a) => h === a || h.startsWith(a + "/")));
     const bad = FORBIDDEN[role].filter((p) =>
       hrefs.some((h) => h === p || h.startsWith(p + "/"))
     );

@@ -4,6 +4,8 @@ import { ingestFromSource } from "@/lib/services/integration-service";
 import { clientMeta } from "@/lib/audit";
 
 export const runtime = "nodejs";
+// Lô tối đa 500 bản ghi + đối soát từng ô — vượt 10s mặc định của Vercel.
+export const maxDuration = 60;
 
 /**
  * CỔNG NHẬN DỮ LIỆU ĐA NGUỒN — một địa chỉ cho mọi hệ thống bên ngoài.
@@ -19,6 +21,7 @@ export const runtime = "nodejs";
  *      "month": 9, "year": 2026, "value": 520000000 }]
  *
  * Mã nguồn và khoá bí mật khai ở Quản trị → Tích hợp.
+ * Mỗi chữ ký chỉ dùng được MỘT lần: gửi lại y nguyên gói cũ -> 409.
  *
  * Riêng nguồn "ipos" còn nhận được cách xác thực cũ bằng header X-Webhook-Secret
  * để đường tích hợp làm từ Phase 1 không gãy.

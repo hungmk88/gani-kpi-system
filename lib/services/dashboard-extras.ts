@@ -2,7 +2,10 @@ import { prisma } from "@/lib/db";
 import type { SessionUser } from "@/lib/auth";
 import { taskScopeWhere } from "@/lib/rbac";
 import { vnDayRange, vnParts } from "@/lib/vn-time";
-import { leaveDaysBetween } from "@/lib/services/leave-service";
+import {
+  leaveDaysBetween,
+  pendingLeaveForReviewerWhere,
+} from "@/lib/services/leave-service";
 import {
   gatekeeperOutcome,
   gatekeeperRuleFor,
@@ -48,7 +51,9 @@ export type QuickApproval =
 /**
  * Đơn đang chờ ĐÚNG người này quyết:
  * - Nghỉ phép: Trưởng phòng duyệt nhân viên phòng mình; Ban Giám đốc duyệt
- *   Trưởng phòng / Quản trị (canReviewLeave trong leave-service).
+ *   Trưởng phòng / Quản trị và đơn của phòng chưa có trưởng phòng
+ *   (pendingLeaveForReviewerWhere trong leave-service — cùng luật với nơi
+ *   gửi thông báo khi đơn được tạo).
  * - Yêu cầu liên phòng: Trưởng phòng của phòng NHẬN, hoặc Ban Giám đốc.
  * Người khác trả rỗng — khối không hiện.
  */
@@ -56,14 +61,7 @@ export async function buildQuickApprovals(user: SessionUser) {
   if (user.role !== "MANAGER" && user.role !== "CEO") {
     return { items: [] as QuickApproval[], total: 0 };
   }
-  const leaveWhere =
-    user.role === "MANAGER"
-      ? {
-          status: "PENDING",
-          departmentId: user.departmentId ?? "__none__",
-          employee: { role: { notIn: ["MANAGER", "ADMIN"] } },
-        }
-      : { status: "PENDING", employee: { role: { in: ["MANAGER", "ADMIN"] } } };
+  const leaveWhere = pendingLeaveForReviewerWhere(user) ?? { id: "__none__" };
   const requestWhere =
     user.role === "MANAGER"
       ? { status: "PENDING", targetDeptId: user.departmentId ?? "__none__" }

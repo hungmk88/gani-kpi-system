@@ -132,6 +132,7 @@ export default function TaskBoard({
         />
         <select
           className="input w-auto"
+          aria-label="Lọc theo mức ưu tiên"
           value={priority}
           onChange={(e) => setPriority(e.target.value)}
         >
@@ -362,7 +363,7 @@ export default function TaskBoard({
                     )}
                   </td>
                   <td data-label="Hạn chót">
-                    <DueDate date={t.dueDate} done={t.status === "DONE"} />
+                    <DueDate date={t.dueDate} done={isClosed(t)} />
                   </td>
                   <td data-label="Ưu tiên">
                     <PriorityBadge priority={t.priority} />
@@ -391,11 +392,20 @@ export default function TaskBoard({
 }
 
 const DONE_PREVIEW = 5;
-const OPEN_FOR_LATE = ["BACKLOG", "TO_DO", "IN_PROGRESS", "BLOCKED"];
+/**
+ * MỘT định nghĩa "trễ" cho cả bảng Kanban, danh sách và nhóm điện thoại
+ * (trước đây danh sách coi REVIEW quá hạn là trễ, thẻ Kanban thì không).
+ *
+ * Chọn: chỉ DONE / CANCELLED mới thoát trễ. Việc đang CHỜ DUYỆT (REVIEW) mà
+ * quá hạn VẪN là trễ — chưa được nghiệm thu thì chưa xong, và người duyệt
+ * cần thấy đỏ để duyệt cho kịp. Khớp với lib/gantt.ts (isOverdue) và số "việc
+ * quá hạn" trên trang chủ.
+ */
+const CLOSED_STATUSES = ["DONE", "CANCELLED"];
+const isClosed = (t: TaskRow) => CLOSED_STATUSES.includes(t.status);
 
-/** Trễ = còn đang làm mà đã qua hạn. Việc chờ duyệt/đã xong không tính trễ. */
 function isLate(t: TaskRow, now: number) {
-  return OPEN_FOR_LATE.includes(t.status) && +new Date(t.dueDate) < now;
+  return !isClosed(t) && +new Date(t.dueDate) < now;
 }
 
 function TaskCard({ t }: { t: TaskRow }) {
@@ -428,7 +438,7 @@ function TaskCard({ t }: { t: TaskRow }) {
             <TriangleAlert size={12} strokeWidth={2.5} /> Chưa giao
           </span>
         )}{" "}
-        · <DueDate date={t.dueDate} done={!OPEN_FOR_LATE.includes(t.status)} />
+        · <DueDate date={t.dueDate} done={isClosed(t)} />
       </div>
       <ProgressBar
         value={t.progress}

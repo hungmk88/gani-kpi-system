@@ -6,8 +6,11 @@ import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
   RETURNED_WHERE,
+  STUCK_CREATOR_WHERE,
   WAITING_QC_WHERE,
   awaitingMyStepWhere,
+  canOpenAuditPortal,
+  canTakeOverReturnedShift,
   withProductionRole,
 } from "@/lib/services/production-service";
 import {
@@ -98,6 +101,12 @@ export default async function ProductionPage({
         OR: [
           { createdById: user.id },
           { participants: { some: { userId: user.id } } },
+          // Tổ trưởng nhận thay ca trả về mà người khai đã nghỉ / mất vai trò —
+          // phải thấy được ca đó thì mới sửa và gửi lại được (cùng điều kiện
+          // với hàng "Chờ bạn xử lý", xem awaitingMyStepWhere).
+          ...(canTakeOverReturnedShift(user)
+            ? [{ ...RETURNED_WHERE, createdBy: STUCK_CREATOR_WHERE }]
+            : []),
         ],
       };
 
@@ -163,6 +172,10 @@ export default async function ProductionPage({
       user.productionRole ?? ""
     );
 
+  // Liên kết tới cổng cảnh báo chỉ cho người trang đó cho vào (ADMIN, công
+  // nhân bấm vào sẽ bị đẩy về đây — đường cụt)
+  const showAudits = canOpenAuditPortal(user);
+
   // Bấm lại thẻ đang lọc thì bỏ lọc
   const cardHref = (st: ShiftStage) => (filter === st ? listHref(null) : listHref(st));
 
@@ -177,9 +190,11 @@ export default async function ProductionPage({
         }`}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Link href="/production/audits" className="btn-ghost">
-              Cảnh báo {openAudits > 0 && `(${openAudits})`}
-            </Link>
+            {showAudits && (
+              <Link href="/production/audits" className="btn-ghost">
+                Cảnh báo {openAudits > 0 && `(${openAudits})`}
+              </Link>
+            )}
             <Link href="/production/skus" className="btn-ghost">
               Danh mục SKU
             </Link>
@@ -239,7 +254,7 @@ export default async function ProductionPage({
           tone={openAudits > 0 ? "red" : "slate"}
           surface={openAudits > 0 ? "red" : undefined}
           hint={openAudits > 0 ? "thưởng đang bị khoá" : "không có bất thường"}
-          href="/production/audits"
+          href={showAudits ? "/production/audits" : undefined}
         />
       </div>
 

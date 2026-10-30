@@ -4,7 +4,8 @@ import { requireSession } from "@/lib/auth";
 import Image from "next/image";
 import ChangePasswordForm, { LogoutButton } from "./change-password-form";
 
-export const metadata = { title: "Đổi mật khẩu — GANI FOODY KPI" };
+// Chỉ tên trang — hậu tố do template của layout gốc thêm vào.
+export const metadata = { title: "Đổi mật khẩu" };
 
 /**
  * Trang này cố ý nằm NGOÀI nhóm (app).

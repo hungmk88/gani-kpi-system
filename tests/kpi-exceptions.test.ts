@@ -16,6 +16,7 @@ import {
 const r = (status: string, over: Partial<ExceptionRow> = {}): ExceptionRow => ({
   status,
   hasMismatch: false,
+  reconMismatch: false,
   isCapped: false,
   isGatekeeper: false,
   ...over,
@@ -54,9 +55,22 @@ describe("chờ tôi xử lý", () => {
     expect(rowNeedsViewer(r("SELF_REVIEWED"), g("tp", []), manager)).toBe(false);
   });
 
+  it("trưởng phòng: KPI của trưởng phòng khác cùng phòng do Ban Giám đốc duyệt — không chờ mình", () => {
+    expect(
+      rowNeedsViewer(r("SELF_REVIEWED"), g("tp2", [], { employeeRole: "MANAGER" }), manager)
+    ).toBe(false);
+  });
+
+  it("cờ lệch số (chặn chốt) theo đối soát chưa chốt, không theo cờ ghi chú trên dòng", () => {
+    expect(groupFlags(g("a", [r("SELF_REVIEWED", { hasMismatch: true })]), ceo, "PROVISIONAL").mismatch).toBe(0);
+    expect(groupFlags(g("a", [r("SELF_REVIEWED", { reconMismatch: true })]), ceo, "PROVISIONAL").mismatch).toBe(1);
+  });
+
   it("Ban Giám đốc: dòng sẵn sàng khoá (không lệch số) và KPI tự khai của trưởng phòng", () => {
     expect(rowNeedsViewer(r("MANAGER_REVIEWED"), g("a", []), ceo)).toBe(true);
-    expect(rowNeedsViewer(r("MANAGER_REVIEWED", { hasMismatch: true }), g("a", []), ceo)).toBe(false);
+    expect(rowNeedsViewer(r("MANAGER_REVIEWED", { reconMismatch: true }), g("a", []), ceo)).toBe(false);
+    // Cờ "lệch" trên dòng chỉ là ghi chú — máy chủ vẫn khoá được, nên vẫn chờ BGĐ
+    expect(rowNeedsViewer(r("MANAGER_REVIEWED", { hasMismatch: true }), g("a", []), ceo)).toBe(true);
     expect(rowNeedsViewer(r("SELF_REVIEWED"), g("a", []), ceo)).toBe(false);
     expect(rowNeedsViewer(r("SELF_REVIEWED"), g("a", [], { employeeRole: "MANAGER" }), ceo)).toBe(true);
     expect(rowNeedsViewer(r("FINALIZED"), g("a", []), ceo)).toBe(false);
@@ -82,7 +96,7 @@ describe("cờ ngoại lệ & thứ tự", () => {
       g("cuong", [r("SELF_REVIEWED", { isCapped: true })]),
       g("dung", [r("MANAGER_REVIEWED")]),
       g("an", [r("SELF_REVIEWED")], { summary: { totalScore: 50 } }),
-      g("em", [r("SELF_REVIEWED", { hasMismatch: true })]),
+      g("em", [r("SELF_REVIEWED", { reconMismatch: true })]),
       g("giang", [r("MANAGER_REVIEWED")]),
     ];
     const ranked = groups.map((x) => ({ x, f: groupFlags(x, ceo, "PROVISIONAL") }));

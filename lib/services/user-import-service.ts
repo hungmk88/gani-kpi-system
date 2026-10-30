@@ -9,6 +9,7 @@ import {
   type UserImportRow,
 } from "@/lib/excel-users";
 import { writeAudit } from "@/lib/audit";
+import { alertCeos } from "@/lib/services/user-security";
 import { BusinessError } from "@/lib/rbac";
 import { ERR } from "@/lib/constants";
 
@@ -154,6 +155,32 @@ export function classifyImportRows(
  * Lệch (file bị sửa, có người vừa được tạo tay…) thì từ chối, bắt xem lại —
  * không tạo một danh sách khác với danh sách người ta đã duyệt bằng mắt.
  */
+/**
+ * Tin báo Ban Giám đốc khi lần nạp Excel có tạo tài khoản TRƯỞNG PHÒNG hoặc có
+ * VAI TRÒ SẢN XUẤT. Trả null nếu không có ai như vậy. Thuần — test được.
+ */
+export function privilegedImportAlert(
+  created: { email: string; role: string; productionRole: string | null }[],
+  actorEmail: string
+): { title: string; body: string } | null {
+  const managers = created.filter((r) => r.role === "MANAGER");
+  const production = created.filter((r) => !!r.productionRole);
+  if (managers.length === 0 && production.length === 0) return null;
+  const list = (items: string[]) =>
+    items.length > 10 ? `${items.slice(0, 10).join(", ")} và ${items.length - 10} người khác` : items.join(", ");
+  const parts: string[] = [];
+  if (managers.length) parts.push(`${managers.length} trưởng phòng: ${list(managers.map((r) => r.email))}`);
+  if (production.length) {
+    parts.push(
+      `${production.length} tài khoản có vai trò sản xuất: ${list(production.map((r) => `${r.email} (${r.productionRole})`))}`
+    );
+  }
+  return {
+    title: `Nạp Excel vừa tạo tài khoản quyền cao (${managers.length + production.length})`,
+    body: `Người thực hiện: ${actorEmail}. ${parts.join(". ")}. Nếu không phải chủ ý của Ban Giám đốc, khoá các tài khoản này ngay.`,
+  };
+}
+
 export async function importUsersFromFile(
   actor: SessionUser,
   buffer: ArrayBuffer,
@@ -304,6 +331,16 @@ export async function importUsersFromFile(
     },
     ...meta,
   });
+
+  // Tài khoản trưởng phòng / vai trò xưởng mở quyền duyệt KPI, ký KCS, khoá
+  // ca — tạo hàng loạt bằng Excel cũng phải báo Ban Giám đốc như tạo tay
+  // (một tin tóm tắt cho cả lần nạp, không phải mỗi người một tin).
+  const alert = privilegedImportAlert(withHashes, actor.email);
+  if (alert) {
+    await alertCeos(alert.title, alert.body).catch((e) =>
+      console.error("[USER_IMPORT] Không gửi được báo động Ban Giám đốc:", e)
+    );
+  }
 
   return {
     ...base,

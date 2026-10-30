@@ -4,9 +4,9 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CircleCheck, Download, FileSpreadsheet } from "lucide-react";
 import { ShowingCount } from "@/components/ui";
-import StickyActions from "@/components/sticky-actions";
 import { toast } from "@/components/toast";
 import { fmtNum } from "@/lib/format";
+import { fetchJson } from "@/lib/fetch-json";
 import { ROLE_LABEL } from "@/lib/constants";
 import { PRODUCTION_ROLE_LABEL } from "@/lib/production/constants";
 
@@ -74,11 +74,13 @@ export default function UserImport() {
     fd.append("file", f);
     fd.append("mode", mode);
     if (expectedValid !== undefined) fd.append("expectedValid", String(expectedValid));
-    const res = await fetch("/api/admin/users/import", { method: "POST", body: fd });
-    const data = (await res.json().catch(() => ({}))) as Partial<ImportResult> & {
-      message?: string;
-    };
-    return { res, data };
+    // fetchJson: file quá lớn (413 từ nền tảng, body là HTML) hay hết thời gian
+    // (504) ra thông báo tiếng Việt rõ ràng thay vì "Không đọc được file."
+    const r = await fetchJson<Partial<ImportResult> & { message?: string }>(
+      "/api/admin/users/import",
+      { method: "POST", body: fd }
+    );
+    return { res: r, data: r.data };
   }
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -96,7 +98,7 @@ export default function UserImport() {
       // Lỗi từ server (file quá lớn, sai định dạng, hết phiên...) không có
       // danh sách dòng — hiện thông báo thay vì vẽ bảng kết quả rỗng rồi vỡ.
       if (!res.ok || !Array.isArray(data.rows)) {
-        setError(data.message ?? "Không đọc được file.");
+        setError(res.message ?? "Không đọc được file.");
         setFile(null);
         return;
       }
@@ -117,7 +119,7 @@ export default function UserImport() {
     try {
       const { res, data } = await send(file, "commit", preview.validCount);
       if (!res.ok) {
-        setError(data.message ?? "Nhập thất bại. Chưa tài khoản nào được tạo.");
+        setError(res.message ?? "Nhập thất bại. Chưa tài khoản nào được tạo.");
         // Bảng dòng mới nhất (vd có người vừa được tạo tay) thay cho bảng cũ
         if (Array.isArray(data.rows)) setPreview({ ...(data as ImportResult), dryRun: true });
         return;
@@ -345,7 +347,10 @@ export default function UserImport() {
             </p>
           )}
 
-          <StickyActions>
+          {/* Nút đặt NGAY dưới bảng, không dùng StickyActions: form "Thêm tài
+              khoản" bên dưới cũng có thanh dính đáy — hai thanh fixed chồng lên
+              nhau trên điện thoại, bấm nhầm "Tạo tài khoản" thay vì "Nhập". */}
+          <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button type="button" className="btn-ghost" onClick={reset} disabled={!!busy}>
               Huỷ
             </button>
@@ -361,7 +366,7 @@ export default function UserImport() {
                   ? `Nhập ${fmtNum(preview.validCount)} dòng`
                   : "Không có dòng hợp lệ"}
             </button>
-          </StickyActions>
+          </div>
         </div>
       )}
 

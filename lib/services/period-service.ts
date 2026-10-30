@@ -151,3 +151,69 @@ export async function getPeriodWithCeoDeadlineToday(now = new Date()) {
     orderBy: [{ year: "asc" }, { month: "asc" }],
   });
 }
+
+/* ------------------------------------------------- GÁN CHỈ TIÊU KHI MỞ KỲ */
+
+export type AssignUser = { id: string; role: string; departmentId: string | null };
+export type AssignDef = {
+  id: string;
+  departmentId: string | null;
+  appliesToRole: string | null;
+  defaultWeight: number | null;
+};
+export type PrevRow = {
+  employeeId: string;
+  kpiDefinitionId: string | null;
+  weightPercent: number | null;
+  targetValue: number | null;
+};
+
+/**
+ * Bộ dòng KPI một kỳ PHẢI có: mỗi nhân sự nhận KPI đang bật của phòng mình
+ * (lọc thêm `appliesToRole` khi phòng tách bộ chỉ tiêu theo vai trò), trọng
+ * số + mục tiêu lấy từ kỳ trước nếu có, không thì trọng số mặc định / mục
+ * tiêu 0 cho quản lý điền. Bỏ những ô đã có (`existingKeys`, dạng
+ * "employeeId|kpiDefinitionId") — để gán lại nhiều lần vẫn idempotent: lần
+ * mở kỳ trước đứt giữa chừng thì lần sau chỉ điền phần còn thiếu. Thuần.
+ */
+export function planAssignments(input: {
+  periodId: string;
+  users: AssignUser[];
+  defs: AssignDef[];
+  prevRows: PrevRow[];
+  existingKeys: Set<string>;
+}) {
+  const prev = new Map(
+    input.prevRows.map((r) => [`${r.employeeId}|${r.kpiDefinitionId}`, r])
+  );
+  const rows: {
+    periodId: string;
+    employeeId: string;
+    kpiDefinitionId: string;
+    weightPercent: number | null;
+    targetValue: number;
+    status: "DRAFT";
+  }[] = [];
+  let total = 0;
+  for (const u of input.users) {
+    if (!u.departmentId) continue;
+    for (const d of input.defs) {
+      if (d.departmentId !== u.departmentId) continue;
+      if (d.appliesToRole !== null && d.appliesToRole !== u.role) continue;
+      total++;
+      const key = `${u.id}|${d.id}`;
+      if (input.existingKeys.has(key)) continue;
+      const p = prev.get(key);
+      rows.push({
+        periodId: input.periodId,
+        employeeId: u.id,
+        kpiDefinitionId: d.id,
+        weightPercent: p?.weightPercent ?? d.defaultWeight,
+        targetValue: p?.targetValue ?? 0,
+        status: "DRAFT",
+      });
+    }
+  }
+  /** total: số ô kỳ này phải có; rows: những ô còn thiếu cần tạo */
+  return { total, rows };
+}

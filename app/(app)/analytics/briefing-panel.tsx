@@ -5,6 +5,7 @@ import { FileText } from "lucide-react";
 import { Badge, ProgressBar } from "@/components/ui";
 import { HEALTH_BANDS } from "@/lib/analytics/constants";
 import { fmtNum, fmtPct } from "@/lib/format";
+import { fetchJson } from "@/lib/fetch-json";
 
 /** Cảnh báo tải nhân sự hiện trước chừng này dòng, còn lại bấm mở */
 const WORKLOAD_PREVIEW = 3;
@@ -67,13 +68,13 @@ export default function BriefingPanel({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/ai/executive-briefing", { method: "POST" });
-      const d = await res.json();
+      // AI chậm → 504 trang HTML; fetchJson đổi thành câu tiếng Việt dễ hiểu
+      const res = await fetchJson<Briefing>("/api/ai/executive-briefing", { method: "POST" });
       if (!res.ok) {
-        setError(d.message || "Không tạo được báo cáo.");
+        setError(res.message || "Không tạo được báo cáo.");
         return;
       }
-      setData(d);
+      setData(res.data);
       setOpen(true);
     } catch {
       setError("Mất kết nối tới máy chủ.");

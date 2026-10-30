@@ -83,8 +83,12 @@ export default async function KpiTargetsPage({
       weightPercent: r.weightPercent ?? 0,
       // Giữ nguyên null (chưa đặt) — không tự biến thành 0
       targetValue: r.targetValue,
-      // Dòng đã chốt thì API từ chối sửa → khoá luôn trên giao diện
-      locked: r.status === "FINALIZED",
+      // Dòng đã chốt thì API từ chối sửa → khoá luôn trên giao diện. Dòng đã
+      // được duyệt: chỉ Ban Giám đốc còn đổi được mục tiêu.
+      locked:
+        r.status === "FINALIZED" ||
+        (user.role !== "CEO" && r.status === "MANAGER_REVIEWED"),
+      lockedLabel: r.status === "FINALIZED" ? "Đã chốt" : "Đã duyệt",
       // Gatekeeper chấm theo ngưỡng cố định, mục tiêu không tham gia tính điểm
       gatekeeperText: gate ? gatekeeperRuleText(gate) : null,
     });

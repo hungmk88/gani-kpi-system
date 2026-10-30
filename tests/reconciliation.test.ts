@@ -6,6 +6,7 @@ import {
   reconPeriodState,
   sourcesFingerprint,
   sourcesFingerprint as fp,
+  staleResolutionAction,
 } from "@/lib/services/reconciliation-service";
 
 describe("đối soát — dấu vân tay nguồn", () => {
@@ -91,5 +92,95 @@ describe("đối soát — tình trạng kỳ trên màn hình", () => {
   });
   it("còn ô lệch chưa chốt thì là có lệch", () => {
     expect(reconPeriodState({ matched: 12, mismatched: 1, resolved: 3 })).toBe("has_mismatch");
+  });
+});
+
+describe("đối soát — số chốt cũ khi nguồn đổi sau lần chốt", () => {
+  const resolved = { status: "RESOLVED", resolvedValue: 500 };
+  const base = { existing: resolved, sourcesChanged: true, nextValue: null as number | null };
+
+  it("dòng còn ở bước nhân viên: gỡ số chốt do lần chốt ghi", () => {
+    expect(
+      staleResolutionAction({ ...base, row: { status: "SELF_REVIEWED", actualFinal: 500 } })
+    ).toBe("clear");
+    expect(
+      staleResolutionAction({ ...base, row: { status: "DRAFT", actualFinal: 500 } })
+    ).toBe("clear");
+  });
+
+  it("dòng đã qua trưởng phòng: không tự đổi số, treo lại để chốt lại", () => {
+    expect(
+      staleResolutionAction({ ...base, row: { status: "MANAGER_REVIEWED", actualFinal: 500 } })
+    ).toBe("flag");
+    // Nguồn mới khớp nhau và đúng bằng số đã duyệt → không cần chốt lại
+    expect(
+      staleResolutionAction({
+        ...base,
+        nextValue: 500,
+        row: { status: "MANAGER_REVIEWED", actualFinal: 500 },
+      })
+    ).toBe("none");
+  });
+
+  it("dòng đã khoá, nguồn không đổi, hoặc số chốt đã bị người khác sửa thì không đụng", () => {
+    expect(
+      staleResolutionAction({ ...base, row: { status: "FINALIZED", actualFinal: 500 } })
+    ).toBe("none");
+    expect(
+      staleResolutionAction({
+        ...base,
+        sourcesChanged: false,
+        row: { status: "SELF_REVIEWED", actualFinal: 500 },
+      })
+    ).toBe("none");
+    expect(
+      staleResolutionAction({ ...base, row: { status: "SELF_REVIEWED", actualFinal: 480 } })
+    ).toBe("none");
+    expect(
+      staleResolutionAction({
+        ...base,
+        existing: { status: "MATCHED", resolvedValue: null },
+        row: { status: "SELF_REVIEWED", actualFinal: 500 },
+      })
+    ).toBe("none");
+  });
+
+  it("ô đã treo lại (MISMATCH + số chốt cũ) thì vẫn treo, kể cả khi nguồn không đổi", () => {
+    expect(
+      staleResolutionAction({
+        ...base,
+        existing: { status: "MISMATCH", resolvedValue: 500 },
+        sourcesChanged: false,
+        row: { status: "MANAGER_REVIEWED", actualFinal: 500 },
+      })
+    ).toBe("flag");
+  });
+
+  it("quét hàng loạt: ô đã treo lại mà nguồn không đổi thì không ghi lại", () => {
+    const feeds = [
+      { value: 500, source: "EXTERNAL_API", sourceCode: "IPOS", createdAt: new Date(0) },
+      { value: 505, source: "EXTERNAL_API", sourceCode: "CRM", createdAt: new Date(0) },
+    ];
+    const sources = latestSources(feeds, null);
+    const stats = computeVariance(sources);
+    const plan = planCell({
+      row: {
+        status: "MANAGER_REVIEWED",
+        kpiDefinitionId: "d1",
+        kpiDefinition: { id: "d1" },
+        actualSelf: null,
+        actualSystem: 500,
+        actualFinal: 420,
+      },
+      feeds,
+      existing: {
+        status: "MISMATCH",
+        sourcesJson: JSON.stringify(sources),
+        ...stats,
+        resolvedValue: 420,
+      },
+      priorities: new Map(),
+    });
+    expect(plan).toEqual({ action: "noop", outcome: "mismatched" });
   });
 });

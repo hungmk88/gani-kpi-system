@@ -231,10 +231,24 @@ export default async function ReconciliationPage({
                         {fmtDateTime(m.createdAt)}
                       </div>
                     </div>
-                    <Badge tone="red">Lệch {fmtPct(m.variancePercent)}</Badge>
+                    <Badge tone="red">
+                      {m.resolvedValue !== null
+                        ? "Cần chốt lại"
+                        : `Lệch ${fmtPct(m.variancePercent)}`}
+                    </Badge>
                   </div>
 
                   <div className="p-4">
+                    {/* Ô bị treo lại vì số nguồn đổi sau lần chốt trước, mà
+                        dòng KPI đã qua trưởng phòng (reconcileCell, "flag") */}
+                    {m.resolvedValue !== null && (
+                      <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                        Số đã chốt trước đây ({fmtNum(m.resolvedValue)}{" "}
+                        {m.kpiDefinition.unit}) không còn khớp số mới của các
+                        nguồn. Dòng KPI đã được duyệt nên hệ thống không tự đổi —
+                        cần chốt lại.
+                      </p>
+                    )}
                     <ResolvePanel
                       reconciliationId={m.id}
                       sources={sources}

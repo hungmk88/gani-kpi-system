@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { handle, ok, requireUser } from "@/lib/api";
 import { BusinessError } from "@/lib/rbac";
@@ -9,6 +10,17 @@ import { ERR } from "@/lib/constants";
 const schema = z.object({
   dependsOnId: z.string().min(1, "Chưa chọn việc cần chờ."),
 });
+
+/**
+ * Khoá advisory theo transaction, MỘT khoá hằng cho mọi lần sửa quan hệ phụ
+ * thuộc (vòng lặp có thể đi qua bất kỳ task nào nên không khoá theo từng task
+ * được). Tự nhả khi transaction kết thúc — an toàn với pgbouncer chế độ
+ * transaction vì cả khối chạy trên một connection. Sửa phụ thuộc hiếm, khoá
+ * chung không gây nghẽn.
+ */
+async function lockDependencyEdits(tx: Prisma.TransactionClient) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"task-dependencies:edit"}))`;
+}
 
 /** Chỉ trưởng phòng của phòng đó và Ban Giám đốc mới nối được quan hệ phụ thuộc. */
 async function authorize(
@@ -64,24 +76,30 @@ export async function POST(
       );
     }
 
-    // Chặn vòng lặp ngay từ lúc thêm
-    const edges = await prisma.taskDependency.findMany({
-      select: { taskId: true, dependsOnId: true },
-    });
-    if (wouldCreateCycle(edges, id, body.dependsOnId)) {
-      throw new BusinessError(
-        ERR.VALIDATION_FAILED,
-        `Nối như vậy sẽ tạo ra vòng lặp: "${task.title}" rốt cuộc lại phải chờ chính nó.`,
-        400
-      );
-    }
+    // Chặn vòng lặp ngay từ lúc thêm. Kiểm và ghi phải nằm TRONG CÙNG một
+    // transaction giữ khoá chung cho mọi lần sửa phụ thuộc: nếu không, hai
+    // người nối A→B và B→A cùng lúc đều kiểm thấy "chưa có vòng" rồi cùng
+    // ghi — sinh vòng lặp mà Gantt/đường găng không bao giờ tính xong.
+    const dep = await prisma.$transaction(async (tx) => {
+      await lockDependencyEdits(tx);
+      const edges = await tx.taskDependency.findMany({
+        select: { taskId: true, dependsOnId: true },
+      });
+      if (wouldCreateCycle(edges, id, body.dependsOnId)) {
+        throw new BusinessError(
+          ERR.VALIDATION_FAILED,
+          `Nối như vậy sẽ tạo ra vòng lặp: "${task.title}" rốt cuộc lại phải chờ chính nó.`,
+          400
+        );
+      }
 
-    const dep = await prisma.taskDependency.upsert({
-      where: {
-        taskId_dependsOnId: { taskId: id, dependsOnId: body.dependsOnId },
-      },
-      update: {},
-      create: { taskId: id, dependsOnId: body.dependsOnId },
+      return tx.taskDependency.upsert({
+        where: {
+          taskId_dependsOnId: { taskId: id, dependsOnId: body.dependsOnId },
+        },
+        update: {},
+        create: { taskId: id, dependsOnId: body.dependsOnId },
+      });
     });
 
     await writeAudit({
@@ -115,8 +133,11 @@ export async function DELETE(
       );
     }
 
-    await prisma.taskDependency.deleteMany({
-      where: { taskId: id, dependsOnId },
+    await prisma.$transaction(async (tx) => {
+      await lockDependencyEdits(tx);
+      await tx.taskDependency.deleteMany({
+        where: { taskId: id, dependsOnId },
+      });
     });
 
     await writeAudit({

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Paperclip } from "lucide-react";
 import { toast } from "@/components/toast";
 import { TASK_PRIORITIES, TASK_PRIORITY_LABEL } from "@/lib/constants";
+import { isHttpUrl } from "@/lib/http-url";
 
 type Task = {
   id: string;
@@ -13,15 +14,6 @@ type Task = {
   progress: number;
   assigneeId: string | null;
 };
-
-/** Chỉ nhận link http(s) — cùng luật với API trao đổi. */
-function isHttpUrl(v: string) {
-  try {
-    return ["https:", "http:"].includes(new URL(v).protocol);
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Cột cập nhật phụ của việc: tiến độ, ưu tiên, người phụ trách, trao đổi và

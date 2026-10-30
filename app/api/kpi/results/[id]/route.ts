@@ -8,13 +8,24 @@ import {
   submitSelfReview,
 } from "@/lib/services/kpi-service";
 import { ERR } from "@/lib/constants";
+import { isHttpUrl } from "@/lib/http-url";
 
 const schema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("SELF_REVIEW"),
     actualSelf: z.number().finite(),
     selfNote: z.string().max(2000).optional(),
-    evidenceUrl: z.string().max(1000).optional(),
+    // Ô để trống thì coi như không gửi link (giữ link cũ)
+    evidenceUrl: z
+      .string()
+      .trim()
+      .max(1000, "Đường dẫn bằng chứng quá dài.")
+      .transform((v) => v || undefined)
+      .refine(
+        (v) => v === undefined || isHttpUrl(v),
+        "Đường dẫn bằng chứng phải bắt đầu bằng http:// hoặc https://."
+      )
+      .optional(),
   }),
   z.object({
     action: z.literal("MANAGER_REVIEW"),

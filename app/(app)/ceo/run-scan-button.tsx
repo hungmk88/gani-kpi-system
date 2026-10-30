@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
+import { fetchJson } from "@/lib/fetch-json";
 
 /** Chạy tay bộ máy nền: quét rủi ro + kiểm tra mốc khoá KPI. */
 export default function RunScanButton() {
@@ -14,10 +15,15 @@ export default function RunScanButton() {
     setBusy(true);
     setMsg(null);
     try {
-      const res = await fetch("/api/cron/run", { method: "POST" });
-      const data = await res.json();
+      // fetchJson không throw: mất mạng / 504 khi quét lâu đều ra thông báo
+      // tiếng Việt thay vì nút ngừng quay mà không nói gì.
+      const res = await fetchJson<{
+        riskScan?: { scanned: number; newCritical: number };
+        errors?: Record<string, unknown>;
+      }>("/api/cron/run", { method: "POST" });
+      const data = res.data;
       if (!res.ok) {
-        setMsg(data.message || "Không chạy được.");
+        setMsg(res.message || "Không chạy được.");
         return;
       }
       const failed = Object.keys(data.errors ?? {});

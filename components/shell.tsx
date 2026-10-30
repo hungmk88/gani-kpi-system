@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Home,
   CheckSquare,
@@ -23,6 +23,7 @@ import {
   X,
   LogOut,
   ChevronDown,
+  Gauge,
   type LucideIcon,
 } from "lucide-react";
 import { Avatar } from "@/components/ui";
@@ -56,6 +57,8 @@ const NAV: NavItem[] = [
   { href: "/leave-requests", label: "Nghỉ phép", icon: Palmtree, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], group: "work" },
   { href: "/reconciliation", label: "Đối soát dữ liệu", icon: Scale, roles: ["MANAGER", "CEO"], group: "kpi" },
   { href: "/production", label: "Xưởng sản xuất", icon: Factory, roles: ["EMPLOYEE", "MANAGER", "CEO", "ADMIN"], productionOnly: true, group: "factory" },
+  // Trang đã có (app/(app)/admin/kpi-dashboard) nhưng trước đây không mục nào trỏ tới
+  { href: "/admin/kpi-dashboard", label: "Bảng KPI sản xuất", icon: Gauge, roles: ["CEO", "ADMIN"], group: "factory" },
   { href: "/analytics", label: "Phân tích & Dự báo", icon: TrendingUp, roles: ["MANAGER", "CEO"], group: "kpi" },
   { href: "/ceo", label: "Bảng điều hành", icon: Target, roles: ["CEO"], mobile: true, group: "kpi" },
   { href: "/audit", label: "Nhật ký hệ thống", icon: ScrollText, roles: ["CEO", "ADMIN"], group: "system" },
@@ -101,8 +104,15 @@ export default function Shell({
     (n): n is NavItem => !!n
   );
 
-  const isActive = (href: string) =>
+  const matches = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
+  // Mục khớp DÀI NHẤT mới sáng: đang ở /admin/kpi-dashboard thì chỉ "Bảng KPI
+  // sản xuất" sáng, không sáng kèm "Quản trị" (/admin).
+  const bestMatch = items
+    .filter((n) => matches(n.href))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+  const isActive = (href: string) =>
+    matches(href) && (!bestMatch || !bestMatch.startsWith(href + "/"));
 
   // Menu tài khoản (avatar trên thanh đầu trang, máy tính)
   const [accountOpen, setAccountOpen] = useState(false);
@@ -118,11 +128,49 @@ export default function Shell({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [accountOpen]);
+  // Ngăn menu là hộp thoại (aria-modal): mở ra thì đưa focus vào trong, Tab
+  // chỉ chạy vòng trong ngăn (không lọt xuống trang bị phủ phía sau), đóng
+  // thì trả focus về đúng nút đã mở (nút ☰ trên đầu hoặc "Thêm" ở thanh dưới).
+  const drawerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menuOpen) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
+    const opener =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const panel = drawerRef.current;
+    const focusables = () =>
+      Array.from(
+        panel?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ) ?? []
+      );
+    focusables()[0]?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMenuOpen(false);
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const list = focusables();
+      if (list.length === 0) return;
+      const a = list[0];
+      const z = list[list.length - 1];
+      if (!panel?.contains(document.activeElement)) {
+        e.preventDefault();
+        a.focus();
+      } else if (e.shiftKey && document.activeElement === a) {
+        e.preventDefault();
+        z.focus();
+      } else if (!e.shiftKey && document.activeElement === z) {
+        e.preventDefault();
+        a.focus();
+      }
+    };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (opener?.isConnected) opener.focus();
+    };
   }, [menuOpen]);
 
   const groups = (["work", "kpi", "factory", "system"] as const)
@@ -344,6 +392,7 @@ export default function Shell({
               aria-hidden
             />
             <div
+              ref={drawerRef}
               role="dialog"
               aria-modal="true"
               aria-label="Menu"

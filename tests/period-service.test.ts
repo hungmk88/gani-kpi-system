@@ -3,6 +3,7 @@ import {
   pickClosingPeriod,
   pickCurrentMonthPeriod,
   pickDeadlinePeriod,
+  planAssignments,
 } from "@/lib/services/period-service";
 import { vnDate } from "@/lib/vn-time";
 
@@ -74,5 +75,50 @@ describe("chọn kỳ KPI", () => {
   it("kỳ tương lai chưa chốt không bị coi là kỳ đang chốt", () => {
     const nov = p(2026, 11, "OPEN");
     expect(pickClosingPeriod([nov, oct], at(2026, 10, 3))?.id).toBe("2026-10");
+  });
+});
+
+describe("planAssignments — gán chỉ tiêu khi mở kỳ", () => {
+  const users = [
+    { id: "tp", role: "MANAGER", departmentId: "SALES" },
+    { id: "nv", role: "EMPLOYEE", departmentId: "SALES" },
+    { id: "kho", role: "EMPLOYEE", departmentId: null },
+  ];
+  const defs = [
+    { id: "team", departmentId: "SALES", appliesToRole: "MANAGER", defaultWeight: 40 },
+    { id: "ca-nhan", departmentId: "SALES", appliesToRole: "EMPLOYEE", defaultWeight: 60 },
+    { id: "chung", departmentId: "SALES", appliesToRole: null, defaultWeight: null },
+    { id: "ops", departmentId: "OPS", appliesToRole: null, defaultWeight: 50 },
+  ];
+
+  it("theo phòng + vai trò; mục tiêu/trọng số lấy từ kỳ trước, không thì mặc định", () => {
+    const plan = planAssignments({
+      periodId: "p2",
+      users,
+      defs,
+      prevRows: [{ employeeId: "nv", kpiDefinitionId: "ca-nhan", weightPercent: 70, targetValue: 1000 }],
+      existingKeys: new Set(),
+    });
+    expect(plan.total).toBe(4);
+    expect(plan.rows.map((r) => `${r.employeeId}|${r.kpiDefinitionId}`)).toEqual([
+      "tp|team",
+      "tp|chung",
+      "nv|ca-nhan",
+      "nv|chung",
+    ]);
+    expect(plan.rows[2]).toMatchObject({ weightPercent: 70, targetValue: 1000, status: "DRAFT", periodId: "p2" });
+    expect(plan.rows[0]).toMatchObject({ weightPercent: 40, targetValue: 0 });
+  });
+
+  it("gán lại là idempotent: chỉ tạo phần còn thiếu", () => {
+    const plan = planAssignments({
+      periodId: "p2",
+      users,
+      defs,
+      prevRows: [],
+      existingKeys: new Set(["tp|team", "tp|chung", "nv|ca-nhan"]),
+    });
+    expect(plan.total).toBe(4);
+    expect(plan.rows.map((r) => `${r.employeeId}|${r.kpiDefinitionId}`)).toEqual(["nv|chung"]);
   });
 });

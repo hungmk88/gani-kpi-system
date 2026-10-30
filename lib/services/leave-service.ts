@@ -319,10 +319,84 @@ type LeaveTarget = {
  */
 export function canReviewLeave(actor: LeaveActor, r: LeaveTarget): boolean {
   if (actor.id === r.employeeId) return false;
-  const requesterNeedsCeo = r.employee.role === "MANAGER" || r.employee.role === "ADMIN";
+  const requesterNeedsCeo = CEO_REVIEWED_ROLES.includes(r.employee.role);
   const isDeptManager =
     actor.role === "MANAGER" && actor.departmentId === r.departmentId;
   return actor.role === "CEO" || (!requesterNeedsCeo && isDeptManager);
+}
+
+/** Đơn của những vai trò này chỉ Ban Giám đốc duyệt (khớp canReviewLeave). */
+const CEO_REVIEWED_ROLES = ["MANAGER", "ADMIN"];
+
+/**
+ * Đơn mới gửi đi tới AI duyệt (người nhận thông báo, hộp "Chờ tôi duyệt"):
+ * - Trưởng phòng / Admin xin nghỉ -> Ban Giám đốc.
+ * - Phòng chưa có trưởng phòng đang hoạt động (hoặc người gửi không thuộc
+ *   phòng nào) -> Ban Giám đốc, nếu không đơn treo mãi không ai thấy.
+ * - Còn lại -> Trưởng phòng của phòng đó.
+ * canReviewLeave vẫn là luật QUYỀN duyệt (BGĐ duyệt được mọi đơn); hàm này
+ * chỉ quyết đơn nằm trong hộp chờ của ai. Thuần.
+ */
+export function leaveReviewerKind(input: {
+  requesterRole: string;
+  deptHasActiveManager: boolean;
+}): "CEO" | "MANAGER" {
+  if (CEO_REVIEWED_ROLES.includes(input.requesterRole)) return "CEO";
+  return input.deptHasActiveManager ? "MANAGER" : "CEO";
+}
+
+/**
+ * Mảnh `where` cho đơn ĐANG CHỜ đúng người này duyệt — cùng luật với
+ * leaveReviewerKind, dùng chung cho hộp "Chờ tôi duyệt" (/leave-requests) và
+ * khối Duyệt nhanh trên trang chủ. null = vai trò này không có hộp chờ.
+ */
+export function pendingLeaveForReviewerWhere(
+  viewer: LeaveActor
+): Prisma.LeaveRequestWhereInput | null {
+  if (viewer.role === "MANAGER") {
+    return {
+      status: "PENDING",
+      employeeId: { not: viewer.id },
+      departmentId: viewer.departmentId ?? "__none__",
+      employee: { role: { notIn: CEO_REVIEWED_ROLES } },
+    };
+  }
+  if (viewer.role === "CEO") {
+    return {
+      status: "PENDING",
+      employeeId: { not: viewer.id },
+      OR: [
+        { employee: { role: { in: CEO_REVIEWED_ROLES } } },
+        { departmentId: null },
+        // Phòng không còn trưởng phòng nào đang hoạt động
+        { department: { users: { none: { role: "MANAGER", isActive: true } } } },
+      ],
+    };
+  }
+  return null;
+}
+
+/**
+ * Phạm vi đơn nghỉ người này được XEM (lý do nghỉ là thông tin riêng tư):
+ * - Ban Giám đốc: toàn công ty.
+ * - Trưởng phòng: đơn của mình + đơn nhân viên thường phòng mình (không xem
+ *   đơn của trưởng phòng / admin khác).
+ * - Còn lại, KỂ CẢ Quản trị hệ thống: chỉ đơn của chính mình.
+ */
+export function leaveVisibleWhere(viewer: LeaveActor): Prisma.LeaveRequestWhereInput {
+  if (viewer.role === "CEO") return {};
+  if (viewer.role === "MANAGER") {
+    return {
+      OR: [
+        { employeeId: viewer.id },
+        {
+          departmentId: viewer.departmentId ?? "__none__",
+          employee: { role: { notIn: CEO_REVIEWED_ROLES } },
+        },
+      ],
+    };
+  }
+  return { employeeId: viewer.id };
 }
 
 /**

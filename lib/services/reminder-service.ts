@@ -1,6 +1,7 @@
 import { prisma } from "../db";
 import { formatVnDate, vnDayDiff, vnParts, vnStartOfDay } from "../vn-time";
-import { notify } from "../notify";
+import { notify, type NotifyInput } from "../notify";
+import { logOutOfTime, runBounded, TimeBudget } from "../time-budget";
 import { sendCeoAlert } from "../telegram";
 import { sendKpiApprovalRequest } from "../telegram-bot";
 
@@ -10,20 +11,27 @@ import { sendKpiApprovalRequest } from "../telegram-bot";
  * Chạy chung nhịp với bộ máy nền (mỗi 2 tiếng). Vấn đề của việc chạy dày như vậy
  * là dễ thành spam, nên mọi lời nhắc đều đi qua `alreadyRemindedToday` — mỗi
  * người chỉ nhận đúng một lần mỗi loại mỗi ngày, dù bộ máy chạy bao nhiêu lượt.
+ * Gửi song song có giới hạn và theo ngân sách thời gian của lượt cron (xem
+ * lib/time-budget.ts) — hết giờ thì để lượt sau gửi nốt.
  */
 
-/** Đã nhắc loại này cho người này trong hôm nay (ngày VN) chưa. */
-async function alreadyRemindedToday(userId: string, marker: string) {
-  const since = vnStartOfDay();
-  const found = await prisma.notification.findFirst({
+/**
+ * Những người ĐÃ được nhắc loại này trong hôm nay (ngày VN) — một query cho cả
+ * danh sách, thay vì một query mỗi người. Dấu nhắc là dòng notifications mà
+ * `notify` ghi TRƯỚC khi gọi Telegram/Zalo (xem lib/notify.ts), nên lượt cron
+ * bị giết giữa chừng không làm lượt sau nhắc lặp.
+ */
+async function remindedToday(userIds: string[], marker: string, now: Date) {
+  if (userIds.length === 0) return new Set<string>();
+  const rows = await prisma.notification.findMany({
     where: {
-      userId,
+      userId: { in: userIds },
       title: { contains: marker },
-      createdAt: { gte: since },
+      createdAt: { gte: vnStartOfDay(now) },
     },
-    select: { id: true },
+    select: { userId: true },
   });
-  return !!found;
+  return new Set(rows.map((r) => r.userId));
 }
 
 /** Còn bao nhiêu ngày lịch VN tới hạn (0 = hôm nay là ngày hạn). */
@@ -31,17 +39,31 @@ function daysUntil(d: Date, now: Date) {
   return vnDayDiff(now, d);
 }
 
-export async function runDeadlineReminders(now = new Date()) {
+/** Số tin gửi song song tối đa — đủ nhanh mà không bị Telegram chặn vì dồn dập. */
+const SEND_CONCURRENCY = 5;
+/** Còn dưới chừng này thì không mở thêm lượt gửi (một lần gọi Telegram tối đa 15s). */
+const SEND_RESERVE_MS = 3000;
+
+export async function runDeadlineReminders(
+  now = new Date(),
+  budget: TimeBudget = TimeBudget.unlimited()
+) {
   const periods = await prisma.kpiPeriod.findMany({
     where: { status: { not: "FINALIZED" } },
   });
 
-  let selfReminders = 0;
-  let managerReminders = 0;
-  let ceoReminders = 0;
-  let approvalRequests = 0;
+  // Gom mọi lời nhắc cần gửi trước, gửi sau (song song có giới hạn).
+  const selfJobs: NotifyInput[] = [];
+  const managerJobs: NotifyInput[] = [];
+  const ceoJobs: NotifyInput[] = [];
+  const approvalIds: string[] = [];
+  let timedOut = false;
 
   for (const p of periods) {
+    if (budget.expired(SEND_RESERVE_MS)) {
+      timedOut = true;
+      break;
+    }
     /* --------- Chặng 1: nhắc nhân viên chưa tự khai --------- */
     if (p.status === "OPEN") {
       const left = daysUntil(p.selfReviewDeadline, now);
@@ -54,11 +76,15 @@ export async function runDeadlineReminders(now = new Date()) {
           _count: { _all: true },
         });
 
+        const marker = `tự khai KPI ${p.name}`;
+        const done = await remindedToday(
+          pending.map((r) => r.employeeId),
+          marker,
+          now
+        );
         for (const row of pending) {
-          const marker = `tự khai KPI ${p.name}`;
-          if (await alreadyRemindedToday(row.employeeId, marker)) continue;
-
-          await notify({
+          if (done.has(row.employeeId)) continue;
+          selfJobs.push({
             userId: row.employeeId,
             title:
               left === 0
@@ -74,7 +100,6 @@ export async function runDeadlineReminders(now = new Date()) {
               pending_count: String(row._count._all),
             },
           });
-          selfReminders++;
         }
       }
     }
@@ -86,8 +111,15 @@ export async function runDeadlineReminders(now = new Date()) {
         const managers = await prisma.user.findMany({
           where: { role: "MANAGER", isActive: true, departmentId: { not: null } },
         });
+        const marker = `duyệt KPI ${p.name}`;
+        const done = await remindedToday(
+          managers.map((m) => m.id),
+          marker,
+          now
+        );
 
         for (const m of managers) {
+          if (done.has(m.id)) continue;
           const pending = await prisma.kpiResult.count({
             where: {
               periodId: p.id,
@@ -97,10 +129,7 @@ export async function runDeadlineReminders(now = new Date()) {
           });
           if (pending === 0) continue;
 
-          const marker = `duyệt KPI ${p.name}`;
-          if (await alreadyRemindedToday(m.id, marker)) continue;
-
-          await notify({
+          managerJobs.push({
             userId: m.id,
             title:
               left === 0
@@ -116,7 +145,6 @@ export async function runDeadlineReminders(now = new Date()) {
               pending_count: String(pending),
             },
           });
-          managerReminders++;
         }
       }
     }
@@ -133,17 +161,21 @@ export async function runDeadlineReminders(now = new Date()) {
           const ceos = await prisma.user.findMany({
             where: { role: "CEO", isActive: true },
           });
+          const marker = `chốt kỳ KPI ${p.name}`;
+          const done = await remindedToday(
+            ceos.map((c) => c.id),
+            marker,
+            now
+          );
           for (const c of ceos) {
-            const marker = `chốt kỳ KPI ${p.name}`;
-            if (await alreadyRemindedToday(c.id, marker)) continue;
-            await notify({
+            if (done.has(c.id)) continue;
+            ceoJobs.push({
               userId: c.id,
               title: `Cần chốt kỳ KPI ${p.name}`,
               body: `Còn ${pending} dòng chờ bạn duyệt. Hạn chốt là ngày ${vnParts(p.ceoApprovalDeadline).day}.`,
               level: left <= 0 ? "CRITICAL" : "WARNING",
               linkUrl: `/kpi/${p.id}`,
             });
-            ceoReminders++;
           }
 
           /* Gửi thẳng nút duyệt cho những dòng đang lệch số — đây là mấy dòng
@@ -174,20 +206,48 @@ export async function runDeadlineReminders(now = new Date()) {
           const risky = candidates
             .filter((r) => !blocked.has(`${r.employeeId}|${r.kpiDefinitionId}`))
             .slice(0, 5);
-          for (const r of risky) {
-            const res = await sendKpiApprovalRequest(r.id);
-            approvalRequests += res.sent;
-          }
+          approvalIds.push(...risky.map((r) => r.id));
         }
       }
     }
   }
+  if (timedOut) logOutOfTime("runDeadlineReminders (gom danh sách)");
+
+  // Gửi theo thứ tự ưu tiên: nhân viên (hạn sớm nhất) -> trưởng phòng -> BGĐ.
+  // Mỗi tin không chặn tin khác; hết giờ thì dừng, lượt sau gửi nốt (dấu nhắc
+  // đảm bảo không ai nhận hai lần).
+  const opts = { budget, reserveMs: SEND_RESERVE_MS };
+  const self = await runBounded(selfJobs, SEND_CONCURRENCY, notify, {
+    ...opts,
+    label: "nhắc tự khai KPI",
+  });
+  const mgr = await runBounded(managerJobs, SEND_CONCURRENCY, notify, {
+    ...opts,
+    label: "nhắc trưởng phòng duyệt KPI",
+  });
+  const ceo = await runBounded(ceoJobs, SEND_CONCURRENCY, notify, {
+    ...opts,
+    label: "nhắc BGĐ chốt kỳ",
+  });
+  let approvalRequests = 0;
+  const appr = await runBounded(
+    approvalIds,
+    SEND_CONCURRENCY,
+    async (id) => {
+      const res = await sendKpiApprovalRequest(id);
+      approvalRequests += res.sent;
+    },
+    { ...opts, label: "gửi nút duyệt KPI lệch số" }
+  );
 
   return {
-    selfReminders,
-    managerReminders,
-    ceoReminders,
+    selfReminders: self.done,
+    managerReminders: mgr.done,
+    ceoReminders: ceo.done,
     approvalRequests,
+    failed: self.failed + mgr.failed + ceo.failed + appr.failed,
+    skippedOutOfTime:
+      timedOut || self.skipped + mgr.skipped + ceo.skipped + appr.skipped > 0,
   };
 }
 
@@ -210,20 +270,26 @@ export async function remindStaleMismatches(now = new Date(), staleHours = 48) {
   });
   if (alertedToday) return { stale, alerted: false, reason: "Đã báo hôm nay" };
 
-  const res = await sendCeoAlert({
-    title: `${stale} ô KPI treo vì lệch số quá ${staleHours} giờ`,
-    details:
-      "Hệ thống không tự chọn số khi các nguồn đá nhau. Chưa ai quyết thì mấy ô này không có số để chấm điểm.",
-    actionPath: "/reconciliation",
-  });
-
+  // Ghi dấu "đã báo hôm nay" TRƯỚC khi gửi: lượt cron bị giết ngay sau khi
+  // tin bay đi thì lượt sau không báo lặp. Gửi hỏng thì hôm nay thôi (như cũ —
+  // trước đây dấu cũng được ghi dù gửi được hay không), log server ghi lỗi.
   await prisma.auditLog.create({
     data: {
       action: "STALE_MISMATCH_ALERT",
       entityName: "reconciliations",
       entityId: "system",
-      afterPayload: JSON.stringify({ stale, sent: res.sent === true }),
+      afterPayload: JSON.stringify({ stale }),
     },
+  });
+
+  const res = await sendCeoAlert({
+    title: `${stale} ô KPI treo vì lệch số quá ${staleHours} giờ`,
+    details:
+      "Hệ thống không tự chọn số khi các nguồn đá nhau. Chưa ai quyết thì mấy ô này không có số để chấm điểm.",
+    actionPath: "/reconciliation",
+  }).catch((e) => {
+    console.error("[CRON] Gửi cảnh báo ô KPI treo thất bại:", e);
+    return { sent: false };
   });
 
   return { stale, alerted: res.sent === true };

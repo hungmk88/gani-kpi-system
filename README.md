@@ -60,14 +60,20 @@ chạy trên máy có `.env` trỏ `DATABASE_URL`/`DIRECT_URL` vào **production
    `.github/workflows/backup.yml` chạy mỗi đêm, bản sao được mã hoá; chạy hỏng
    thì workflow đỏ kèm thông báo lỗi.
 8. **Đặt lại mật khẩu hàng loạt** (mọi tài khoản đang hoạt động về một mật
-   khẩu chung): thêm secret `RESET_PASSWORD`, rồi Actions → **Reset passwords**
-   → Run workflow. Để trống ô xác nhận = chạy thử (chỉ liệt kê tài khoản); gõ
-   `RESET` = ghi thật. Mọi phiên đăng nhập cũ bị đăng xuất. Chạy xong xoá secret
-   `RESET_PASSWORD`. Chạy tay: `RESET_PASSWORD='…' node scripts/reset-passwords.mjs --apply`.
+   khẩu chung, **trừ CEO/ADMIN**): thêm secret `RESET_PASSWORD`, rồi Actions →
+   **Reset passwords** → Run workflow. Để trống ô xác nhận = chạy thử (chỉ đếm
+   số tài khoản theo vai trò — log không in email vì log Actions của repo công
+   khai ai cũng đọc được); gõ `RESET` = ghi thật. Mọi phiên đăng nhập cũ bị đăng
+   xuất. Chạy xong xoá secret `RESET_PASSWORD`. Chạy tay:
+   `RESET_PASSWORD='…' node scripts/reset-passwords.mjs --apply`.
+   Tài khoản CEO/ADMIN chỉ bị đặt lại khi bật ô `include_privileged` (chạy tay:
+   `INCLUDE_PRIVILEGED=1` **và** `--include-privileged`) — mật khẩu chung ai cũng
+   biết, nên làm vậy là ai cũng có thể đăng nhập trước và chiếm tài khoản Ban
+   Giám đốc; nếu buộc phải bật, đổi mật khẩu các tài khoản đó ngay sau khi chạy.
 
 **Bảo mật vận hành:**
 
-- Nối Telegram **chỉ** bằng mã 6 số do chính người dùng tự lấy ở trang Thông
+- Nối Telegram **chỉ** bằng mã 8 ký tự do chính người dùng tự lấy ở trang Thông
   báo rồi gửi cho bot — không ai (kể cả quản trị) gắn chat Telegram hộ người
   khác, để thông báo lương thưởng không bay nhầm sang máy người khác.
 - `ADMIN` không sửa / khoá / đặt mật khẩu / đổi vai trò tài khoản `CEO`. Việc
@@ -260,7 +266,7 @@ Muốn dùng Gemini cho thông minh hơn:
 
    ```
    GEMINI_API_KEY="khoá vừa lấy"
-   GEMINI_MODEL="gemini-3.6-flash"
+   GEMINI_MODEL=""   # để trống = dùng model mặc định trong lib/ai/provider.ts
    ```
 
 3. Khởi động lại server.
@@ -322,7 +328,7 @@ lần gọi vào đều vào nhật ký, kể cả lần bị chặn.
 
 **Bot Telegram tương tác** — Ban Giám đốc duyệt KPI ngay trong tin nhắn bằng nút
 bấm. Nhân viên gõ `/homnay` xem việc, `/kpi` xem điểm. Ai cũng tự nối tài khoản
-bằng mã 6 số, không cần quản trị đi hỏi chat id từng người.
+bằng mã 8 ký tự, không cần quản trị đi hỏi chat id từng người.
 
 **Cổng Zalo ZNS** — gửi nhắc hạn qua Zalo theo mẫu đã đăng ký. Tắt mặc định.
 
@@ -565,7 +571,7 @@ Có bot thì Ban Giám đốc duyệt KPI ngay trong tin nhắn, không cần m�
    node -e "process.loadEnvFile('.env');fetch('https://api.telegram.org/bot'+process.env.TELEGRAM_BOT_TOKEN+'/setWebhook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:'https://DIA-CHI-NGROK/api/telegram/webhook',secret_token:process.env.TELEGRAM_WEBHOOK_SECRET,allowed_updates:['message','callback_query'],drop_pending_updates:true})}).then(r=>r.json()).then(console.log)"
    ```
 
-5. Mỗi người vào **Thông báo → Nối Telegram**, lấy mã 6 số, gõ `/start 123456`
+5. Mỗi người vào **Thông báo → Nối Telegram**, lấy mã 8 ký tự, gõ `/start ABCD2345`
    cho bot.
 
 **Lệnh dùng được trong Telegram:**
@@ -893,7 +899,7 @@ Các bước đã thực hiện lúc chuyển (giữ lại để tra cứu):
 
 1. Tạo project PostgreSQL trên Supabase (bản miễn phí đủ cho 20–150 người). **Chọn region gần Việt Nam** (Singapore) — xem cái bẫy vùng miền bên dưới.
 2. Sửa `prisma/schema.prisma`: `provider = "sqlite"` → `provider = "postgresql"`, thêm `directUrl = env("DIRECT_URL")`.
-3. Điền `.env`: `DATABASE_URL` lấy từ Supabase mục **Connect → Transaction pooler** (cổng `6543`), `DIRECT_URL` lấy từ **Direct connection** (cổng `5432`).
+3. Điền `.env`: `DATABASE_URL` lấy từ Supabase mục **Connect → Transaction pooler** (cổng `6543`) và thêm `?pgbouncer=true&connection_limit=1` ở cuối (xem Bẫy 1 và Bẫy 3), `DIRECT_URL` lấy từ **Direct connection** (cổng `5432`, không thêm gì).
 4. Xoá lịch sử migration SQLite cũ (`rm -rf prisma/migrations`), chạy `npx prisma migrate dev --name init` để tạo lịch sử mới cho Postgres, rồi `npm run db:seed`.
 5. Đổi `JWT_SECRET`, `CRON_SECRET`, `IPOS_WEBHOOK_SECRET` sang chuỗi mới, đặt `APP_URL` thành domain thật.
 6. Push code lên GitHub, import repo vào Vercel, dán toàn bộ `.env` vào Environment Variables.
@@ -906,6 +912,9 @@ Các bước đã thực hiện lúc chuyển (giữ lại để tra cứu):
 **Bẫy 2 — 504 timeout ở `/api/cron/run`.** Mặc định Vercel chạy hàm ở Mỹ (`iad1`), trong khi database ở Singapore — mỗi lượt gọi Postgres phải vòng qua Thái Bình Dương, cộng dồn 7 bước tuần tự thì vượt quá thời gian cho phép. Sửa hai chỗ:
 - `vercel.json` ở gốc dự án: `{ "regions": ["sin1"] }` — ép mọi hàm chạy gần database.
 - `export const maxDuration = 60;` trong `app/api/cron/run/route.ts` — gói Hobby cho tối đa 60 giây, mặc định chỉ 10 giây.
+- Cron tự giữ ngân sách thời gian: nhắc việc chạy trước, các bước chậm (quét rủi ro, phân tích/AI) chạy sau; gần hết giờ thì bỏ các bước còn lại và ghi log "hết thời gian, lượt sau làm tiếp".
+
+**Bẫy 3 — hết kết nối pooler khi nhiều người dùng cùng lúc.** Mỗi hàm Vercel là một tiến trình riêng, Prisma mặc định mở nhiều kết nối cho mỗi tiến trình. Thêm `connection_limit=1` vào `DATABASE_URL` (đã có trong `.env.example`): `...:6543/postgres?pgbouncer=true&connection_limit=1`.
 
 ---
 
@@ -1046,7 +1055,7 @@ kpi-system/
 │   │   ├── analytics/         phân tích & dự báo, cảnh báo bất thường, báo cáo điều hành
 │   │   ├── audit/             nhật ký hệ thống
 │   │   ├── admin/             quản trị + kpi-dashboard (Phase 3)
-│   │   ├── notifications/     thông báo + tự nối Telegram bằng mã 6 số
+│   │   ├── notifications/     thông báo + tự nối Telegram bằng mã 8 ký tự
 │   │   └── error.tsx          trang lỗi giữ nguyên khung menu, nút thử lại
 │   ├── reports/               báo cáo KPI bản in (xuất PDF), có error.tsx riêng
 │   └── api/                   50 endpoint REST

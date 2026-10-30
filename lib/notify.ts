@@ -38,6 +38,25 @@ export async function notify(input: NotifyInput) {
   // nối. Trước đây bình luận trên việc cũ, nhắc hạn KPI… vẫn bay tới họ.
   if (!user || !user.isActive) return;
 
+  // Ghi dòng trong ứng dụng TRƯỚC khi gọi kênh ngoài: dòng này cũng là dấu
+  // "đã nhắc hôm nay" của bộ nhắc hạn (reminder-service). Nếu ghi SAU, lượt
+  // cron bị Vercel giết giữa lúc gửi Telegram sẽ để lại tin đã bay đi mà
+  // không có dấu -> lượt sau gửi lặp. Ghi trước thì tệ nhất là thiếu một tin
+  // ngoài, không bao giờ trùng.
+  const row = await prisma.notification.create({
+    data: {
+      userId: input.userId,
+      title: input.title,
+      body: input.body,
+      level,
+      linkUrl: input.linkUrl ?? null,
+      channel: "IN_APP",
+      sentOk: true,
+      sendError: null,
+    },
+    select: { id: true },
+  });
+
   const channels: string[] = ["IN_APP"];
   const errors: string[] = [];
 
@@ -64,18 +83,18 @@ export async function notify(input: NotifyInput) {
 
   if (errors.length) console.error("[NOTIFY]", errors.join(" | "));
 
-  await prisma.notification.create({
-    data: {
-      userId: input.userId,
-      title: input.title,
-      body: input.body,
-      level,
-      linkUrl: input.linkUrl ?? null,
-      channel: channels.join("+"),
-      sentOk: errors.length === 0,
-      sendError: errors.length ? errors.join(" | ") : null,
-    },
-  });
+  if (channels.length > 1 || errors.length) {
+    await prisma.notification
+      .update({
+        where: { id: row.id },
+        data: {
+          channel: channels.join("+"),
+          sentOk: errors.length === 0,
+          sendError: errors.length ? errors.join(" | ") : null,
+        },
+      })
+      .catch((e) => console.error("[NOTIFY] Không cập nhật được trạng thái gửi:", e));
+  }
 }
 
 function renderMessage(input: NotifyInput, level: string) {

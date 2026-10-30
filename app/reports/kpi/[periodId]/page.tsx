@@ -1,22 +1,48 @@
+import type { Metadata } from "next";
 import { formatVnDateTime } from "@/lib/vn-time";
 import { notFound, redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { kpiScopeWhere } from "@/lib/rbac";
 import {
-  classifyScore,
+  classifyScoreFor,
+  combineScoreStates,
   gatekeeperOutcome,
   gatekeeperRuleFor,
   isCountedKpiRow,
   kpiCapFor,
   round2,
+  scoreStateOf,
   summarizeResults,
+  type ScoreState,
 } from "@/lib/kpi";
 import { KPI_SCORE_CAP, SALES_KPI_CAP } from "@/lib/constants";
 import { fmtNum, fmtPct, fmtScore } from "@/lib/format";
 import PrintButton from "./print-button";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Tiêu đề trang = tên file khi "Lưu thành PDF" (layout gốc ghép thành
+ * "%s · GANI KPI"). Không dùng "/" — trình duyệt thay ký tự đó trong tên file,
+ * nên "Tháng 10/2026" ghi thành "Tháng 10-2026".
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ periodId: string }>;
+}): Promise<Metadata> {
+  const { periodId } = await params;
+  const period = await prisma.kpiPeriod.findUnique({
+    where: { id: periodId },
+    select: { name: true },
+  });
+  return {
+    title: period
+      ? `Báo cáo KPI ${period.name.replace(/\//g, "-")}`
+      : "Báo cáo KPI",
+  };
+}
 
 /**
  * BÁO CÁO ĐIỀU HÀNH — bản in.
@@ -40,19 +66,34 @@ export default async function KpiReportPage({
   const period = await prisma.kpiPeriod.findUnique({ where: { id: periodId } });
   if (!period) notFound();
 
-  const allResults = await prisma.kpiResult.findMany({
-    where: { periodId, ...kpiScopeWhere(user) },
-    include: {
-      // Phòng của chỉ tiêu quyết định trần (Sales 120%) — xem kpiCapFor
-      kpiDefinition: { include: { department: true } },
-      employee: { include: { department: true } },
-    },
-    orderBy: [
-      { employee: { department: { name: "asc" } } },
-      { employee: { fullName: "asc" } },
-      { weightPercent: "desc" },
-    ],
-  });
+  const [allResults, openRecon] = await Promise.all([
+    prisma.kpiResult.findMany({
+      where: { periodId, ...kpiScopeWhere(user) },
+      include: {
+        // Phòng của chỉ tiêu quyết định trần (Sales 120%) — xem kpiCapFor
+        kpiDefinition: { include: { department: true } },
+        employee: { include: { department: true } },
+      },
+      orderBy: [
+        { employee: { department: { name: "asc" } } },
+        { employee: { fullName: "asc" } },
+        { weightPercent: "desc" },
+      ],
+    }),
+    // Ô đối soát còn treo (MISMATCH chưa ai chốt) — đúng thứ máy chủ dùng để
+    // chặn chốt KPI. Cờ hasMismatch trên dòng chỉ là ghi chú "lệch".
+    prisma.reconciliation.findMany({
+      where: { periodId, status: "MISMATCH", ...kpiScopeWhere(user) },
+      select: { employeeId: true, kpiDefinitionId: true, variancePercent: true },
+    }),
+  ]);
+  const openReconByKey = new Map(
+    openRecon.map((x) => [`${x.employeeId}|${x.kpiDefinitionId}`, x.variancePercent])
+  );
+  const reconVariance = (r: { employeeId: string; kpiDefinitionId: string | null; status: string }) =>
+    r.status === "FINALIZED"
+      ? undefined
+      : openReconByKey.get(`${r.employeeId}|${r.kpiDefinitionId}`);
 
   // Chỉ tiêu đã ngưng dùng, trọng số 0: không tính điểm — không in ra
   const results = allResults.filter(isCountedKpiRow);
@@ -71,6 +112,7 @@ export default async function KpiReportPage({
     rows: typeof results;
     totalScore: number;
     totalWeight: number;
+    state: ScoreState;
   };
 
   const deptMap = new Map<string, { name: string; employees: Map<string, EmpRow> }>();
@@ -90,6 +132,7 @@ export default async function KpiReportPage({
         rows: [],
         totalScore: 0,
         totalWeight: 0,
+        state: "UNSCORED",
       });
     }
     dept.employees.get(r.employeeId)!.rows.push(r);
@@ -99,7 +142,13 @@ export default async function KpiReportPage({
     .map((d) => {
       const employees = [...d.employees.values()].map((e) => {
         const s = summarizeResults(e.rows);
-        return { ...e, totalScore: s.totalScore, totalWeight: s.totalWeight };
+        return {
+          ...e,
+          totalScore: s.totalScore,
+          totalWeight: s.totalWeight,
+          // Cùng MỘT luật xếp loại với file Excel (/api/kpi/export)
+          state: scoreStateOf(period.status, e.rows),
+        };
       });
       employees.sort((a, b) => b.totalScore - a.totalScore);
       const avg = employees.length
@@ -107,7 +156,12 @@ export default async function KpiReportPage({
             employees.reduce((s, e) => s + e.totalScore, 0) / employees.length
           )
         : 0;
-      return { name: d.name, employees, avgScore: avg };
+      return {
+        name: d.name,
+        employees,
+        avgScore: avg,
+        state: combineScoreStates(employees.map((e) => e.state)),
+      };
     })
     .sort((a, b) => b.avgScore - a.avgScore);
 
@@ -120,7 +174,11 @@ export default async function KpiReportPage({
       )
     : 0;
 
-  const mismatches = results.filter((r) => r.hasMismatch);
+  // Lệch CHẶN chốt = ô đối soát còn treo; lệch tự khai/hệ thống chỉ ghi chú
+  const mismatches = results.filter((r) => reconVariance(r) !== undefined);
+  const selfMismatchNotes = results.filter(
+    (r) => r.hasMismatch && reconVariance(r) === undefined
+  ).length;
   // Gatekeeper không có mức đạt nên không bao giờ "chạm trần" (dòng cũ đã
   // khoá trước bản sửa có thể còn cờ isCapped — bỏ qua theo định nghĩa)
   const capped = results.filter(
@@ -143,9 +201,10 @@ export default async function KpiReportPage({
 
   // Kỳ chưa chốt: điểm chỉ là tạm tính, KHÔNG xếp loại — in ra "Không đạt"
   // cho cả công ty khi nhân viên còn chưa tới hạn tự khai là báo động giả.
+  // Xếp loại từng người / phòng theo scoreStateOf — đúng luật của file Excel.
   const isFinal = period.status === "FINALIZED";
-  const rankLabel = (score: number) =>
-    isFinal ? classifyScore(score).label : "Tạm tính";
+  const rankLabel = (score: number, state: ScoreState) =>
+    classifyScoreFor(score, state).label;
 
   return (
     <div className="report mx-auto max-w-[900px] bg-white p-8 text-ink-900 print:max-w-none print:p-0">
@@ -200,7 +259,7 @@ export default async function KpiReportPage({
           <Stat label="Nhân sự được chấm" value={fmt(allEmployees.length)} />
           <Stat label="Điểm trung bình" value={fmtScore(companyAvg)} />
           <Stat
-            label="Dòng lệch số liệu"
+            label="Dòng lệch nguồn chưa chốt"
             value={fmt(mismatches.length)}
             warn={mismatches.length > 0}
           />
@@ -282,7 +341,7 @@ export default async function KpiReportPage({
                   {fmtScore(d.avgScore)}
                 </td>
                 <td className="border border-ink-200 px-2 py-1.5">
-                  {rankLabel(d.avgScore)}
+                  {rankLabel(d.avgScore, d.state)}
                 </td>
               </tr>
             ))}
@@ -298,8 +357,12 @@ export default async function KpiReportPage({
           {mismatches.length > 0 && (
             <div className="mb-4">
               <h3 className="mb-2 text-sm font-semibold text-red-700">
-                Lệch số liệu trên 5% ({fmt(mismatches.length)} dòng)
+                Nguồn số liệu lệch nhau, chưa chốt ({fmt(mismatches.length)} dòng)
               </h3>
+              <p className="mb-2 text-xs text-ink-600">
+                Các dòng này chưa khoá được cho tới khi có người chốt số ở trang
+                Đối soát.
+              </p>
               <table className="w-full table-fixed border-collapse text-xs tabular-nums">
                 <colgroup>
                   <col className="w-[28%]" />
@@ -343,7 +406,7 @@ export default async function KpiReportPage({
                         {fmt(r.actualSelf)}
                       </td>
                       <td className="border border-ink-200 px-2 py-1 text-right font-semibold text-red-700">
-                        {fmtPct(r.mismatchPercent, { signed: true })}
+                        {fmtPct(reconVariance(r))}
                       </td>
                     </tr>
                   ))}
@@ -416,7 +479,7 @@ export default async function KpiReportPage({
                   </span>
                   <span className="text-sm font-bold tabular-nums">
                     {fmtScore(e.totalScore)} điểm ·{" "}
-                    {rankLabel(e.totalScore)}
+                    {rankLabel(e.totalScore, e.state)}
                   </span>
                 </div>
                 {/* table-fixed + cùng một bộ độ rộng cột: các bảng của mọi
@@ -460,7 +523,7 @@ export default async function KpiReportPage({
                       return (
                         <tr
                           key={r.id}
-                          className={r.hasMismatch ? "bg-red-50" : ""}
+                          className={reconVariance(r) !== undefined ? "bg-red-50" : ""}
                         >
                           <td className="border border-ink-200 px-2 py-1">
                             {r.kpiDefinition?.name ?? "—"}
@@ -540,8 +603,10 @@ export default async function KpiReportPage({
         <p>
           Nhãn “Trần” là dòng đã chạm trần của chỉ tiêu ({KPI_SCORE_CAP}%, chỉ
           tiêu Kinh doanh {SALES_KPI_CAP}%). Chỉ tiêu ngưỡng (gatekeeper) không
-          cộng điểm, vượt ngưỡng thì trừ thẳng vào tổng. Dòng nền đỏ là dòng có
-          số nhân viên khai lệch quá 5% so với số hệ thống.
+          cộng điểm, vượt ngưỡng thì trừ thẳng vào tổng. Dòng nền đỏ là dòng
+          các nguồn số liệu còn lệch nhau, chưa ai chốt ở trang Đối soát.
+          {selfMismatchNotes > 0 &&
+            ` Ngoài ra ${fmt(selfMismatchNotes)} dòng có số nhân viên khai lệch quá 5% so với số hệ thống (chỉ ghi chú, không chặn chốt).`}
         </p>
         <p className="mt-1">
           Báo cáo sinh tự động từ hệ thống quản lý công việc &amp; KPI ·{" "}

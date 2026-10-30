@@ -2,20 +2,20 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { BusinessError } from "../rbac";
 import { ERR } from "../constants";
-import { writeAudit } from "../audit";
+import { auditRecord, writeAudit } from "../audit";
 import { notify } from "../notify";
 import { sendCeoAlert } from "../telegram";
 import {
-  computeFinalScore,
   computeQualityLoss,
-  computeShiftMetrics,
   computeStdMaterialNorm,
-  computeTier2,
-  tierWeightsFor,
-  type ParticipantFacts,
   type ShiftFacts,
 } from "../production/kpi-engine";
-import { runAntiGamingRules } from "../production/anti-gaming";
+import {
+  hasMissingResults,
+  mapWithConcurrency,
+  planShiftScoring,
+  type ScoringPlan,
+} from "../production/scoring";
 import {
   BASE_BONUS_PER_SHIFT_VND,
   BEHAVIOR_LABEL,
@@ -89,11 +89,17 @@ export const MAX_QUALITY_LOSS_VND = 2_000_000_000;
 
 /* ------------------------------------------------------------ PHÂN QUYỀN */
 
+/** Vai trò khai ca — ngoài BGĐ, chỉ những vai trò này được khai ca */
+const DECLARING_PRODUCTION_ROLES = [
+  "WORKER",
+  "TEAM_LEADER",
+  "SUPERVISOR",
+  "PRODUCTION_DIRECTOR",
+];
+
 export function canEnterDraft(u: { role: string; productionRole?: string | null }) {
   if (u.role === "CEO") return true;
-  return ["WORKER", "TEAM_LEADER", "SUPERVISOR", "PRODUCTION_DIRECTOR"].includes(
-    u.productionRole ?? ""
-  );
+  return DECLARING_PRODUCTION_ROLES.includes(u.productionRole ?? "");
 }
 
 /**
@@ -105,6 +111,33 @@ export function canEnterDraft(u: { role: string; productionRole?: string | null 
  * xuất (hoặc BGĐ) được nhận thay. Công nhân thường không được sửa ca của
  * người khác. KCS không có vai trò khai ca nên vẫn không tự sửa rồi tự duyệt.
  */
+/** Ai được nhận thay ca trả về khi người khai đã nghỉ / mất vai trò khai ca */
+export function canTakeOverReturnedShift(actor: { role: string; productionRole?: string | null }) {
+  return (
+    actor.role === "CEO" ||
+    ["TEAM_LEADER", "SUPERVISOR", "PRODUCTION_DIRECTOR"].includes(actor.productionRole ?? "")
+  );
+}
+
+/**
+ * Người khai "kẹt" theo đúng nghĩa của canResubmitReturnedShift: đã nghỉ /
+ * bị khoá, hoặc không còn vai trò khai ca (không phải BGĐ và vai trò xưởng
+ * rỗng hoặc ngoài danh sách khai ca). `notIn` của SQL bỏ qua NULL nên phải
+ * ghi riêng điều kiện productionRole = null.
+ */
+export const STUCK_CREATOR_WHERE = {
+  OR: [
+    { isActive: false },
+    {
+      role: { not: "CEO" },
+      OR: [
+        { productionRole: null },
+        { productionRole: { notIn: DECLARING_PRODUCTION_ROLES } },
+      ],
+    },
+  ],
+} satisfies Prisma.UserWhereInput;
+
 export function canResubmitReturnedShift(
   actor: { id: string; role: string; productionRole?: string | null },
   creator: { id: string; isActive: boolean; role: string; productionRole?: string | null }
@@ -113,10 +146,7 @@ export function canResubmitReturnedShift(
   if (actor.id === creator.id) return true;
   const creatorStuck = !creator.isActive || !canEnterDraft(creator);
   if (!creatorStuck) return false;
-  return (
-    actor.role === "CEO" ||
-    ["TEAM_LEADER", "SUPERVISOR", "PRODUCTION_DIRECTOR"].includes(actor.productionRole ?? "")
-  );
+  return canTakeOverReturnedShift(actor);
 }
 
 /**
@@ -152,9 +182,13 @@ export function extractCeoQcOverrideReason(qcNote?: string | null): string | nul
  */
 export function resolveQcApproval(
   actor: { id: string; role: string; productionRole?: string | null },
-  shiftCreatedById: string,
+  /** Người khai ca, hoặc { người khai, danh sách người làm ca } */
+  shift: string | { createdById: string; participantUserIds?: string[] },
   input: { qcNote?: string | null; ceoOverrideReason?: string | null }
 ): { mode: "QC" } | { mode: "CEO_OVERRIDE"; reason: string } {
+  const shiftCreatedById = typeof shift === "string" ? shift : shift.createdById;
+  const participantUserIds =
+    typeof shift === "string" ? [] : (shift.participantUserIds ?? []);
   const isQcOfficer = actor.productionRole === "QC_OFFICER";
   const isCeo = actor.role === "CEO";
   if (!isQcOfficer && !isCeo) {
@@ -171,6 +205,18 @@ export function resolveQcApproval(
     throw new BusinessError(
       ERR.FORBIDDEN,
       "Bạn là người khai ca này nên không được tự xác nhận phẩm chất. Phải là KCS khác vào duyệt.",
+      403
+    );
+  }
+
+  // Người CÓ LÀM ca cũng không được xác nhận: KCS phân lỗi công đoạn cho từng
+  // người (participantDefects) — làm ca rồi tự chấm lỗi của mình và của đồng
+  // đội thì điểm Tầng 1 là tự chấm. Ca này phải do KCS khác (hoặc BGĐ không
+  // làm ca, vượt quyền có lý do) xác nhận.
+  if (participantUserIds.includes(actor.id)) {
+    throw new BusinessError(
+      ERR.FORBIDDEN,
+      "Bạn có tên trong danh sách làm ca này nên không được xác nhận phẩm chất (KCS chấm lỗi công đoạn cho từng người, gồm cả bạn). Phải là KCS khác không làm ca vào duyệt.",
       403
     );
   }
@@ -192,16 +238,68 @@ export function resolveQcApproval(
 }
 
 /**
+ * Gỡ MỌI tiền tố trạng thái chỉ máy chủ được ghi ("[BGĐ vượt quyền KCS]",
+ * "[KCS trả về]") khỏi chữ người dùng gửi lên, rồi trim; rỗng → null.
+ *
+ * Trước đây chỉ gỡ khi ghi chú BẮT ĐẦU bằng tiền tố, trên chuỗi chưa trim —
+ * còn extractCeoQcOverrideReason / extractShiftReturn lại trim trước khi đọc.
+ * KCS gửi " [BGĐ vượt quyền KCS] …" (thêm dấu cách) là lọt qua, trang chi tiết
+ * và nhật ký khoá báo sai rằng Ban Giám đốc đã vượt quyền.
+ */
+export function sanitizeQcNoteInput(note?: string | null): string | null {
+  let t = note ?? "";
+  for (const marker of [CEO_QC_OVERRIDE_PREFIX, SHIFT_RETURN_PREFIX]) {
+    t = t.split(marker).join("");
+  }
+  t = t.trim();
+  return t || null;
+}
+
+/**
  * Ghép qcNote khi BGĐ vượt quyền: dòng đầu luôn là "[BGĐ vượt quyền KCS] <lý do>",
  * phần ghi chú phẩm chất (nếu có) xuống dòng sau.
  */
 export function buildCeoOverrideQcNote(reason: string, qcNote?: string | null) {
   const t = (qcNote ?? "").trim();
   // qcNote đã có tiền tố (giao diện gửi sẵn) → bỏ dòng đầu, chỉ giữ phần ghi chú
-  const rest = t.startsWith(CEO_QC_OVERRIDE_PREFIX)
-    ? t.split("\n").slice(1).join("\n").trim()
-    : t;
-  return `${CEO_QC_OVERRIDE_PREFIX} ${reason.trim()}${rest ? `\n${rest}` : ""}`;
+  const rest = sanitizeQcNoteInput(
+    t.startsWith(CEO_QC_OVERRIDE_PREFIX) ? t.split("\n").slice(1).join("\n") : t
+  );
+  // Lý do là chữ người dùng gõ — cũng không được mang tiền tố trạng thái
+  const why = (sanitizeQcNoteInput(reason) ?? "").replace(/\s*\n\s*/g, " ");
+  return `${CEO_QC_OVERRIDE_PREFIX} ${why}${rest ? `\n${rest}` : ""}`;
+}
+
+/**
+ * Lỗi công đoạn KCS gán cho từng người: mỗi người tối đa một dòng và PHẢI là
+ * người có tên trong ca. Trước đây dòng của người ngoài ca bị bỏ qua im lặng —
+ * KCS tưởng đã ghi lỗi cho ai đó mà thật ra không ghi gì. Hàm thuần.
+ */
+export function assertParticipantDefectsValid(
+  defects: { userId: string }[] | undefined,
+  participantUserIds: string[]
+) {
+  if (!defects || defects.length === 0) return;
+  const seen = new Set<string>();
+  for (const d of defects) {
+    if (seen.has(d.userId)) {
+      throw new BusinessError(
+        ERR.VALIDATION_FAILED,
+        "Lỗi công đoạn bị khai trùng người — mỗi người làm ca chỉ một dòng.",
+        400
+      );
+    }
+    seen.add(d.userId);
+  }
+  const inShift = new Set(participantUserIds);
+  const outsiders = [...seen].filter((id) => !inShift.has(id));
+  if (outsiders.length > 0) {
+    throw new BusinessError(
+      ERR.VALIDATION_FAILED,
+      `Có ${outsiders.length} người được ghi lỗi công đoạn nhưng không có tên trong danh sách làm ca. Tải lại trang rồi ghi lại.`,
+      400
+    );
+  }
 }
 
 /**
@@ -300,6 +398,100 @@ export function canSeeMoney(
 }
 
 /**
+ * Ai được mở cổng xử lý cảnh báo (/production/audits) — BGĐ và các vai trò
+ * xưởng có việc với cảnh báo: quản đốc, GĐ SX, tổ trưởng (giải trình), KCS
+ * (số cân là gốc của cảnh báo). Dùng chung cho trang cảnh báo và cho MỌI liên
+ * kết dẫn tới nó — trước đây trang xưởng hiện liên kết cho ADMIN và công nhân
+ * rồi trang cảnh báo lại đẩy họ về.
+ */
+export function canOpenAuditPortal(u: { role: string; productionRole?: string | null }) {
+  return (
+    u.role === "CEO" ||
+    ["SUPERVISOR", "PRODUCTION_DIRECTOR", "TEAM_LEADER", "QC_OFFICER"].includes(
+      u.productionRole ?? ""
+    )
+  );
+}
+
+/**
+ * MỘT luật xem cảnh báo chống chạy chỉ tiêu, dùng cho cả trang chi tiết ca và
+ * API chi tiết ca (trước đây trang hiện hết cho mọi người làm ca còn API chỉ
+ * trả cho người xem được tiền):
+ *
+ *   - Người xem được cổng cảnh báo (canOpenAuditPortal — gồm cả người xem được
+ *     tiền): thấy đủ — nội dung cảnh báo, giải trình, ý kiến Ban Giám đốc.
+ *   - Người làm ca / người khai khác: thấy CÓ cảnh báo (loại, mức độ, trạng
+ *     thái — để biết vì sao thưởng bị khoá), giải trình do CHÍNH mình viết, và
+ *     ý kiến kết luận của BGĐ (ô nhập ý kiến ghi rõ "người bị khoá thưởng sẽ
+ *     đọc được", và reviewAudit cũng gửi nguyên câu đó cho họ khi mở khoá).
+ *     Nội dung chi tiết của cảnh báo và giải trình của người khác là trao đổi
+ *     giữa cấp quản lý xưởng.
+ */
+export function canSeeAuditDetails(u: { role: string; productionRole?: string | null }) {
+  return canOpenAuditPortal(u);
+}
+
+export function redactAuditForViewer<
+  T extends {
+    id: string;
+    behaviorType: string;
+    severity: string;
+    status: string;
+    createdAt: Date;
+    auditNote: string | null;
+    explanationText: string | null;
+    explainedById: string | null;
+    explainedAt?: Date | null;
+    explainedBy?: { id: string; fullName: string } | null;
+    ceoReviewNote: string | null;
+    reviewedAt?: Date | null;
+    reviewedBy?: { id: string; fullName: string } | null;
+  },
+>(audit: T, viewer: { id: string; role: string; productionRole?: string | null }) {
+  const base = {
+    id: audit.id,
+    behaviorType: audit.behaviorType,
+    severity: audit.severity,
+    status: audit.status,
+    createdAt: audit.createdAt,
+  };
+  if (canSeeAuditDetails(viewer)) {
+    return {
+      ...base,
+      detailed: true as const,
+      auditNote: audit.auditNote,
+      explanationText: audit.explanationText,
+      explainedAt: audit.explainedAt ?? null,
+      explainedBy: audit.explainedBy
+        ? { id: audit.explainedBy.id, fullName: audit.explainedBy.fullName }
+        : null,
+      ceoReviewNote: audit.ceoReviewNote,
+      reviewedAt: audit.reviewedAt ?? null,
+      reviewedBy: audit.reviewedBy
+        ? { id: audit.reviewedBy.id, fullName: audit.reviewedBy.fullName }
+        : null,
+    };
+  }
+  const own = !!audit.explainedById && audit.explainedById === viewer.id;
+  return {
+    ...base,
+    detailed: false as const,
+    auditNote: null,
+    explanationText: own ? audit.explanationText : null,
+    explainedAt: own ? (audit.explainedAt ?? null) : null,
+    explainedBy:
+      own && audit.explainedBy
+        ? { id: audit.explainedBy.id, fullName: audit.explainedBy.fullName }
+        : null,
+    ceoReviewNote: audit.ceoReviewNote,
+    reviewedAt: audit.reviewedAt ?? null,
+    reviewedBy: audit.reviewedBy
+      ? { id: audit.reviewedBy.id, fullName: audit.reviewedBy.fullName }
+      : null,
+  };
+}
+
+/**
  * Gỡ các trường chỉ Ban Giám đốc / Giám đốc SX được xem (tiền và lý do sửa
  * chỉ tiêu) khỏi một ca trước khi trả ra ngoài. Dùng cho MỌI chỗ trả ca sản
  * xuất ra API, để không có đường nào lọt đơn giá hay tổn thất quy ra tiền.
@@ -350,11 +542,14 @@ export const RETURNED_WHERE = {
  * Điều kiện lọc những ca đang chờ ĐÚNG bước của người này — để danh sách xưởng
  * đưa việc của họ lên đầu thay vì bắt họ dò trong 60 ca theo ngày:
  *
- *   - KCS: ca chờ KCS, trừ ca chính mình khai (không được tự xác nhận).
+ *   - KCS: ca chờ KCS, trừ ca chính mình khai hoặc mình có tên làm (không
+ *     được tự xác nhận).
  *   - Ban Giám đốc: ca KCS đã xác nhận, chờ khoá số. (Vượt quyền KCS là ngoại
  *     lệ, không đưa ca DRAFT vào "việc của BGĐ".)
  *   - Người khai ca (công nhân, tổ trưởng, quản đốc, GĐ SX, BGĐ): ca của chính
  *     mình bị KCS trả về, chờ sửa và gửi lại.
+ *   - Tổ trưởng / quản đốc / GĐ SX / BGĐ: thêm ca bị trả về mà người khai đã
+ *     nghỉ hoặc mất vai trò khai ca (họ được nhận thay — canResubmitReturnedShift).
  *
  * Không có bước nào chờ người này → null. Hàm thuần — để kiểm thử được.
  */
@@ -365,13 +560,24 @@ export function awaitingMyStepWhere(user: {
 }): Prisma.ProductionShiftLogWhereInput | null {
   const or: Prisma.ProductionShiftLogWhereInput[] = [];
   if (user.productionRole === "QC_OFFICER") {
-    or.push({ ...WAITING_QC_WHERE, createdById: { not: user.id } });
+    // Trừ ca mình khai VÀ ca mình có tên làm — cả hai đều bị resolveQcApproval chặn
+    or.push({
+      ...WAITING_QC_WHERE,
+      createdById: { not: user.id },
+      participants: { none: { userId: user.id } },
+    });
   }
   if (user.role === "CEO") {
     or.push({ status: "QC_APPROVED" });
   }
   if (canEnterDraft(user)) {
     or.push({ ...RETURNED_WHERE, createdById: user.id });
+  }
+  if (canTakeOverReturnedShift(user)) {
+    // Ca trả về mà người khai đã nghỉ / mất vai trò khai ca: trước đây không
+    // nằm trong hàng chờ của ai, kẹt DRAFT mãi. Cùng điều kiện với
+    // canResubmitReturnedShift.
+    or.push({ ...RETURNED_WHERE, createdBy: STUCK_CREATOR_WHERE });
   }
   if (or.length === 0) return null;
   return or.length === 1 ? or[0] : { OR: or };
@@ -688,6 +894,13 @@ export async function returnShiftToProduction(
  * Người khai sửa ca bị trả về rồi gửi lại cho KCS. Chỉ CHÍNH người khai — để
  * "người khai ca" (createdById) vẫn đúng là người chịu trách nhiệm số liệu,
  * và luật "không tự xác nhận ca mình khai" ở bước 2 vẫn còn nghĩa.
+ *
+ * Ngoại lệ: người khai đã nghỉ / mất vai trò thì tổ trưởng / quản đốc / GĐ SX /
+ * BGĐ nhận thay (canResubmitReturnedShift). Khi đó NGƯỜI GỬI LẠI thành người
+ * khai ca (createdById đổi sang họ) — họ vừa sửa số nên họ chịu trách nhiệm số.
+ * Trước đây createdById giữ nguyên người cũ nên không đâu ghi ai đã gửi lại:
+ * một BGĐ có thể gửi lại → vượt quyền KCS → khoá, tự đi hết cả 3 bước mà luật
+ * "không tự xác nhận ca mình khai" không bắt được. Nhật ký ghi cả hai id.
  */
 export async function resubmitShiftDraft(
   actor: SessionUser & { productionRole?: string | null },
@@ -730,18 +943,23 @@ export async function resubmitShiftDraft(
   }
 
   const { sku, day } = await validateDraftInput(input, logId);
+  // Người nhận thay → thành người khai ca (xem chú thích hàm)
+  const takeOver = actor.id !== log.createdById;
 
   await prisma
     .$transaction(async (tx) => {
-      // Có điều kiện: ca vẫn đang ở trạng thái "trả về" — bấm gửi hai lần thì
-      // lần sau nhận 409, không ghi đè danh sách người hai lần.
+      // Có điều kiện: ca vẫn đang ở trạng thái "trả về" và người khai chưa đổi
+      // — bấm gửi hai lần thì lần sau nhận 409, không ghi đè danh sách người
+      // hai lần.
       const res = await tx.productionShiftLog.updateMany({
         where: {
           id: logId,
           status: "DRAFT",
           qcNote: { startsWith: SHIFT_RETURN_PREFIX },
+          createdById: log.createdById,
         },
         data: {
+          ...(takeOver ? { createdById: actor.id } : {}),
           shiftDate: day,
           shiftType: input.shiftType,
           skuId: input.skuId,
@@ -783,6 +1001,7 @@ export async function resubmitShiftDraft(
       sanLuongTho: log.rawOutputKg,
       nvlCapVao: log.rawMaterialInputKg,
       soNguoi: log.participants.length,
+      nguoiKhaiCa: log.createdById,
     },
     after: {
       ca: `${input.shiftType} ${formatVnDate(day)}`,
@@ -790,8 +1009,14 @@ export async function resubmitShiftDraft(
       sanLuongTho: input.rawOutputKg,
       nvlCapVao: input.rawMaterialInputKg,
       soNguoi: input.participants.length,
+      nguoiKhaiCa: actor.id,
+      nhanThayNguoiKhai: takeOver,
     },
-    reason: `Sửa theo yêu cầu KCS (${returned.by}): ${returned.reason}`.slice(0, 1000),
+    reason: (
+      (takeOver
+        ? `Nhận thay người khai cũ (${log.createdById}) — người gửi lại thành người khai ca. `
+        : "") + `Sửa theo yêu cầu KCS (${returned.by}): ${returned.reason}`
+    ).slice(0, 1000),
     ...meta,
   });
 
@@ -862,15 +1087,20 @@ export async function approveByQc(
     );
   }
 
-  // Tách bạch trách nhiệm + BGĐ chỉ được vượt quyền có lý do (xem resolveQcApproval)
-  const approval = resolveQcApproval(actor, log.createdById, input);
+  // Tách bạch trách nhiệm + BGĐ chỉ được vượt quyền có lý do (xem resolveQcApproval).
+  // Người khai ca VÀ người có tên trong ca đều không được tự xác nhận.
+  const participantUserIds = log.participants.map((p) => p.userId);
+  const approval = resolveQcApproval(
+    actor,
+    { createdById: log.createdById, participantUserIds },
+    input
+  );
   const isOverride = approval.mode === "CEO_OVERRIDE";
-  // KCS thường không được tự gắn tiền tố "vượt quyền" vào ghi chú — tiền tố
-  // đó chỉ máy chủ ghi, nếu không trang chi tiết và nhật ký khoá sẽ báo sai
-  // là Ban Giám đốc đã vượt quyền.
-  const plainNote = input.qcNote?.startsWith(CEO_QC_OVERRIDE_PREFIX)
-    ? input.qcNote.slice(CEO_QC_OVERRIDE_PREFIX.length).trim() || null
-    : (input.qcNote ?? null);
+  assertParticipantDefectsValid(input.participantDefects, participantUserIds);
+  // KCS thường không được tự gắn tiền tố "vượt quyền" / "trả về" vào ghi chú
+  // — các tiền tố đó chỉ máy chủ ghi, nếu không trang chi tiết và nhật ký khoá
+  // sẽ báo sai là Ban Giám đốc đã vượt quyền (xem sanitizeQcNoteInput).
+  const plainNote = sanitizeQcNoteInput(input.qcNote);
   const baseNote = isOverride
     ? buildCeoOverrideQcNote(approval.reason, input.qcNote)
     : plainNote;
@@ -1172,10 +1402,15 @@ export async function lockAndTriggerKpi(
   // Khoá đã commit ở trên: nếu chấm điểm lỗi, ca vẫn LOCKED nhưng chưa có điểm.
   // Lượt chạy nền tự chấm lại (rescoreLockedShiftsWithoutResults) — báo rõ cho
   // người bấm khoá thay vì một lỗi 500 trống trơn.
-  let result: Awaited<ReturnType<typeof executeCalculationAndAudit>>;
+  let result: NonNullable<Awaited<ReturnType<typeof executeCalculationAndAudit>>>;
   try {
-    result = await executeCalculationAndAudit(logId);
+    const r = await executeCalculationAndAudit(logId);
+    // Không truyền onlyIfIncomplete nên không bao giờ null — chặn cho chắc
+    if (!r) throw new Error("Chấm điểm không trả kết quả");
+    result = r;
   } catch (e) {
+    // Ca vừa bị mở lại ngay sau khi khoá: báo đúng chuyện, không phải lỗi chấm
+    if (e instanceof ShiftNoLongerLocked) throw e;
     console.error(`[PRODUCTION] Chấm điểm ca ${logId} lỗi sau khi khoá:`, e);
     throw new BusinessError(
       "SCORING_DEFERRED",
@@ -1188,33 +1423,42 @@ export async function lockAndTriggerKpi(
 }
 
 /**
- * TỰ CHỮA LÀNH: ca đã LOCKED mà chưa có dòng điểm nào (chấm điểm lỗi sau khi
- * khoá commit — mất mạng, timeout, deploy giữa chừng). Chạy lại bước chấm
- * điểm cho những ca đó. Idempotent: executeCalculationAndAudit upsert theo
- * (ca, người), ca đã có điểm thì không bị lọc vào đây.
+ * TỰ CHỮA LÀNH: ca đã LOCKED mà còn người làm ca CHƯA có dòng điểm (chấm điểm
+ * lỗi sau khi khoá commit — mất mạng, timeout, deploy giữa chừng). Trước đây
+ * chỉ nhặt ca không có dòng điểm nào; giờ ghi điểm là một transaction nên
+ * hiếm khi chấm dở, nhưng ca cũ chấm dở từ trước và ca đổi người làm vẫn phải
+ * được chữa. Idempotent: executeCalculationAndAudit giữ khoá theo ca và kiểm
+ * tra lại bên trong khoá (onlyIfIncomplete) — lượt khác vừa chấm xong thì bỏ qua.
  *
  * Gọi từ cron (lib/production/bridge.ts) TRƯỚC khi gộp số tháng, để điểm ca
  * kịp vào số liệu KPI tháng.
  */
 export async function rescoreLockedShiftsWithoutResults(limit = 20) {
-  const pending = await prisma.productionShiftLog.findMany({
-    where: {
-      status: "LOCKED",
-      participants: { some: {} },
-      kpiResults: { none: {} },
-    },
-    select: { id: true },
-    orderBy: { lockedAt: "asc" },
-    // Giới hạn mỗi lượt để không ăn hết 60 giây của cron; lượt sau làm tiếp
-    take: limit,
-  });
+  // Prisma không so được "số dòng điểm < số người làm ca" trong where → SQL
+  // tham số hoá: có người làm ca mà chưa có dòng điểm của chính người đó.
+  const take = Math.max(1, Math.min(200, Math.floor(limit)));
+  const pending = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT s.id
+    FROM production_shift_logs s
+    WHERE s.status = 'LOCKED'
+      AND EXISTS (
+        SELECT 1 FROM production_shift_participants p
+        WHERE p."shiftLogId" = s.id
+          AND NOT EXISTS (
+            SELECT 1 FROM daily_kpi_results r
+            WHERE r."shiftLogId" = s.id AND r."userId" = p."userId"
+          )
+      )
+    ORDER BY s."lockedAt" ASC NULLS LAST
+    LIMIT ${take}
+  `;
 
   const rescored: string[] = [];
   const failed: { id: string; error: string }[] = [];
   for (const s of pending) {
     try {
-      await executeCalculationAndAudit(s.id);
-      rescored.push(s.id);
+      const r = await executeCalculationAndAudit(s.id, { onlyIfIncomplete: true });
+      if (r) rescored.push(s.id);
     } catch (e) {
       console.error(`[PRODUCTION] Chấm lại ca ${s.id} vẫn lỗi:`, e);
       failed.push({ id: s.id, error: e instanceof Error ? e.message : String(e) });
@@ -1342,145 +1586,218 @@ async function reverseRawMaterialForShift(
 
 /* ============================================ CHẤM ĐIỂM & QUÉT BẤT THƯỜNG */
 
-export async function executeCalculationAndAudit(logId: string) {
-  const log = await prisma.productionShiftLog.findUnique({
-    where: { id: logId },
-    include: {
-      sku: true,
-      participants: { include: { user: { select: { employmentType: true } } } },
-    },
-  });
-  if (!log) {
-    throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy ca sản xuất.", 404);
-  }
-  if (log.status !== "LOCKED") {
-    throw new BusinessError(
+/**
+ * Khoá tư vấn (advisory lock) theo ca, trong transaction đang chạy. Chấm điểm,
+ * chấm lại (cron) và mở lại ca cùng lấy khoá này nên chạy NỐI TIẾP trên một ca:
+ * không có hai lượt chấm song song nhân đôi cảnh báo, và mở lại ca giữa lúc
+ * chấm không để điểm mọc lại trên ca đã về QC_APPROVED. Tự nhả khi transaction
+ * kết thúc — đi qua pgbouncer chế độ transaction vẫn an toàn.
+ */
+async function lockShiftForScoring(tx: Prisma.TransactionClient, logId: string) {
+  const key = `production-shift:${logId}`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}::text))`;
+}
+
+/** Ca không còn LOCKED khi tới lượt ghi điểm (vừa bị mở lại) → huỷ lượt chấm. */
+class ShiftNoLongerLocked extends BusinessError {
+  constructor() {
+    super(
       ERR.VALIDATION_FAILED,
-      "Chỉ chấm điểm khi ca đã khoá số.",
+      "Ca này vừa được mở lại nên không chấm điểm nữa — khoá lại thì hệ thống chấm lại.",
       409
     );
   }
+}
 
-  const facts: ShiftFacts = {
-    rawOutputKg: log.rawOutputKg,
-    qcPassedKg: log.qcPassedKg,
-    reworkKg: log.reworkKg,
-    scrapKg: log.scrapKg,
-    haccpViolationCount: log.haccpViolationCount,
-    totalLaborHours: log.totalLaborHours,
-    downtimeHours: log.downtimeHours,
-    targetOutputKg: log.targetOutputKg,
-    rawMaterialInputKg: log.rawMaterialInputKg,
-    stdMaterialNormKg: log.stdMaterialNormKg,
-  };
+/**
+ * Chấm điểm + quét chống chạy chỉ tiêu cho một ca ĐÃ KHOÁ.
+ *
+ * Ghi NGUYÊN TỬ: đọc ca, tính (planShiftScoring — hàm thuần), rồi ghi cảnh
+ * báo + điểm mọi người + nhật ký trong MỘT transaction, sau khi đã lấy khoá
+ * tư vấn của ca và kiểm tra lại status = LOCKED bên trong khoá. Thông báo
+ * (Telegram có thể treo 15 giây) gửi SAU khi commit, lỗi gửi không làm hỏng
+ * điểm đã ghi.
+ *
+ * `onlyIfIncomplete`: lượt tự chữa của cron — nếu trong lúc chờ khoá đã có
+ * lượt khác chấm đủ người thì bỏ qua, không quét lại cảnh báo, không báo lại.
+ */
+export async function executeCalculationAndAudit(
+  logId: string,
+  opts: { onlyIfIncomplete?: boolean } = {}
+) {
+  const committed = await prisma.$transaction(
+    async (tx) => {
+      await lockShiftForScoring(tx, logId);
 
-  const metrics = computeShiftMetrics(facts);
-  const tier2 = computeTier2(metrics, facts);
+      // Đọc SAU khi giữ khoá — số liệu là bản mới nhất (mở lại rồi khoá lại
+      // với chỉ tiêu khác trong lúc chờ thì chấm theo số mới).
+      const log = await tx.productionShiftLog.findUnique({
+        where: { id: logId },
+        include: {
+          sku: true,
+          participants: { include: { user: { select: { employmentType: true } } } },
+          kpiResults: { select: { userId: true } },
+        },
+      });
+      if (!log) {
+        throw new BusinessError(ERR.NOT_FOUND, "Không tìm thấy ca sản xuất.", 404);
+      }
+      if (log.status !== "LOCKED") throw new ShiftNoLongerLocked();
 
-  const totalHours =
-    log.participants.reduce((s, p) => s + p.hoursWorked, 0) ||
-    log.totalLaborHours;
+      if (
+        opts.onlyIfIncomplete &&
+        !hasMissingResults(
+          log.participants.map((p) => p.userId),
+          log.kpiResults.map((r) => r.userId)
+        )
+      ) {
+        return null;
+      }
 
-  /* --- Quét chống chạy chỉ tiêu TRƯỚC, để biết có phải khoá thưởng không --- */
-  const findings = runAntiGamingRules(facts, metrics);
+      // Bản quét cũ chưa ai đụng tới bị xoá và quét lại; bản đã có người giải
+      // trình / BGĐ đã xử lý thì giữ (xem planShiftScoring).
+      await tx.antiGamingAudit.deleteMany({
+        where: { shiftLogId: logId, status: "PENDING_EXPLANATION" },
+      });
+      const handledAudits = await tx.antiGamingAudit.findMany({
+        where: { shiftLogId: logId },
+        select: { behaviorType: true, status: true },
+      });
 
-  // Xoá bản quét cũ chưa ai đụng tới, giữ lại bản đã có người giải trình /
-  // BGĐ đã xử lý. Khi khoá lại sau lần mở lại ca, KHÔNG tạo lại cảnh báo cùng
-  // luật (behaviorType) đã có — nếu không, cảnh báo BGĐ đã chấp nhận sẽ mọc
-  // lại và khoá thưởng thêm lần nữa cho cùng một vấn đề.
-  await prisma.antiGamingAudit.deleteMany({
-    where: { shiftLogId: logId, status: "PENDING_EXPLANATION" },
-  });
-  const handled = await prisma.antiGamingAudit.findMany({
-    where: { shiftLogId: logId },
-    select: { behaviorType: true },
-  });
-  const handledTypes = new Set(handled.map((a) => a.behaviorType));
-  const newFindings = findings.filter((f) => !handledTypes.has(f.behaviorType));
-  if (newFindings.length > 0) {
-    await prisma.antiGamingAudit.createMany({
-      data: newFindings.map((f) => ({ ...f, shiftLogId: logId })),
-    });
-  }
+      const facts: ShiftFacts = {
+        rawOutputKg: log.rawOutputKg,
+        qcPassedKg: log.qcPassedKg,
+        reworkKg: log.reworkKg,
+        scrapKg: log.scrapKg,
+        haccpViolationCount: log.haccpViolationCount,
+        totalLaborHours: log.totalLaborHours,
+        downtimeHours: log.downtimeHours,
+        targetOutputKg: log.targetOutputKg,
+        rawMaterialInputKg: log.rawMaterialInputKg,
+        stdMaterialNormKg: log.stdMaterialNormKg,
+      };
+      const plan = planShiftScoring({
+        facts,
+        totalLaborHours: log.totalLaborHours,
+        participants: log.participants.map((p) => ({
+          userId: p.userId,
+          stage: p.stage,
+          hoursWorked: p.hoursWorked,
+          scheduledHours: p.scheduledHours,
+          personalDefectKg: p.personalDefectKg,
+          violationCount: p.violationCount,
+          employmentType: p.user.employmentType,
+        })),
+        handledAudits,
+      });
 
-  // Khoá thưởng khi còn cảnh báo treo HOẶC có cảnh báo BGĐ đã từ chối — cùng
-  // điều kiện với reviewAudit (trước đây chỗ này bỏ sót REJECTED, nên khoá
-  // lại ca từng bị từ chối thì thưởng tự mở).
-  const stillOpen = await prisma.antiGamingAudit.count({
-    where: {
-      shiftLogId: logId,
-      status: { in: ["PENDING_EXPLANATION", "EXPLAINED", "REJECTED"] },
+      if (plan.newFindings.length > 0) {
+        await tx.antiGamingAudit.createMany({
+          data: plan.newFindings.map((f) => ({ ...f, shiftLogId: logId })),
+        });
+      }
+
+      // Người không còn trong danh sách làm ca thì không giữ điểm cũ
+      await tx.dailyKpiResult.deleteMany({
+        where: {
+          shiftLogId: logId,
+          userId: { notIn: log.participants.map((p) => p.userId) },
+        },
+      });
+      const results = [];
+      for (const s of plan.scores) {
+        const data = {
+          tier1Score: s.score.tier1Score,
+          tier2Score: s.score.tier2Score,
+          finalWeightedScore: s.score.finalWeightedScore,
+          bonusMultiplier: s.score.bonusMultiplier,
+          finalBonusVnd: s.finalBonusVnd,
+          isBonusLocked: plan.bonusLocked,
+          breakdownJson: JSON.stringify(s.score.breakdown),
+        };
+        results.push(
+          await tx.dailyKpiResult.upsert({
+            where: { shiftLogId_userId: { shiftLogId: logId, userId: s.userId } },
+            update: data,
+            create: { shiftLogId: logId, userId: s.userId, ...data },
+          })
+        );
+      }
+
+      // Nhật ký chấm điểm ghi CÙNG transaction — có điểm thì có dòng nhật ký
+      await tx.auditLog.create({
+        data: auditRecord({
+          actor: null,
+          action: "PRODUCTION_KPI_CALCULATED",
+          entityName: "production_shift_logs",
+          entityId: logId,
+          after: {
+            diemToanXuong: plan.tier2.score,
+            soNguoiDuocCham: results.length,
+            canhBao: plan.findings.length,
+            canhBaoMoi: plan.newFindings.length,
+            khoaThuong: plan.bonusLocked,
+          },
+        }),
+      });
+
+      return { log, plan, results };
     },
-  });
-  const bonusLocked = stillOpen > 0;
+    // Chờ khoá của lượt khác + ghi vài chục dòng: rộng hơn mặc định 5 giây
+    { maxWait: 10_000, timeout: 30_000 }
+  );
 
-  /* --- Chấm điểm từng người --- */
-  const results = [];
-  for (const p of log.participants) {
-    const pf: ParticipantFacts = {
-      userId: p.userId,
-      stage: p.stage,
-      hoursWorked: p.hoursWorked,
-      scheduledHours: p.scheduledHours,
-      personalDefectKg: p.personalDefectKg,
-      violationCount: p.violationCount,
-    };
-    const { weights, tier1Components } = tierWeightsFor(p.user.employmentType);
-    const score = computeFinalScore(
-      pf,
-      facts,
-      totalHours,
-      tier2,
-      weights,
-      tier1Components
-    );
+  if (!committed) return null;
+  const { log, plan, results } = committed;
 
-    const saved = await prisma.dailyKpiResult.upsert({
-      where: { shiftLogId_userId: { shiftLogId: logId, userId: p.userId } },
-      update: {
-        tier1Score: score.tier1Score,
-        tier2Score: score.tier2Score,
-        finalWeightedScore: score.finalWeightedScore,
-        bonusMultiplier: score.bonusMultiplier,
-        finalBonusVnd: bonusLocked ? 0 : score.finalBonusVnd,
-        isBonusLocked: bonusLocked,
-        breakdownJson: JSON.stringify(score.breakdown),
-      },
-      create: {
-        shiftLogId: logId,
-        userId: p.userId,
-        tier1Score: score.tier1Score,
-        tier2Score: score.tier2Score,
-        finalWeightedScore: score.finalWeightedScore,
-        bonusMultiplier: score.bonusMultiplier,
-        finalBonusVnd: bonusLocked ? 0 : score.finalBonusVnd,
-        isBonusLocked: bonusLocked,
-        breakdownJson: JSON.stringify(score.breakdown),
-      },
-    });
-    results.push(saved);
+  /* --- Thông báo: SAU commit, không chặn, tối đa 4 việc cùng lúc --- */
+  await sendScoringNotifications(logId, log, plan, results.length).catch((e) =>
+    console.error(`[PRODUCTION] Gửi thông báo chấm điểm ca ${logId} lỗi:`, e)
+  );
 
-    await notify({
-      userId: p.userId,
-      title: `Điểm KPI ca ${log.shiftType} ngày ${formatVnDate(log.shiftDate)}`,
-      body: bonusLocked
-        ? `Bạn được ${score.finalWeightedScore} điểm (cá nhân ${score.tier1Score}, toàn xưởng ${score.tier2Score}). Thưởng ca đang tạm khoá vì có cảnh báo cần giải trình.`
-        : `Bạn được ${score.finalWeightedScore} điểm (cá nhân ${score.tier1Score}, toàn xưởng ${score.tier2Score}).`,
-      level: bonusLocked ? "WARNING" : "INFO",
+  return {
+    metrics: plan.metrics,
+    tier2: plan.tier2,
+    results,
+    findings: plan.newFindings,
+    bonusLocked: plan.bonusLocked,
+  };
+}
+
+const NOTIFY_CONCURRENCY = 4;
+
+async function sendScoringNotifications(
+  logId: string,
+  log: { shiftType: string; shiftDate: Date },
+  plan: ScoringPlan,
+  scoredCount: number
+) {
+  const when = `${log.shiftType} ngày ${formatVnDate(log.shiftDate)}`;
+  const jobs: (() => Promise<unknown>)[] = plan.scores.map((s) => () =>
+    notify({
+      userId: s.userId,
+      title: `Điểm KPI ca ${when}`,
+      body: plan.bonusLocked
+        ? `Bạn được ${s.score.finalWeightedScore} điểm (cá nhân ${s.score.tier1Score}, toàn xưởng ${s.score.tier2Score}). Thưởng ca đang tạm khoá vì có cảnh báo cần giải trình.`
+        : `Bạn được ${s.score.finalWeightedScore} điểm (cá nhân ${s.score.tier1Score}, toàn xưởng ${s.score.tier2Score}).`,
+      level: plan.bonusLocked ? "WARNING" : "INFO",
       linkUrl: `/production/${logId}`,
-    });
-  }
+    })
+  );
 
-  /* --- Báo Ban Giám đốc nếu có bất thường MỚI --- */
-  if (newFindings.length > 0) {
-    await sendCeoAlert({
-      title: `Cảnh báo chạy chỉ tiêu: ${newFindings.length} dấu hiệu ở ca ${log.shiftType}`,
-      details: newFindings
-        .map((f) => `${BEHAVIOR_LABEL[f.behaviorType] ?? f.behaviorType}`)
-        .join(" · ") + ` — đã tạm khoá thưởng của ${results.length} người, chờ quản đốc giải trình.`,
-      actionPath: `/production/audits`,
-    });
-
+  /* --- Báo Ban Giám đốc + quản đốc nếu có bất thường MỚI --- */
+  if (plan.newFindings.length > 0) {
+    jobs.push(() =>
+      sendCeoAlert({
+        title: `Cảnh báo chạy chỉ tiêu: ${plan.newFindings.length} dấu hiệu ở ca ${log.shiftType}`,
+        details:
+          plan.newFindings
+            .map((f) => `${BEHAVIOR_LABEL[f.behaviorType] ?? f.behaviorType}`)
+            .join(" · ") +
+          ` — đã tạm khoá thưởng của ${scoredCount} người, chờ quản đốc giải trình.`,
+        actionPath: `/production/audits`,
+      })
+    );
     const supervisors = await prisma.user.findMany({
       where: {
         productionRole: { in: ["SUPERVISOR", "PRODUCTION_DIRECTOR"] },
@@ -1489,37 +1806,26 @@ export async function executeCalculationAndAudit(logId: string) {
       select: { id: true },
     });
     for (const s of supervisors) {
-      await notify({
-        userId: s.id,
-        title: `Cần giải trình ca ${log.shiftType} ngày ${formatVnDate(log.shiftDate)}`,
-        body: `Hệ thống phát hiện ${newFindings.length} dấu hiệu bất thường. Thưởng ca đang khoá cho tới khi Ban Giám đốc xem giải trình.`,
-        level: "WARNING",
-        linkUrl: `/production/audits`,
-      });
+      jobs.push(() =>
+        notify({
+          userId: s.id,
+          title: `Cần giải trình ca ${when}`,
+          body: `Hệ thống phát hiện ${plan.newFindings.length} dấu hiệu bất thường. Thưởng ca đang khoá cho tới khi Ban Giám đốc xem giải trình.`,
+          level: "WARNING",
+          linkUrl: `/production/audits`,
+        })
+      );
     }
   }
 
-  await writeAudit({
-    actor: null,
-    action: "PRODUCTION_KPI_CALCULATED",
-    entityName: "production_shift_logs",
-    entityId: logId,
-    after: {
-      diemToanXuong: tier2.score,
-      soNguoiDuocCham: results.length,
-      canhBao: findings.length,
-      canhBaoMoi: newFindings.length,
-      khoaThuong: bonusLocked,
-    },
-  });
-
-  return {
-    metrics,
-    tier2,
-    results,
-    findings: newFindings,
-    bonusLocked,
-  };
+  const settled = await mapWithConcurrency(jobs, NOTIFY_CONCURRENCY, (job) => job());
+  const failed = settled.filter((r) => r.status === "rejected");
+  if (failed.length > 0) {
+    console.error(
+      `[PRODUCTION] ${failed.length}/${jobs.length} thông báo chấm điểm ca ${logId} gửi lỗi:`,
+      (failed[0] as PromiseRejectedResult).reason
+    );
+  }
 }
 
 /* ================================================== GIẢI TRÌNH & DUYỆT TAY */
@@ -1780,6 +2086,9 @@ export async function reopenShift(
   // trừ khi khoá — cùng thành công hoặc cùng huỷ. Mở lại hai lần song song
   // thì lần sau nhận 409, không hoàn kho hai lần.
   const { updated, reversed } = await prisma.$transaction(async (tx) => {
+    // Cùng khoá với chấm điểm: lượt chấm đang ghi dở thì chờ nó xong rồi mới
+    // xoá điểm; lượt chấm tới sau thấy ca không còn LOCKED và tự huỷ.
+    await lockShiftForScoring(tx, logId);
     const res = await tx.productionShiftLog.updateMany({
       where: { id: logId, status: "LOCKED" },
       data: { status: "QC_APPROVED", lockedAt: null, lockedById: null },
@@ -1793,7 +2102,8 @@ export async function reopenShift(
       where: { id: logId },
     });
     return { updated, reversed };
-  });
+    // Có thể phải chờ một lượt chấm điểm đang giữ khoá của ca → rộng hơn 5 giây
+  }, { timeout: 20_000 });
 
   await writeAudit({
     actor,

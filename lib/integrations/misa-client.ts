@@ -42,6 +42,38 @@ type MisaTokenCache = {
 
 let tokenCache: MisaTokenCache | null = null;
 
+/** MISA treo thì không được treo theo cả hàm serverless (trần 60s). */
+const MISA_TIMEOUT_MS = 15_000;
+
+/** fetch có hạn chờ — quá hạn thì huỷ (AbortError). */
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = MISA_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Lỗi trả cho tầng trên chỉ là câu chung chung; nội dung phản hồi của MISA
+ * (có thể chứa token, mã công ty, dữ liệu kế toán) chỉ ghi vào log server —
+ * không để lọt ra giao diện / audit / phản hồi API.
+ */
+function misaFailure(what: string, detail: unknown): { ok: false; error: string } {
+  console.error(`[MISA] ${what}:`, detail);
+  return { ok: false, error: `${what}. Xem log máy chủ để biết chi tiết.` };
+}
+
+function misaException(what: string, e: unknown): { ok: false; error: string } {
+  if (e instanceof Error && e.name === "AbortError") {
+    console.error(`[MISA] ${what}: quá ${MISA_TIMEOUT_MS / 1000}s không phản hồi`);
+    return { ok: false, error: `${what}: MISA phản hồi quá chậm, đã huỷ.` };
+  }
+  return misaFailure(what, e);
+}
+
 /**
  * Đổi access_code lấy access_token. Tự cache trong bộ nhớ tiến trình, chỉ
  * gọi lại khi hết hạn (hạn 12 giờ theo tài liệu) — KHÔNG cache ra database vì
@@ -60,7 +92,7 @@ export async function getMisaAccessToken(): Promise<
   }
 
   try {
-    const res = await fetch(`${MISA_API_URL}/api/oauth/actopen/connect`, {
+    const res = await fetchWithTimeout(`${MISA_API_URL}/api/oauth/actopen/connect`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -71,12 +103,15 @@ export async function getMisaAccessToken(): Promise<
     });
 
     if (!res.ok) {
-      return { ok: false, error: `MISA connect lỗi HTTP ${res.status}: ${await res.text()}` };
+      return misaFailure(
+        `MISA connect lỗi HTTP ${res.status}`,
+        await res.text().catch(() => "")
+      );
     }
 
     const body = await res.json();
     if (!body?.Success) {
-      return { ok: false, error: `MISA connect từ chối: ${JSON.stringify(body)}` };
+      return misaFailure("MISA connect từ chối", body);
     }
 
     // Tài liệu ghi Data là một CHUỖI JSON lồng bên trong, không phải object
@@ -96,7 +131,7 @@ export async function getMisaAccessToken(): Promise<
 
     return { ok: true, token: tokenCache.accessToken, tenantCode: tokenCache.tenantCode };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return misaException("Gọi MISA connect thất bại", e);
   }
 }
 
@@ -125,7 +160,7 @@ export async function getMisaInventoryBalance(opts: {
   if (!auth.ok) return auth;
 
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${MISA_API_URL}/apir/sync/actopen/get_list_inventory_balance`,
       {
         method: "POST",
@@ -145,18 +180,21 @@ export async function getMisaInventoryBalance(opts: {
     );
 
     if (!res.ok) {
-      return { ok: false, error: `MISA inventory lỗi HTTP ${res.status}: ${await res.text()}` };
+      return misaFailure(
+        `MISA inventory lỗi HTTP ${res.status}`,
+        await res.text().catch(() => "")
+      );
     }
 
     const body = await res.json();
     if (!body?.Success) {
-      return { ok: false, error: `MISA inventory từ chối: ${JSON.stringify(body)}` };
+      return misaFailure("MISA inventory từ chối", body);
     }
 
     const rows = typeof body.Data === "string" ? JSON.parse(body.Data) : body.Data;
     return { ok: true, rows: Array.isArray(rows) ? rows : [] };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return misaException("Gọi MISA inventory thất bại", e);
   }
 }
 

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Circle, LogOut } from "lucide-react";
 import { PASSWORD_MIN_LENGTH, SAMPLE_PASSWORDS } from "@/lib/password";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 
 /**
  * Các luật hiển thị trực tiếp khi gõ — cùng luật với lib/password.ts (máy chủ
@@ -110,14 +111,12 @@ export default function ChangePasswordForm({
 
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/change-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword, newPassword }),
-      });
-      const data = await res.json();
+      const res = await fetchJson(
+        "/api/auth/change-password",
+        jsonInit("POST", { currentPassword, newPassword })
+      );
       if (!res.ok) {
-        setError(data.message || "Đổi mật khẩu không thành công.");
+        setError(res.message || "Đổi mật khẩu không thành công.");
         return;
       }
       setDone(true);

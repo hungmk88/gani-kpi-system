@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
+import { fetchJson, jsonInit } from "@/lib/fetch-json";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 
@@ -24,6 +25,8 @@ export default function AnomalyActions({
   canReview: boolean;
 }) {
   const router = useRouter();
+  const explainId = useId();
+  const noteId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -33,14 +36,9 @@ export default function AnomalyActions({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/analytics/anomalies/${anomalyId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const d = await res.json();
+      const res = await fetchJson(`/api/analytics/anomalies/${anomalyId}`, jsonInit("POST", payload));
       if (!res.ok) {
-        setError(d.message || "Thao tác thất bại.");
+        setError(res.message || "Thao tác thất bại.");
         return;
       }
       setText("");
@@ -63,10 +61,11 @@ export default function AnomalyActions({
 
       {status === "OPEN" && isOwner && (
         <div className="space-y-2">
-          <label className="label">
+          <label className="label" htmlFor={explainId}>
             Giải thích vì sao số kỳ này khác hẳn (tối thiểu 20 ký tự)
           </label>
           <textarea
+            id={explainId}
             className="input min-h-20"
             placeholder="Ví dụ: tháng này có đơn hàng Tết của chuỗi 12 cửa hàng nên doanh thu cao gấp đôi bình thường, đã có hợp đồng và phiếu giao hàng kèm theo."
             value={text}
@@ -92,10 +91,11 @@ export default function AnomalyActions({
       {(status === "EXPLAINED" || (status === "OPEN" && !isOwner)) &&
         canReview && (
           <div className="mt-2 space-y-2">
-            <label className="label">
+            <label className="label" htmlFor={noteId}>
               Kết luận của bạn (tối thiểu 10 ký tự) — người khai sẽ đọc được câu này
             </label>
             <input
+              id={noteId}
               className="input"
               placeholder="Ví dụ: chấp nhận, đã đối chiếu hợp đồng Tết"
               value={note}
